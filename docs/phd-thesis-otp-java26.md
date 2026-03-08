@@ -24,7 +24,7 @@ The seven OTP primitives mapped in this work are: (1) lightweight processes, (2)
 
 1. Introduction: The Concurrency Reckoning
 2. Background: Erlang/OTP 28 Architecture
-3. The Seven-Pillar Equivalence Proof
+3. The Ten-Pillar Equivalence Proof
    - 3.1 Lightweight Processes → Virtual Threads
    - 3.2 Message Passing → LinkedTransferQueue Mailbox
    - 3.3 `gen_server` → `Proc<S,M>`
@@ -34,6 +34,9 @@ The seven OTP primitives mapped in this work are: (1) lightweight processes, (2)
    - 3.7 Structured Concurrency → `StructuredTaskScope`
    - 3.8 `gen_statem` → `StateMachine<S,E,D>`
    - 3.9 Process Links → `ProcessLink`
+   - 3.10 Process Monitors → `ProcessMonitor`
+   - 3.11 Process Registry → `ProcessRegistry`
+   - 3.12 Timers → `ProcTimer`
 4. Performance Analysis: BEAM vs. JVM Under Fault Conditions
 5. The Migration Path: From Cool Languages to Java 26
    - 5.1 From Elixir/Phoenix
@@ -101,13 +104,16 @@ As of OTP 28, BEAM supports approximately 134 million concurrent processes on a 
 
 OTP defines *behaviors* — formally specified protocols that separate the generic concurrency machinery from application logic:
 
-| Behavior | Purpose | Java Equivalent |
+| Behavior / BIF | Purpose | Java Equivalent |
 |---|---|---|
 | `gen_server` | Request-reply server with state | `Proc<S,M>` |
 | `gen_statem` | State machine with events | `StateMachine<S,E,D>` |
 | `gen_event` | Event manager | `Flow.Publisher<E>` |
 | `supervisor` | Restart strategies for children | `Supervisor` |
 | `link/1`, `spawn_link/3` | Bilateral crash propagation | `ProcessLink` |
+| `monitor/2`, `demonitor/1` | Unilateral DOWN notifications | `ProcessMonitor` |
+| `register/2`, `whereis/1` | Global process name table | `ProcessRegistry` |
+| `timer:send_after/3`, `timer:send_interval/3` | Timed message delivery | `ProcTimer` |
 | `application` | Application lifecycle | JPMS module + `ServiceLoader` |
 
 ### 2.3 The 80/20 of OTP
@@ -120,11 +126,11 @@ Of OTP's behaviors and principles, empirical analysis of production Erlang/Elixi
 4. The "let it crash" philosophy + `Result`/`{:ok, v} | {:error, e}` return convention
 5. Pattern matching on message types
 
-The remaining 20% — `gen_event`, OTP releases, Mnesia, distributed Erlang, hot code loading — contributes <20% of reliability in typical applications. This thesis focuses on the 80%.
+The remaining 20% — `gen_event`, OTP releases, Mnesia, distributed Erlang, hot code loading — contributes <20% of reliability in typical applications. This thesis documents ten Java 26 equivalents covering the most impactful OTP primitives: the seven core pillars plus process monitors, named process registry, and process-scoped timers — the three remaining high-ROI BIFs used in virtually every production OTP application.
 
 ---
 
-## 3. The Seven-Pillar Equivalence Proof
+## 3. The Ten-Pillar Equivalence Proof
 
 > **Terminology note:** OTP uses **process** as the fundamental unit of concurrency — not "actor." The actor model (Hewitt, 1973) inspired Erlang, but Joe Armstrong and the Erlang team deliberately chose "process" to align with OS process isolation semantics: each process has its own heap, its own mailbox, and no shared mutable state. The Java class in this repository is named `Proc<S,M>` to align with OTP's own terminology — "process" — rather than the Akka/Vert.x "actor" naming. The underlying OTP concept it models is a *process*. Similarly, the Erlang behavior is `gen_server` (lowercase, underscore-separated) — `GenServer` is Elixir's wrapper. All OTP names in §3 use Erlang's canonical spelling.
 
@@ -665,6 +671,149 @@ Proc<S, M> child = ProcessLink.spawnLink(parent, initialState, handler);
 | `process_flag(trap_exit, true)` | *(future work)* | Convert EXIT signal to message |
 
 **Composability:** Unlike the previous `setUncaughtExceptionHandler` approach, `ProcessLink` uses `addCrashCallback()` — a composable list. A supervised child can be simultaneously monitored by its `Supervisor` (via `Supervisor`'s crash callback) AND linked to a peer process (via `ProcessLink`). Both callbacks fire independently on crash. This is the real OTP model: supervision and links are orthogonal.
+
+### 3.10 Process Monitors → `ProcessMonitor`
+
+**Erlang Primitive:**
+```erlang
+% Unilateral monitor — when Target dies, monitoring process receives {'DOWN', Ref, process, Pid, Reason}
+Ref = monitor(process, TargetPid).
+
+% Cancel before the DOWN fires
+demonitor(Ref).
+```
+
+Process monitors are the **unilateral counterpart to links**. Where `link/1` kills both processes on crash, `monitor/2` only notifies the monitoring process — it never kills it. This is how `gen_server:call/3` implements call timeouts: the caller monitors the target, sends a `$gen_call` message, and either processes a reply or a `DOWN` notification first.
+
+**Java 26 Equivalent:**
+```java
+// Monitor target — DOWN fires on any exit (normal or abnormal)
+ProcessMonitor.MonitorRef<S, M> ref = ProcessMonitor.monitor(target, reason -> {
+    if (reason == null) {
+        // normal exit — target called stop()
+    } else {
+        // abnormal exit — reason is the uncaught RuntimeException
+    }
+});
+
+// Cancel before DOWN fires (e.g., after receiving a reply)
+ProcessMonitor.demonitor(ref);
+```
+
+**Implementation:** `ProcessMonitor` piggybacks on `Proc`'s new `terminationCallbacks` list — a composable `CopyOnWriteArrayList<Consumer<Throwable>>` that fires on **any** exit (normal or abnormal). The callback receives `null` for normal exits and the exception for abnormal ones, directly mirroring OTP's `Reason` in `{'DOWN', Ref, process, Pid, Reason}` (`normal` vs. a term).
+
+**Formal Equivalence:**
+
+| OTP | Java 26 | Semantics |
+|---|---|---|
+| `monitor(process, Pid)` | `ProcessMonitor.monitor(proc, handler)` | Returns opaque ref, non-killing |
+| `demonitor(Ref)` | `ProcessMonitor.demonitor(ref)` | Cancels before DOWN fires |
+| `{'DOWN', Ref, process, Pid, normal}` | `handler.accept(null)` | Normal exit reason |
+| `{'DOWN', Ref, process, Pid, Reason}` | `handler.accept(exception)` | Abnormal exit reason |
+| Multiple monitors on same Pid | Multiple `monitor()` calls | All fire independently |
+
+**Composability:** A process can simultaneously be supervised (via `Supervisor`), linked (via `ProcessLink`), and monitored (via `ProcessMonitor`). All three use separate callback lists on `Proc` and fire independently.
+
+---
+
+### 3.11 Process Registry → `ProcessRegistry`
+
+**Erlang Primitive:**
+```erlang
+% Register a process under a global atom name
+register(my_server, Pid).
+
+% Look up a Pid by name (undefined if not registered)
+Pid = whereis(my_server).
+
+% Explicit removal
+unregister(my_server).
+
+% List all registered names
+Atoms = registered().
+```
+
+The process registry is Erlang's **global name table** — the mechanism that lets any process find any other without explicit Pid threading. It is auto-maintained: when a registered process terminates (for any reason), its name entry is automatically removed.
+
+**Java 26 Equivalent:**
+```java
+// Register (throws if name already taken)
+ProcessRegistry.register("my-server", proc);
+
+// Look up by name (Optional.empty() if not registered or process dead)
+Optional<Proc<State, Msg>> found = ProcessRegistry.whereis("my-server");
+
+// Explicit removal (does not stop the process)
+ProcessRegistry.unregister("my-server");
+
+// Snapshot of all current names
+Set<String> names = ProcessRegistry.registered();
+```
+
+**Implementation:** A `ConcurrentHashMap<String, Proc<?,?>>` provides O(1) concurrent access. Registration installs a `terminationCallback` on the `Proc` that calls `registry.remove(name, proc)` — using the two-argument form to atomically remove only if the value still matches (prevents races when a name is re-registered after death).
+
+**Formal Equivalence:**
+
+| OTP | Java 26 | Semantics |
+|---|---|---|
+| `register(Name, Pid)` | `ProcessRegistry.register(name, proc)` | Throws if name taken |
+| `whereis(Name)` | `ProcessRegistry.whereis(name)` | `Optional.empty()` instead of `undefined` |
+| `unregister(Name)` | `ProcessRegistry.unregister(name)` | Explicit; does not stop process |
+| `registered()` | `ProcessRegistry.registered()` | Snapshot set of all current names |
+| Auto-deregister on death | `terminationCallback` | Fires on normal + abnormal exit |
+
+---
+
+### 3.12 Timers → `ProcTimer`
+
+**Erlang Primitive:**
+```erlang
+% One-shot: deliver Msg to Pid after Ms milliseconds; returns TRef
+TRef = timer:send_after(Ms, Pid, Msg).
+
+% Repeating: deliver Msg to Pid every Ms milliseconds
+TRef = timer:send_interval(Ms, Pid, Msg).
+
+% Cancel before delivery
+timer:cancel(TRef).
+```
+
+OTP processes model timeouts by **receiving timed messages** — not by sleeping, not via callbacks. A process waiting for a reply sets a `send_after` timer and handles whichever arrives first: the reply or the timeout message. This keeps the main receive loop as the single control point for all events.
+
+**Java 26 Equivalent:**
+```java
+// One-shot — fires once after 500 ms
+ProcTimer.TimerRef ref = ProcTimer.sendAfter(500, proc, new TimeoutMsg());
+
+// Repeating — fires every 1 second
+ProcTimer.TimerRef heartbeat = ProcTimer.sendInterval(1_000, proc, new HeartbeatMsg());
+
+// Cancel
+ProcTimer.cancel(heartbeat);
+boolean wasPending = ref.cancel(); // true if still pending
+```
+
+**Implementation:** A single shared `ScheduledExecutorService` with one daemon platform thread acts as the timer wheel. Timer callbacks do nothing but call `proc.tell(msg)` — a non-blocking mailbox enqueue — so the timer thread never blocks on application logic. `TimerRef` wraps the `ScheduledFuture<?>` for cancellation.
+
+**Formal Equivalence:**
+
+| OTP | Java 26 | Semantics |
+|---|---|---|
+| `timer:send_after(Ms, Pid, Msg)` | `ProcTimer.sendAfter(ms, proc, msg)` | One-shot; cancellable |
+| `timer:send_interval(Ms, Pid, Msg)` | `ProcTimer.sendInterval(ms, proc, msg)` | Repeating until cancelled |
+| `timer:cancel(TRef)` | `ProcTimer.cancel(ref)` or `ref.cancel()` | Returns whether was pending |
+| Timer fires → message in mailbox | `proc.tell(msg)` | Non-blocking enqueue |
+
+**Composability with `ProcessMonitor`:** The canonical OTP call-timeout pattern — monitor the callee, send a request, await reply or DOWN — translates directly to Java 26:
+
+```java
+var timerRef = ProcTimer.sendAfter(5_000, self, new TimeoutMsg());
+var monRef   = ProcessMonitor.monitor(target, reason -> self.tell(new DownMsg(reason)));
+target.tell(new CallMsg(payload));
+// Self's receive loop handles: ReplyMsg | TimeoutMsg | DownMsg — whichever arrives first
+ProcTimer.cancel(timerRef);
+ProcessMonitor.demonitor(monRef);
+```
 
 ---
 

@@ -6,6 +6,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.TransferQueue;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 
 /**
  * Lightweight process with a virtual-thread mailbox — Java 26 equivalent of an Erlang process.
@@ -46,6 +47,13 @@ public final class Proc<S, M> {
     private final List<Runnable> crashCallbacks = new CopyOnWriteArrayList<>();
 
     /**
+     * Callbacks fired on <em>any</em> termination — normal or abnormal. Argument is {@code null}
+     * for a normal exit, or the {@link Throwable} exit reason for an abnormal one. Used by {@link
+     * ProcessMonitor} and {@link ProcessRegistry}.
+     */
+    private final List<Consumer<Throwable>> terminationCallbacks = new CopyOnWriteArrayList<>();
+
+    /**
      * Create and start a process.
      *
      * @param initial initial state
@@ -80,6 +88,11 @@ public final class Proc<S, M> {
                                         for (Runnable cb : crashCallbacks) {
                                             cb.run();
                                         }
+                                    }
+                                    // Fire termination callbacks (monitor semantics — always)
+                                    Throwable exitReason = crashedAbnormally ? lastError : null;
+                                    for (Consumer<Throwable> cb : terminationCallbacks) {
+                                        cb.accept(exitReason);
                                     }
                                 });
     }
@@ -121,6 +134,20 @@ public final class Proc<S, M> {
      */
     void addCrashCallback(Runnable cb) {
         crashCallbacks.add(cb);
+    }
+
+    /**
+     * Register a callback fired when this process terminates for any reason. {@code null} reason
+     * means normal exit; non-null is the abnormal exit cause. Used by {@link ProcessMonitor} and
+     * {@link ProcessRegistry}.
+     */
+    void addTerminationCallback(Consumer<Throwable> cb) {
+        terminationCallbacks.add(cb);
+    }
+
+    /** Remove a previously registered termination callback (for {@link ProcessMonitor#demonitor}). */
+    boolean removeTerminationCallback(Consumer<Throwable> cb) {
+        return terminationCallbacks.remove(cb);
     }
 
     /**

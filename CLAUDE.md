@@ -67,7 +67,7 @@ mvnd verify -Dit.test=MathsIT  # integration test
 
 **Formatting:** Spotless with Google Java Format (AOSP style) runs automatically at compile phase. The PostToolUse hook (see below) auto-runs `spotless:apply` after every Java file edit — do not run it manually.
 
-**Joe Armstrong / Erlang/OTP patterns** — seven primitives in `org.acme`:
+**Joe Armstrong / Erlang/OTP patterns** — ten primitives in `org.acme`:
 - `Proc<S,M>` — lightweight process: virtual-thread mailbox + pure state handler (OTP: `spawn/3`)
 - `ProcRef<S,M>` — stable Pid: opaque handle that survives supervisor restarts
 - `Supervisor` — supervision tree: ONE_FOR_ONE / ONE_FOR_ALL / REST_FOR_ONE with sliding restart window
@@ -75,6 +75,9 @@ mvnd verify -Dit.test=MathsIT  # integration test
 - `StateMachine<S,E,D>` — gen_statem: state/event/data separation + sealed `Transition` hierarchy
 - `ProcessLink` — process links: bilateral crash propagation (`link/1`, `spawn_link/3`)
 - `Parallel` — structured fan-out with fail-fast semantics (`StructuredTaskScope`, OTP: `pmap`)
+- `ProcessMonitor` — unilateral DOWN notifications: `monitor(process, Pid)` / `demonitor/1`; fires on any exit (normal or abnormal); does NOT kill the monitoring side (unlike links)
+- `ProcessRegistry` — global name table: `register/2`, `whereis/1`, `unregister/1`, `registered/0`; auto-deregisters when a process terminates
+- `ProcTimer` — timed message delivery: `timer:send_after/3`, `timer:send_interval/3`, `timer:cancel/1`
 
 ## Claude Code Configuration (`.claude/`)
 
