@@ -1,11 +1,11 @@
 package org.acme.test;
 
 import java.util.concurrent.TimeUnit;
-import org.acme.Actor;
+import org.acme.Proc;
 import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.Test;
 
-class ActorTest implements WithAssertions {
+class ProcTest implements WithAssertions {
 
     // Sealed message hierarchy — exhaustive pattern matching, zero virtual dispatch
     sealed interface CounterMsg permits CounterMsg.Increment, CounterMsg.Reset, CounterMsg.Noop {
@@ -26,33 +26,33 @@ class ActorTest implements WithAssertions {
 
     @Test
     void tellAndAsk() throws Exception {
-        var actor = new Actor<>(0, ActorTest::handleCounter);
+        var proc = new Proc<>(0, ProcTest::handleCounter);
 
-        actor.tell(new CounterMsg.Increment(10));
-        actor.tell(new CounterMsg.Increment(5));
+        proc.tell(new CounterMsg.Increment(10));
+        proc.tell(new CounterMsg.Increment(5));
 
-        var state = actor.ask(new CounterMsg.Noop()).get(1, TimeUnit.SECONDS);
+        var state = proc.ask(new CounterMsg.Noop()).get(1, TimeUnit.SECONDS);
         assertThat(state).isEqualTo(15);
 
-        actor.stop();
+        proc.stop();
     }
 
     @Test
     void resetReturnsToZero() throws Exception {
-        var actor = new Actor<>(0, ActorTest::handleCounter);
+        var proc = new Proc<>(0, ProcTest::handleCounter);
 
-        actor.tell(new CounterMsg.Increment(100));
-        actor.tell(new CounterMsg.Reset());
+        proc.tell(new CounterMsg.Increment(100));
+        proc.tell(new CounterMsg.Reset());
 
-        var state = actor.ask(new CounterMsg.Noop()).get(1, TimeUnit.SECONDS);
+        var state = proc.ask(new CounterMsg.Noop()).get(1, TimeUnit.SECONDS);
         assertThat(state).isZero();
 
-        actor.stop();
+        proc.stop();
     }
 
     @Test
     void manyMessagesFromMultipleThreads() throws Exception {
-        var actor = new Actor<>(0, ActorTest::handleCounter);
+        var proc = new Proc<>(0, ProcTest::handleCounter);
         var senders = new Thread[10];
         for (int i = 0; i < senders.length; i++) {
             senders[i] =
@@ -60,15 +60,15 @@ class ActorTest implements WithAssertions {
                             .start(
                                     () -> {
                                         for (int j = 0; j < 100; j++) {
-                                            actor.tell(new CounterMsg.Increment(1));
+                                            proc.tell(new CounterMsg.Increment(1));
                                         }
                                     });
         }
         for (var s : senders) s.join();
 
-        var state = actor.ask(new CounterMsg.Noop()).get(2, TimeUnit.SECONDS);
+        var state = proc.ask(new CounterMsg.Noop()).get(2, TimeUnit.SECONDS);
         assertThat(state).isEqualTo(1000);
 
-        actor.stop();
+        proc.stop();
     }
 }

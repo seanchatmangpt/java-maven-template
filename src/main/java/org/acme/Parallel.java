@@ -8,14 +8,14 @@ import java.util.function.Supplier;
  * Parallel fan-out with fail-fast semantics, inspired by Erlang's supervisor philosophy.
  *
  * <p>Joe Armstrong: "If any process fails, fail fast. Don't mask errors — let a supervisor handle
- * them."
+ * them." Mirrors {@code erlang:pmap/2}: parallel map with all-or-nothing semantics.
  *
- * <p>Uses Java 25 {@link StructuredTaskScope} with {@code Joiner.allSuccessfulOrThrow()}: all tasks
+ * <p>Uses Java 26 {@link StructuredTaskScope} with {@code Joiner.allSuccessfulOrThrow()}: all tasks
  * run concurrently on virtual threads, and on the <em>first</em> failure the scope cancels all
  * remaining tasks immediately (Armstrong: crash one, crash all). Returns {@code Result<List<T>,
  * Exception>} integrating with the existing railway-oriented {@link Result} type.
  *
- * <p>Requires {@code --enable-preview} (Java 25).
+ * <p>Requires {@code --enable-preview} (Java 26).
  */
 public final class Parallel {
 

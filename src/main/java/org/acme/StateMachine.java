@@ -144,7 +144,7 @@ public final class StateMachine<S, E, D> {
         Transition<S, D> apply(S state, E event, D data);
     }
 
-    // ── Internal envelope (same pattern as Actor) ─────────────────────────────
+    // ── Internal envelope (same pattern as Proc) ─────────────────────────────
 
     private record Envelope<E>(E event, CompletableFuture<Object> reply) {}
 

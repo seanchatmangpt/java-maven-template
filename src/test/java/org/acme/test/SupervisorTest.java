@@ -10,13 +10,14 @@ import java.util.concurrent.TimeoutException;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.constraints.IntRange;
+import org.acme.ProcRef;
 import org.acme.Supervisor;
 import org.acme.Supervisor.Strategy;
 import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Demonstrates Joe Armstrong's OTP supervision tree in Java 25.
+ * Demonstrates Joe Armstrong's OTP supervision tree in Java 26.
  *
  * <p>Armstrong: <em>"A supervisor process that is responsible for starting, stopping and monitoring
  * child processes is the key to reliable systems."</em>
@@ -46,7 +47,7 @@ class SupervisorTest implements WithAssertions {
 
     // ── Helper: ask with a short timeout (returns -1 on failure) ──────────
 
-    private static int tryGet(org.acme.ActorRef<Integer, CounterMsg> ref) {
+    private static int tryGet(ProcRef<Integer, CounterMsg> ref) {
         try {
             return ref.ask(new CounterMsg.Get()).get(200, MILLISECONDS);
         } catch (ExecutionException | InterruptedException | TimeoutException e) {
@@ -68,7 +69,7 @@ class SupervisorTest implements WithAssertions {
         // Crash it
         ref.tell(new CounterMsg.Boom("injected fault"));
 
-        // Supervisor restarts; actor resets to initial state (0)
+        // Supervisor restarts; process resets to initial state (0)
         await().atMost(Duration.ofSeconds(2))
                 .untilAsserted(() -> assertThat(tryGet(ref)).isEqualTo(0));
 
@@ -149,14 +150,14 @@ class SupervisorTest implements WithAssertions {
     }
 
     @Property
-    void supervisedActorIsAlwaysEventuallyReachable(
+    void supervisedProcessIsAlwaysEventuallyReachable(
             @ForAll @IntRange(min = 1, max = 5) int crashCount) throws Exception {
         var sup = new Supervisor(Strategy.ONE_FOR_ONE, crashCount + 2, Duration.ofSeconds(30));
         var ref = sup.supervise("resilient", 0, SupervisorTest::counterHandler);
 
         for (int i = 0; i < crashCount; i++) {
             ref.tell(new CounterMsg.Boom("crash " + i));
-            // After each crash the actor must eventually respond
+            // After each crash the process must eventually respond
             await().atMost(Duration.ofSeconds(2))
                     .until(() -> tryGet(ref) >= 0); // -1 means timed-out (restarting)
         }

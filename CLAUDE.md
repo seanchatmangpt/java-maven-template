@@ -67,10 +67,14 @@ mvnd verify -Dit.test=MathsIT  # integration test
 
 **Formatting:** Spotless with Google Java Format (AOSP style) runs automatically at compile phase. The PostToolUse hook (see below) auto-runs `spotless:apply` after every Java file edit — do not run it manually.
 
-**Joe Armstrong / Erlang/OTP patterns:** Three additions from YAWL demonstrate core principles:
-- `CrashRecovery` — "let it crash" + supervised retry via virtual threads
-- `Actor<S,M>` — lightweight actor with virtual-thread mailbox and message passing
-- `Parallel` — structured fan-out with fail-fast semantics (`StructuredTaskScope.ShutdownOnFailure`)
+**Joe Armstrong / Erlang/OTP patterns** — seven primitives in `org.acme`:
+- `Proc<S,M>` — lightweight process: virtual-thread mailbox + pure state handler (OTP: `spawn/3`)
+- `ProcRef<S,M>` — stable Pid: opaque handle that survives supervisor restarts
+- `Supervisor` — supervision tree: ONE_FOR_ONE / ONE_FOR_ALL / REST_FOR_ONE with sliding restart window
+- `CrashRecovery` — "let it crash" + supervised retry via isolated virtual threads
+- `StateMachine<S,E,D>` — gen_statem: state/event/data separation + sealed `Transition` hierarchy
+- `ProcessLink` — process links: bilateral crash propagation (`link/1`, `spawn_link/3`)
+- `Parallel` — structured fan-out with fail-fast semantics (`StructuredTaskScope`, OTP: `pmap`)
 
 ## Claude Code Configuration (`.claude/`)
 
@@ -80,7 +84,7 @@ mvnd verify -Dit.test=MathsIT  # integration test
 
 **SessionStart** — runs when a session begins:
 - Displays `git status`, current branch, and last 5 commits so Claude has immediate project context
-- Verifies the Java version (must be 25 for `--enable-preview`)
+- Verifies the Java version (must be 26 for `--enable-preview`)
 
 **PostToolUse (Edit/Write on `.java` files)** — runs automatically after every Java file edit:
 - Auto-runs `./mvnw spotless:apply -q` after each edit
