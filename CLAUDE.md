@@ -2,26 +2,55 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Build Tool: mvnd (Maven Daemon, Maven 4) — REQUIRED
+
+**mvnd is mandatory.** Raw `mvn`/`./mvnw` is not used — mvnd 2.0.0-rc-3 (bundling Maven 4) is the build tool.
+
+**Install once:**
+```bash
+# Download mvnd 2.0.0-rc-3 (Linux x86_64)
+# https://github.com/apache/maven-mvnd/releases/download/2.0.0-rc-3/maven-mvnd-2.0.0-rc-3-linux-amd64.tar.gz
+# Symlink: ln -sf /path/to/mvnd/bin/mvnd /usr/local/bin/mvnd
+```
+
+**Start proxy before building** (required when `https_proxy` is active in the environment):
+```bash
+python3 maven-proxy-v2.py &   # starts local proxy on 127.0.0.1:3128
+```
+
+**Configure Maven to use local proxy** (add to `~/.m2/settings.xml`):
+```xml
+<settings>
+  <proxies>
+    <proxy><id>local</id><active>true</active><protocol>https</protocol>
+      <host>127.0.0.1</host><port>3128</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts></proxy>
+    <proxy><id>local-http</id><active>true</active><protocol>http</protocol>
+      <host>127.0.0.1</host><port>3128</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts></proxy>
+  </proxies>
+</settings>
+```
+
 ## Commands
 
 ```bash
-./mvnw test              # Run unit tests only
-./mvnw verify            # Run all tests (unit + integration) and quality checks
-./mvnw spotless:apply    # Format code (Google Java Format, AOSP style)
-./mvnw spotless:check    # Check formatting without applying
-./mvnw jshell:run        # Start interactive JShell REPL
-./mvnw package -Dshade   # Build a fat/uber JAR (shade profile)
+mvnd test              # Run unit tests only
+mvnd verify            # Run all tests (unit + integration) and quality checks
+mvnd spotless:apply    # Format code (Google Java Format, AOSP style)
+mvnd spotless:check    # Check formatting without applying
+mvnd package -Dshade   # Build a fat/uber JAR (shade profile)
 ```
 
 **Run a single test class:**
 ```bash
-./mvnw test -Dtest=MathsTest
-./mvnw verify -Dit.test=MathsIT  # integration test
+mvnd test -Dtest=MathsTest
+mvnd verify -Dit.test=MathsIT  # integration test
 ```
 
 ## Architecture
 
-**Java 25 JPMS library** (`org.acme` module) targeting Java 25 with preview features enabled (`--enable-preview`).
+**Java 25 JPMS library** (`org.acme` module) targeting Java 25 with preview features enabled (`--enable-preview`). JDK: GraalVM Community CE 25.0.2.
 
 **Test separation:**
 - Unit tests: `*Test.java` — run by maven-surefire-plugin via `./mvnw test`
@@ -35,9 +64,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Formatting:** Spotless with Google Java Format (AOSP style) runs automatically at compile phase. The PostToolUse hook (see below) auto-runs `spotless:apply` after every Java file edit — do not run it manually.
 
-**Build cache:** Maven Build Cache Extension is active; incremental builds skip unchanged modules automatically.
-
-**Maven flags (always applied via `.mvn/maven.config`):** `-B` (batch mode), `--fail-at-end`, `--no-transfer-progress`.
+**Joe Armstrong / Erlang/OTP patterns:** Three additions from YAWL demonstrate core principles:
+- `CrashRecovery` — "let it crash" + supervised retry via virtual threads
+- `Actor<S,M>` — lightweight actor with virtual-thread mailbox and message passing
+- `Parallel` — structured fan-out with fail-fast semantics (`StructuredTaskScope.ShutdownOnFailure`)
 
 ## Claude Code Configuration (`.claude/`)
 
@@ -55,12 +85,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Permissions
 
-`./mvnw *` and `git *` are pre-approved; Claude Code will not prompt for confirmation on these commands.
+`mvnd *`, `./mvnw *`, and `git *` are pre-approved; Claude Code will not prompt for confirmation on these commands.
 
 ### Optional: Pre-warm the build cache
 
-For long sessions, warm the Maven Build Cache before starting:
+For long sessions, warm the build cache before starting:
 
 ```bash
-./mvnw compile -q -T1C
+mvnd compile -q -T1C
 ```
