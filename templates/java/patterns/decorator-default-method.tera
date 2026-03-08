@@ -1,0 +1,94 @@
+{# Decorator (Default Methods) — Add behavior dynamically via interface default methods #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyComponent"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  base_method: "process"
+  input_type: "String"
+  output_type: "String"
+  decorators: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+import java.util.function.UnaryOperator;
+
+/**
+ * {{ javadoc | default(value="Decorator pattern using interface default methods (Java 8+).") }}
+ *
+ * <p>BEFORE (legacy): Abstract decorator class wrapping a delegate with forwarding methods.
+ * <p>AFTER (modern): Functional interface with default method composition.
+ */
+@FunctionalInterface
+public interface {{ name }} {
+
+    /**
+     * Core operation to be decorated.
+     */
+    {{ output_type }} {{ base_method }}({{ input_type }} input);
+
+    // =========================================================================
+    // Decorator composition via default methods
+    // =========================================================================
+
+    /**
+     * Returns a new component that applies {@code this} then {@code after}.
+     */
+    default {{ name }} andThen({{ name }} after) {
+        Objects.requireNonNull(after);
+        return input -> after.{{ base_method }}(this.{{ base_method }}(input));
+    }
+
+    /**
+     * Returns a new component that applies {@code before} then {@code this}.
+     */
+    default {{ name }} compose({{ name }} before) {
+        Objects.requireNonNull(before);
+        return input -> this.{{ base_method }}(before.{{ base_method }}(input));
+    }
+
+    /**
+     * Wraps this component with a decorator that transforms the output.
+     */
+    default {{ name }} decorated(UnaryOperator<{{ output_type }}> decorator) {
+        return input -> decorator.apply(this.{{ base_method }}(input));
+    }
+
+    /**
+     * Returns the identity component (no-op decorator).
+     */
+    static {{ name }} identity() {
+        return input -> input;
+    }
+
+    // =========================================================================
+    // Built-in decorators
+    // =========================================================================
+{% for dec in decorators %}
+
+    {% if dec.javadoc is defined %}/**
+     * {{ dec.javadoc }}
+     */
+    {% endif %}static {{ name }} {{ dec.name }}({% for p in dec.params | default(value=[]) %}{{ p.type }} {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        return {{ dec.body }};
+    }
+{% endfor %}
+
+    /**
+     * Chains multiple decorators into a single component.
+     * Applied left-to-right: first decorator processes first.
+     */
+    static {{ name }} pipeline({{ name }}... components) {
+        {{ name }} result = identity();
+        for (var component : components) {
+            result = result.andThen(component);
+        }
+        return result;
+    }
+}

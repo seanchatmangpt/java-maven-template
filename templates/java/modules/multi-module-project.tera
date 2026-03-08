@@ -1,0 +1,112 @@
+{# Multi-module Maven project — Parent POM with module reactor #}
+---
+to: "pom.xml"
+vars:
+  group_id: "org.acme"
+  artifact_id: "my-project"
+  version: "1.0-SNAPSHOT"
+  java_version: "26"
+  modules: []
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>{{ group_id }}</groupId>
+    <artifactId>{{ artifact_id }}</artifactId>
+    <version>{{ version }}</version>
+    <packaging>pom</packaging>
+
+    <properties>
+        <maven.compiler.release>{{ java_version }}</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <junit.version>6.0.0</junit.version>
+        <assertj.version>3.27.6</assertj.version>
+        <jqwik.version>1.9.3</jqwik.version>
+        <instancio.version>5.5.1</instancio.version>
+        <archunit.version>1.4.1</archunit.version>
+        <awaitility.version>4.3.0</awaitility.version>
+    </properties>
+
+    <modules>
+{% for mod in modules %}
+        <module>{{ mod.name }}</module>
+{% endfor %}
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Inter-module dependencies -->
+{% for mod in modules %}
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>{{ mod.name }}</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+{% endfor %}
+            <!-- Test dependencies -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>net.jqwik</groupId>
+                <artifactId>jqwik</artifactId>
+                <version>${jqwik.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.1</version>
+                    <configuration>
+                        <compilerArgs>
+                            <arg>--enable-preview</arg>
+                        </compilerArgs>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.4</version>
+                    <configuration>
+                        <argLine>--enable-preview</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>3.5.4</version>
+                    <configuration>
+                        <argLine>--enable-preview</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>com.diffplug.spotless</groupId>
+                    <artifactId>spotless-maven-plugin</artifactId>
+                    <version>3.0.0</version>
+                    <configuration>
+                        <java>
+                            <googleJavaFormat>
+                                <style>AOSP</style>
+                            </googleJavaFormat>
+                        </java>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

@@ -1,0 +1,106 @@
+{# Builder (Record-based) — Step builder producing an immutable record #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyEntity"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  components: []
+  required_components: []
+  optional_components: []
+  validation: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public record {{ name }}(
+{% for comp in components %}
+        {{ comp.type }} {{ comp.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+) {
+
+    /**
+     * Compact constructor with validation.
+     */
+    public {{ name }} {
+{% for comp in required_components | default(value=components) %}
+{% if comp.type == "String" %}
+        Objects.requireNonNull({{ comp.name }}, "{{ comp.name }} must not be null");
+        if ({{ comp.name }}.isBlank()) {
+            throw new IllegalArgumentException("{{ comp.name }} must not be blank");
+        }
+{% elif comp.nullable is undefined or not comp.nullable %}
+        Objects.requireNonNull({{ comp.name }}, "{{ comp.name }} must not be null");
+{% endif %}
+{% endfor %}
+{% for v in validation %}
+        {{ v }}
+{% endfor %}
+    }
+
+    /**
+     * Returns a new builder initialized from this record's values.
+     */
+    public Builder toBuilder() {
+        return new Builder()
+{% for comp in components %}
+                .{{ comp.name }}(this.{{ comp.name }}){% if loop.last %};{% endif %}
+
+{% endfor %}
+    }
+
+    /**
+     * Creates a new builder.
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /**
+     * Mutable builder for {@code {{ name }}}.
+     *
+     * <p>Usage:
+     * <pre>{@code
+     * var entity = {{ name }}.builder()
+{% for comp in components %}
+     *         .{{ comp.name }}({{ comp.example | default(value="...") }})
+{% endfor %}
+     *         .build();
+     * }</pre>
+     */
+    public static final class Builder {
+{% for comp in components %}
+        private {{ comp.type }} {{ comp.name }}{% if comp.default is defined %} = {{ comp.default }}{% endif %};
+{% endfor %}
+
+        private Builder() {}
+{% for comp in components %}
+
+        public Builder {{ comp.name }}({{ comp.type }} {{ comp.name }}) {
+            this.{{ comp.name }} = {{ comp.name }};
+            return this;
+        }
+{% endfor %}
+
+        /**
+         * Builds a new {@code {{ name }}} from the accumulated values.
+         *
+         * @throws NullPointerException if required fields are null
+         * @throws IllegalArgumentException if validation fails
+         */
+        public {{ name }} build() {
+            return new {{ name }}({% for comp in components %}{{ comp.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+        }
+    }
+}

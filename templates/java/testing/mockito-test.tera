@@ -1,0 +1,145 @@
+{# Mockito mock-based testing patterns #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MockitoExamples"
+  package: "org.acme.test"
+  output_dir: "src/test/java"
+  service_under_test: "MyService"
+  mock_dependencies: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
+
+/**
+ * Mockito testing patterns.
+ *
+ * <h2>Key patterns:</h2>
+ * <ul>
+ *     <li>{@code when(mock.method()).thenReturn(value)} — stubbing</li>
+ *     <li>{@code verify(mock).method()} — verification</li>
+ *     <li>{@code @Mock} + {@code @InjectMocks} — declarative setup</li>
+ *     <li>Argument matchers: {@code any()}, {@code eq()}, {@code argThat()}</li>
+ * </ul>
+ */
+class {{ name }} implements WithAssertions {
+
+    // =========================================================================
+    // PATTERN 1: Manual mock creation
+    // =========================================================================
+    interface Repository<T> {
+        Optional<T> findById(String id);
+        T save(T entity);
+        List<T> findAll();
+        void delete(String id);
+    }
+
+    record User(String id, String name) {}
+
+    @Test
+    void manualMockCreation() {
+        @SuppressWarnings("unchecked")
+        Repository<User> repo = mock(Repository.class);
+
+        // Stubbing
+        when(repo.findById("1")).thenReturn(Optional.of(new User("1", "Alice")));
+        when(repo.findById("unknown")).thenReturn(Optional.empty());
+
+        // Exercise
+        var result = repo.findById("1");
+
+        // Verify
+        assertThat(result).isPresent().hasValueSatisfying(user -> {
+            assertThat(user.name()).isEqualTo("Alice");
+        });
+        verify(repo).findById("1");
+    }
+
+    // =========================================================================
+    // PATTERN 2: Argument matchers
+    // =========================================================================
+    @Test
+    void argumentMatchers() {
+        @SuppressWarnings("unchecked")
+        Repository<User> repo = mock(Repository.class);
+
+        when(repo.findById(anyString())).thenReturn(Optional.of(new User("x", "Default")));
+        when(repo.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var saved = repo.save(new User("2", "Bob"));
+        assertThat(saved.name()).isEqualTo("Bob");
+
+        verify(repo).save(any(User.class));
+    }
+
+    // =========================================================================
+    // PATTERN 3: Verification — times, never, order
+    // =========================================================================
+    @Test
+    void verificationPatterns() {
+        @SuppressWarnings("unchecked")
+        Repository<User> repo = mock(Repository.class);
+
+        repo.findById("1");
+        repo.findById("2");
+        repo.findById("1");
+
+        verify(repo, times(2)).findById("1");
+        verify(repo, times(1)).findById("2");
+        verify(repo, never()).delete(anyString());
+        verifyNoMoreInteractions(repo);
+    }
+
+    // =========================================================================
+    // PATTERN 4: Exception stubbing
+    // =========================================================================
+    @Test
+    void exceptionStubbing() {
+        @SuppressWarnings("unchecked")
+        Repository<User> repo = mock(Repository.class);
+
+        when(repo.findById("error")).thenThrow(new RuntimeException("DB down"));
+
+        assertThatThrownBy(() -> repo.findById("error"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("DB down");
+    }
+
+    // =========================================================================
+    // PATTERN 5: Answer (dynamic response)
+    // =========================================================================
+    @Test
+    void dynamicAnswer() {
+        @SuppressWarnings("unchecked")
+        Repository<User> repo = mock(Repository.class);
+
+        when(repo.findById(anyString())).thenAnswer(invocation -> {
+            String id = invocation.getArgument(0);
+            return Optional.of(new User(id, "User-" + id));
+        });
+
+        var result = repo.findById("42");
+        assertThat(result).isPresent();
+        assertThat(result.get().name()).isEqualTo("User-42");
+    }
+}

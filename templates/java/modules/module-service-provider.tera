@@ -1,0 +1,88 @@
+{# Module Service Provider — SPI pattern with provides...with and ServiceLoader #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyServiceProvider"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  service_interface: "MyService"
+  service_package: "org.acme"
+  implementations: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+{% if service_package != package %}
+import {{ service_package }}.{{ service_interface }};
+{% endif %}
+import java.util.List;
+import java.util.ServiceLoader;
+import java.util.stream.Collectors;
+
+/**
+ * {{ javadoc | default(value="Service provider using JPMS ServiceLoader (Java 9+).") }}
+ *
+ * <h2>Module declaration requirements:</h2>
+ * <pre>{@code
+ * // In the service module's module-info.java:
+ * module {{ service_package | replace(from='.', to='.') }} {
+ *     exports {{ service_package }};
+ *     uses {{ service_package }}.{{ service_interface }};
+ * }
+ *
+ * // In the provider module's module-info.java:
+ * module {{ package | replace(from='.', to='.') }} {
+ *     requires {{ service_package | replace(from='.', to='.') }};
+ *     provides {{ service_package }}.{{ service_interface }}
+ *         with {% for impl in implementations %}{{ package }}.{{ impl.name }}{% if not loop.last %}, {% endif %}{% endfor %};
+ * }
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    /**
+     * Loads all available implementations of {@link {{ service_interface }}}.
+     */
+    public static List<{{ service_interface }}> loadAll() {
+        return ServiceLoader.load({{ service_interface }}.class)
+                .stream()
+                .map(ServiceLoader.Provider::get)
+                .toList();
+    }
+
+    /**
+     * Loads the first available implementation.
+     *
+     * @throws java.util.NoSuchElementException if no implementation is found
+     */
+    public static {{ service_interface }} loadFirst() {
+        return ServiceLoader.load({{ service_interface }}.class)
+                .findFirst()
+                .orElseThrow(() -> new java.util.NoSuchElementException(
+                        "No implementation found for {{ service_interface }}"));
+    }
+
+    // =========================================================================
+    // Service implementations
+    // =========================================================================
+{% for impl in implementations %}
+
+    {% if impl.javadoc is defined %}/**
+     * {{ impl.javadoc }}
+     */
+    {% endif %}public static final class {{ impl.name }} implements {{ service_interface }} {
+{% for method in impl.methods | default(value=[]) %}
+
+        @Override
+        public {{ method.return_type }} {{ method.name }}({% for param in method.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ method.body }}
+        }
+{% endfor %}
+    }
+{% endfor %}
+}

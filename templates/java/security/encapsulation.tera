@@ -1,0 +1,107 @@
+{# Proper encapsulation — Replacing reflection-based field access with safe APIs #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "EncapsulationPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
+
+/**
+ * Proper encapsulation patterns — replacing reflection-based access.
+ *
+ * <h2>Migrations:</h2>
+ * <ul>
+ *     <li>{@code field.setAccessible(true)} → proper accessor methods or records</li>
+ *     <li>Reflection-based serialization → record components</li>
+ *     <li>{@code Class.getDeclaredField(name)} → typed accessor interface</li>
+ *     <li>Deep reflection for testing → package-private or module opens</li>
+ * </ul>
+ *
+ * <p>Java 26 enforces strong encapsulation by default (JEP 500: warnings on final field mutation).
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Record instead of reflection-accessed POJO
+    // BEFORE: Field f = obj.getClass().getDeclaredField("name");
+    //         f.setAccessible(true);
+    //         String name = (String) f.get(obj);
+    // AFTER:  Records expose components as public accessor methods
+    // =========================================================================
+    public record Person(String name, int age, String email) {
+        public Person {
+            Objects.requireNonNull(name);
+            Objects.requireNonNull(email);
+            if (age < 0) throw new IllegalArgumentException("age must be non-negative");
+        }
+    }
+    // Usage: person.name() — no reflection needed
+
+    // =========================================================================
+    // PATTERN 2: Typed accessor interface instead of reflection
+    // BEFORE: Method m = obj.getClass().getMethod("get" + capitalize(fieldName));
+    //         Object value = m.invoke(obj);
+    // AFTER:
+    // =========================================================================
+    @FunctionalInterface
+    public interface Accessor<T, R> extends Function<T, R> {
+        R extract(T source);
+
+        @Override
+        default R apply(T source) { return extract(source); }
+    }
+
+    // Example typed accessors — zero reflection at runtime
+    public static final Accessor<Person, String> PERSON_NAME = Person::name;
+    public static final Accessor<Person, Integer> PERSON_AGE = Person::age;
+    public static final Accessor<Person, String> PERSON_EMAIL = Person::email;
+
+    // =========================================================================
+    // PATTERN 3: Sealed copy-with pattern instead of reflective bean copy
+    // BEFORE: BeanUtils.copyProperties(source, target); // reflection-heavy
+    // AFTER:
+    // =========================================================================
+    public static Person withName(Person p, String name) {
+        return new Person(name, p.age(), p.email());
+    }
+
+    public static Person withAge(Person p, int age) {
+        return new Person(p.name(), age, p.email());
+    }
+
+    // =========================================================================
+    // PATTERN 4: Module-based visibility instead of setAccessible
+    // BEFORE: field.setAccessible(true); // bypasses access control
+    // AFTER:  Use 'opens' in module-info.java for legitimate reflection needs
+    // =========================================================================
+    /*
+     * In module-info.java:
+     *
+     * module org.acme {
+     *     exports org.acme;                    // public API
+     *     opens org.acme to spring.core;       // reflection only for Spring
+     * }
+     *
+     * This is explicit, auditable, and reversible — unlike setAccessible(true).
+     */
+
+    // =========================================================================
+    // PATTERN 5: Optional instead of null-returning reflection
+    // BEFORE: Object val = field.get(obj); if (val != null) { ... }
+    // AFTER:
+    // =========================================================================
+    public static <T, R> Optional<R> safeExtract(T source, Accessor<T, R> accessor) {
+        return Optional.ofNullable(source).map(accessor);
+    }
+}

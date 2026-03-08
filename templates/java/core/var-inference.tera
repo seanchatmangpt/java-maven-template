@@ -1,0 +1,94 @@
+{# Local variable type inference — Demonstrates idiomatic var usage patterns for Java 10+ #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "VarExamples"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  examples: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * Demonstrates idiomatic {@code var} usage (Java 10+).
+ *
+ * <h2>When to use {@code var}:</h2>
+ * <ul>
+ *     <li>Local variables where the type is obvious from the right-hand side</li>
+ *     <li>Complex generic types (e.g., {@code Map<String, List<Integer>>})</li>
+ *     <li>try-with-resources variables</li>
+ *     <li>For-loop variables</li>
+ * </ul>
+ *
+ * <h2>When NOT to use {@code var}:</h2>
+ * <ul>
+ *     <li>When the type isn't clear from context</li>
+ *     <li>Fields — {@code var} is only for local variables</li>
+ *     <li>Method parameters and return types</li>
+ *     <li>When the inferred type would be too broad (e.g., Object)</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // PATTERN 1: Obvious from constructor
+    // BEFORE: HashMap<String, List<Integer>> map = new HashMap<>();
+    // AFTER:
+    public static void constructorInference() {
+        var map = new java.util.HashMap<String, List<Integer>>();
+        var list = new java.util.ArrayList<String>();
+        var set = new java.util.HashSet<Integer>();
+    }
+
+    // PATTERN 2: Obvious from static factory
+    // BEFORE: List<String> items = List.of("a", "b", "c");
+    // AFTER:
+    public static void factoryInference() {
+        var items = List.of("a", "b", "c");
+        var entry = Map.entry("key", 42);
+        var path = java.nio.file.Path.of("/tmp/example.txt");
+    }
+
+    // PATTERN 3: Stream chains with complex intermediate types
+    // BEFORE: Map<String, List<String>> grouped = items.stream().collect(Collectors.groupingBy(...));
+    // AFTER:
+    public static void streamInference(List<String> items) {
+        var grouped = items.stream()
+                .collect(Collectors.groupingBy(String::length));
+        var sorted = items.stream()
+                .sorted()
+                .toList();
+    }
+
+    // PATTERN 4: Enhanced for-loop
+    // BEFORE: for (Map.Entry<String, Integer> entry : map.entrySet())
+    // AFTER:
+    public static void forLoopInference(Map<String, Integer> map) {
+        for (var entry : map.entrySet()) {
+            var key = entry.getKey();
+            var value = entry.getValue();
+        }
+    }
+
+    // PATTERN 5: Try-with-resources
+    // BEFORE: try (BufferedReader reader = Files.newBufferedReader(path))
+    // AFTER:
+    public static void tryWithResourcesInference() throws Exception {
+        var path = java.nio.file.Path.of("example.txt");
+        try (var reader = java.nio.file.Files.newBufferedReader(path)) {
+            var line = reader.readLine();
+        }
+    }
+{% for example in examples %}
+
+    {{ example.body }}
+{% endfor %}
+}

@@ -1,0 +1,154 @@
+{# Observer (Flow API) — Reactive event subscription using java.util.concurrent.Flow #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyEventBus"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  event_type: "Object"
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Flow;
+import java.util.concurrent.SubmissionPublisher;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+
+/**
+ * {{ javadoc | default(value="Observer pattern implemented with Java Flow API (reactive streams).") }}
+ *
+ * <p>BEFORE (legacy): {@code java.util.Observable} (deprecated) or custom listener interfaces.
+ * <p>AFTER (modern): {@code java.util.concurrent.Flow} with backpressure support.
+ *
+ * <h2>Usage:</h2>
+ * <pre>{@code
+ * var bus = new {{ name }}();
+ * bus.subscribe(event -> System.out.println(event));
+ * bus.publish(someEvent);
+ * bus.close();
+ * }</pre>
+ */
+public class {{ name }}<E> implements AutoCloseable {
+
+    private final SubmissionPublisher<E> publisher;
+
+    public {{ name }}() {
+        this(Executors.newVirtualThreadPerTaskExecutor());
+    }
+
+    public {{ name }}(Executor executor) {
+        this.publisher = new SubmissionPublisher<>(executor, Flow.defaultBufferSize());
+    }
+
+    /**
+     * Subscribes a consumer to all events.
+     */
+    public Subscription subscribe(Consumer<E> onNext) {
+        return subscribe(onNext, Throwable::printStackTrace, () -> {});
+    }
+
+    /**
+     * Subscribes with full control: onNext, onError, onComplete.
+     */
+    public Subscription subscribe(Consumer<E> onNext, Consumer<Throwable> onError, Runnable onComplete) {
+        var subscriber = new SimpleSubscriber<>(onNext, onError, onComplete);
+        publisher.subscribe(subscriber);
+        return subscriber;
+    }
+
+    /**
+     * Subscribes only to events matching the given predicate.
+     */
+    public Subscription subscribeFiltered(Predicate<E> filter, Consumer<E> onNext) {
+        var subscriber = new FilteredSubscriber<>(filter, onNext);
+        publisher.subscribe(subscriber);
+        return subscriber;
+    }
+
+    /**
+     * Publishes an event to all subscribers.
+     */
+    public void publish(E event) {
+        publisher.submit(event);
+    }
+
+    /**
+     * Returns the number of active subscribers.
+     */
+    public int subscriberCount() {
+        return publisher.getNumberOfSubscribers();
+    }
+
+    @Override
+    public void close() {
+        publisher.close();
+    }
+
+    /**
+     * Cancellable subscription handle.
+     */
+    public interface Subscription {
+        void cancel();
+    }
+
+    // =========================================================================
+    // Internal subscriber implementations
+    // =========================================================================
+
+    private static class SimpleSubscriber<E> implements Flow.Subscriber<E>, Subscription {
+        private final Consumer<E> onNext;
+        private final Consumer<Throwable> onError;
+        private final Runnable onComplete;
+        private Flow.Subscription subscription;
+
+        SimpleSubscriber(Consumer<E> onNext, Consumer<Throwable> onError, Runnable onComplete) {
+            this.onNext = onNext;
+            this.onError = onError;
+            this.onComplete = onComplete;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override public void onNext(E item) { onNext.accept(item); }
+        @Override public void onError(Throwable throwable) { onError.accept(throwable); }
+        @Override public void onComplete() { onComplete.run(); }
+        @Override public void cancel() { if (subscription != null) subscription.cancel(); }
+    }
+
+    private static class FilteredSubscriber<E> implements Flow.Subscriber<E>, Subscription {
+        private final Predicate<E> filter;
+        private final Consumer<E> onNext;
+        private Flow.Subscription subscription;
+
+        FilteredSubscriber(Predicate<E> filter, Consumer<E> onNext) {
+            this.filter = filter;
+            this.onNext = onNext;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public void onNext(E item) {
+            if (filter.test(item)) onNext.accept(item);
+        }
+
+        @Override public void onError(Throwable throwable) { throwable.printStackTrace(); }
+        @Override public void onComplete() {}
+        @Override public void cancel() { if (subscription != null) subscription.cancel(); }
+    }
+}

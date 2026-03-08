@@ -1,0 +1,126 @@
+{# ProcessBuilder — Modern process execution replacing Runtime.exec() (Java 9+) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "ProcessPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.io.IOException;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * ProcessBuilder patterns (Java 9+).
+ *
+ * <p>BEFORE: {@code Runtime.getRuntime().exec(cmd)} — no control over I/O, environment, or timeouts.
+ * <p>AFTER: {@code ProcessBuilder} with full control + {@code ProcessHandle} for introspection.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    /**
+     * Result of a process execution.
+     */
+    public record ProcessResult(int exitCode, String stdout, String stderr) {
+        public boolean isSuccess() { return exitCode == 0; }
+    }
+
+    // =========================================================================
+    // PATTERN 1: Simple command execution with output capture
+    // BEFORE: Process p = Runtime.getRuntime().exec("ls -la");
+    //         BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+    // AFTER:
+    // =========================================================================
+    public static ProcessResult run(String... command) throws IOException, InterruptedException {
+        var process = new ProcessBuilder(command)
+                .redirectErrorStream(false)
+                .start();
+
+        var stdout = new String(process.getInputStream().readAllBytes());
+        var stderr = new String(process.getErrorStream().readAllBytes());
+        int exitCode = process.waitFor();
+
+        return new ProcessResult(exitCode, stdout, stderr);
+    }
+
+    // =========================================================================
+    // PATTERN 2: Command with timeout
+    // BEFORE: No built-in timeout support
+    // AFTER:
+    // =========================================================================
+    public static Optional<ProcessResult> runWithTimeout(Duration timeout, String... command)
+            throws IOException, InterruptedException {
+        var process = new ProcessBuilder(command).start();
+        var stdout = new String(process.getInputStream().readAllBytes());
+        var stderr = new String(process.getErrorStream().readAllBytes());
+
+        boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            return Optional.empty();
+        }
+        return Optional.of(new ProcessResult(process.exitValue(), stdout, stderr));
+    }
+
+    // =========================================================================
+    // PATTERN 3: Working directory and environment
+    // BEFORE: Can't set working directory with Runtime.exec() easily
+    // AFTER:
+    // =========================================================================
+    public static ProcessResult runInDir(Path workingDir, String... command)
+            throws IOException, InterruptedException {
+        var pb = new ProcessBuilder(command)
+                .directory(workingDir.toFile())
+                .redirectErrorStream(true);
+        pb.environment().put("JAVA_HOME", System.getProperty("java.home"));
+
+        var process = pb.start();
+        var output = new String(process.getInputStream().readAllBytes());
+        int exitCode = process.waitFor();
+        return new ProcessResult(exitCode, output, "");
+    }
+
+    // =========================================================================
+    // PATTERN 4: Pipeline (Java 9+)
+    // BEFORE: Manual piping with Process streams
+    // AFTER:
+    // =========================================================================
+    public static ProcessResult pipeline(List<List<String>> commands)
+            throws IOException, InterruptedException {
+        var builders = commands.stream()
+                .map(cmd -> new ProcessBuilder(cmd))
+                .toList();
+        var processes = ProcessBuilder.startPipeline(builders);
+        var last = processes.getLast();
+        var stdout = new String(last.getInputStream().readAllBytes());
+        int exitCode = last.waitFor();
+        return new ProcessResult(exitCode, stdout, "");
+    }
+
+    // =========================================================================
+    // PATTERN 5: ProcessHandle for process introspection (Java 9+)
+    // =========================================================================
+    public static void printCurrentProcessInfo() {
+        var handle = ProcessHandle.current();
+        System.out.println("PID: " + handle.pid());
+        handle.info().command().ifPresent(cmd -> System.out.println("Command: " + cmd));
+        handle.info().startInstant().ifPresent(start -> System.out.println("Started: " + start));
+        handle.info().totalCpuDuration().ifPresent(cpu -> System.out.println("CPU: " + cpu));
+    }
+
+    public static List<Long> childPids() {
+        return ProcessHandle.current().children()
+                .map(ProcessHandle::pid)
+                .toList();
+    }
+}

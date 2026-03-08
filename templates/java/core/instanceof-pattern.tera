@@ -1,0 +1,146 @@
+{# Pattern matching instanceof — Replaces instanceof + cast with pattern matching #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "InstanceofPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  custom_patterns: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Pattern matching instanceof (Java 16+, extended in Java 21+).
+ *
+ * <h2>Migration rules:</h2>
+ * <ul>
+ *     <li>{@code if (x instanceof Foo) { Foo f = (Foo) x; ... }}
+ *         → {@code if (x instanceof Foo f) { ... }}</li>
+ *     <li>Negation: {@code if (!(x instanceof Foo f)) return; /* f in scope */}</li>
+ *     <li>Guard: {@code if (x instanceof String s && s.length() > 5)}</li>
+ *     <li>Record pattern: {@code if (x instanceof Point(var a, var b))}</li>
+ *     <li>Nested: {@code if (x instanceof Pair(Point(var a, _), _))}</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Basic instanceof + cast → pattern variable
+    // BEFORE: if (obj instanceof String) { String s = (String) obj; return s.length(); }
+    // AFTER:
+    // =========================================================================
+    public static int lengthIfString(Object obj) {
+        if (obj instanceof String s) {
+            return s.length();
+        }
+        return -1;
+    }
+
+    // =========================================================================
+    // PATTERN 2: Negated pattern — early return with pattern variable in scope after
+    // BEFORE: if (!(obj instanceof String)) return; String s = (String) obj; ...
+    // AFTER:
+    // =========================================================================
+    public static String processString(Object obj) {
+        if (!(obj instanceof String s)) {
+            return "";
+        }
+        // s is in scope here due to definite assignment
+        return s.strip().toUpperCase();
+    }
+
+    // =========================================================================
+    // PATTERN 3: Pattern with guard condition
+    // BEFORE: if (obj instanceof String) { String s = (String) obj; if (s.length() > 5) { ... } }
+    // AFTER:
+    // =========================================================================
+    public static boolean isLongString(Object obj) {
+        return obj instanceof String s && s.length() > 5;
+    }
+
+    // =========================================================================
+    // PATTERN 4: Multiple type checks → cleaner chain
+    // BEFORE: if (obj instanceof Integer) { ... } else if (obj instanceof Double) { ... }
+    // AFTER:
+    // =========================================================================
+    public static String describe(Object obj) {
+        if (obj instanceof Integer i) {
+            return "Integer: " + i;
+        } else if (obj instanceof Double d) {
+            return "Double: " + d;
+        } else if (obj instanceof String s) {
+            return "String of length " + s.length();
+        } else if (obj instanceof Collection<?> c) {
+            return "Collection of size " + c.size();
+        } else if (obj instanceof Map<?, ?> m) {
+            return "Map with " + m.size() + " entries";
+        }
+        return "Unknown: " + obj.getClass().getSimpleName();
+    }
+
+    // =========================================================================
+    // PATTERN 5: Record patterns (Java 21+)
+    // BEFORE: if (obj instanceof Point) { Point p = (Point) obj; int x = p.x(); int y = p.y(); }
+    // AFTER:  if (obj instanceof Point(var x, var y)) { /* use x, y directly */ }
+    // =========================================================================
+    record Point(int x, int y) {}
+
+    public static double distanceFromOrigin(Object obj) {
+        if (obj instanceof Point(var x, var y)) {
+            return Math.sqrt(x * x + y * y);
+        }
+        return Double.NaN;
+    }
+
+    // =========================================================================
+    // PATTERN 6: Nested record patterns (Java 21+)
+    // BEFORE: if (obj instanceof Line) { Line l = (Line) obj; Point s = l.start(); int sx = s.x(); ... }
+    // AFTER:
+    // =========================================================================
+    record Line(Point start, Point end) {}
+
+    public static double lineLength(Object obj) {
+        if (obj instanceof Line(Point(var x1, var y1), Point(var x2, var y2))) {
+            return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+        }
+        return Double.NaN;
+    }
+
+    // =========================================================================
+    // PATTERN 7: Unnamed patterns (Java 22+)
+    // When you only need some components, use _ for the rest
+    // =========================================================================
+    public static int startX(Object obj) {
+        if (obj instanceof Line(Point(var x, _), _)) {
+            return x;
+        }
+        return 0;
+    }
+
+    // =========================================================================
+    // PATTERN 8: Primitive patterns in instanceof (Java 26+)
+    // BEFORE: if (obj instanceof Integer i && i >= 0 && i <= 255) { byte b = i.byteValue(); }
+    // AFTER:
+    // =========================================================================
+    public static String classifyNumber(Object obj) {
+        if (obj instanceof int i && i > 0) {
+            return "positive int: " + i;
+        } else if (obj instanceof double d && d != 0.0) {
+            return "nonzero double: " + d;
+        }
+        return "other";
+    }
+{% for pattern in custom_patterns %}
+
+    {{ pattern.body }}
+{% endfor %}
+}

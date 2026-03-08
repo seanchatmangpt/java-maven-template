@@ -1,0 +1,248 @@
+{# Chain of Responsibility using sealed interfaces and record-based handlers.
+   Replaces linked handler objects with a sealed dispatch model and a composable
+   chain builder. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "RequestPipeline"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  request: "Request"
+  response: "Response"
+---
+package {{ package }};
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Predicate;
+
+/**
+ * Chain of Responsibility with sealed interface and record-based handlers.
+ *
+ * <h2>Before — linked handler objects</h2>
+ * <pre>{@code
+ * public abstract class Handler {
+ *     private Handler next;
+ *
+ *     public void setNext(Handler next) {
+ *         this.next = next;
+ *     }
+ *
+ *     public Response handle(Request request) {
+ *         if (next != null) {
+ *             return next.handle(request);
+ *         }
+ *         return Response.unhandled();
+ *     }
+ * }
+ *
+ * public class AuthHandler extends Handler {
+ *     @Override
+ *     public Response handle(Request request) {
+ *         if (!request.isAuthenticated()) {
+ *             return Response.unauthorized();
+ *         }
+ *         return super.handle(request);
+ *     }
+ * }
+ *
+ * public class LoggingHandler extends Handler {
+ *     @Override
+ *     public Response handle(Request request) {
+ *         System.out.println("Handling: " + request);
+ *         return super.handle(request);
+ *     }
+ * }
+ *
+ * // Wiring:
+ * Handler auth = new AuthHandler();
+ * Handler logging = new LoggingHandler();
+ * auth.setNext(logging);
+ * Response r = auth.handle(request);
+ * }</pre>
+ *
+ * <h2>After — sealed dispatch with chain builder</h2>
+ * <pre>{@code
+ * var pipeline = RequestPipeline.builder()
+ *         .add(new AuthenticationHandler("Bearer"))
+ *         .add(new RateLimitHandler(100))
+ *         .add(new ValidationHandler(Set.of("name", "email")))
+ *         .add(new LoggingHandler("audit"))
+ *         .build();
+ *
+ * Response response = pipeline.process(request);
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    // -------------------------------------------------------------------------
+    // Core sealed handler interface
+    // -------------------------------------------------------------------------
+
+    /**
+     * A handler in the chain. Each handler either produces a {@link {{ response }}}
+     * or delegates to the next handler via the provided {@code next} function.
+     */
+    public sealed interface Handler
+            permits AuthenticationHandler, RateLimitHandler, ValidationHandler, LoggingHandler,
+                    ConditionalHandler {
+
+        /**
+         * Processes the request, optionally delegating to {@code next}.
+         *
+         * @param request the incoming request
+         * @param next    invokes the next handler in the chain
+         * @return the response produced by this handler or a downstream handler
+         */
+        {{ response }} handle({{ request }} request, Function<{{ request }}, {{ response }}> next);
+    }
+
+    // -------------------------------------------------------------------------
+    // Record-based handler implementations
+    // -------------------------------------------------------------------------
+
+    /** Rejects unauthenticated requests. */
+    public record AuthenticationHandler(String scheme) implements Handler {
+
+        @Override
+        public {{ response }} handle(
+                {{ request }} request, Function<{{ request }}, {{ response }}> next) {
+            if (request.header("Authorization") == null
+                    || !request.header("Authorization").startsWith(scheme)) {
+                return {{ response }}.unauthorized("Missing or invalid " + scheme + " token");
+            }
+            return next.apply(request);
+        }
+    }
+
+    /** Enforces a maximum number of requests per window. */
+    public record RateLimitHandler(int maxRequests) implements Handler {
+
+        @Override
+        public {{ response }} handle(
+                {{ request }} request, Function<{{ request }}, {{ response }}> next) {
+            if (request.rateLimitCount() > maxRequests) {
+                return {{ response }}.tooManyRequests(
+                        "Rate limit exceeded: " + maxRequests + " requests/window");
+            }
+            return next.apply(request);
+        }
+    }
+
+    /** Validates that required fields are present in the request body. */
+    public record ValidationHandler(java.util.Set<String> requiredFields) implements Handler {
+
+        @Override
+        public {{ response }} handle(
+                {{ request }} request, Function<{{ request }}, {{ response }}> next) {
+            var missing =
+                    requiredFields.stream()
+                            .filter(field -> request.body(field) == null)
+                            .toList();
+            if (!missing.isEmpty()) {
+                return {{ response }}.badRequest("Missing required fields: " + missing);
+            }
+            return next.apply(request);
+        }
+    }
+
+    /** Logs the request and response for observability. */
+    public record LoggingHandler(String logCategory) implements Handler {
+
+        @Override
+        public {{ response }} handle(
+                {{ request }} request, Function<{{ request }}, {{ response }}> next) {
+            System.out.printf("[%s] >> %s %s%n", logCategory, request.method(), request.path());
+            {{ response }} response = next.apply(request);
+            System.out.printf("[%s] << %d%n", logCategory, response.statusCode());
+            return response;
+        }
+    }
+
+    /** Conditionally applies a delegate handler when a predicate matches. */
+    public record ConditionalHandler(Predicate<{{ request }}> condition, Handler delegate)
+            implements Handler {
+
+        @Override
+        public {{ response }} handle(
+                {{ request }} request, Function<{{ request }}, {{ response }}> next) {
+            if (condition.test(request)) {
+                return delegate.handle(request, next);
+            }
+            return next.apply(request);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Chain builder
+    // -------------------------------------------------------------------------
+
+    private final List<Handler> handlers;
+
+    private {{ name }}(List<Handler> handlers) {
+        this.handlers = Collections.unmodifiableList(handlers);
+    }
+
+    /**
+     * Processes a request through the entire handler chain.
+     *
+     * @param request the incoming request
+     * @return the response from the first handler that produces one, or a default
+     *     terminal response
+     */
+    public {{ response }} process({{ request }} request) {
+        Function<{{ request }}, {{ response }}> chain = req -> {{ response }}.notFound();
+
+        // Build the chain from tail to head so each handler wraps the next
+        for (int i = handlers.size() - 1; i >= 0; i--) {
+            final Handler handler = handlers.get(i);
+            final Function<{{ request }}, {{ response }}> next = chain;
+            chain = req -> handler.handle(req, next);
+        }
+
+        return chain.apply(request);
+    }
+
+    /** Returns an unmodifiable view of the handlers in this pipeline. */
+    public List<Handler> handlers() {
+        return handlers;
+    }
+
+    /** Creates a new {@link Builder} for assembling a handler chain. */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** Fluent builder for constructing a {@link {{ name }}}. */
+    public static final class Builder {
+
+        private final List<Handler> handlers = new ArrayList<>();
+
+        private Builder() {}
+
+        /** Appends a handler to the end of the chain. */
+        public Builder add(Handler handler) {
+            handlers.add(handler);
+            return this;
+        }
+
+        /**
+         * Appends a handler that only activates when {@code condition} is true.
+         *
+         * @param condition predicate evaluated against each request
+         * @param handler   the handler to invoke when the condition matches
+         */
+        public Builder addIf(Predicate<{{ request }}> condition, Handler handler) {
+            handlers.add(new ConditionalHandler(condition, handler));
+            return this;
+        }
+
+        /** Builds an immutable {@link {{ name }}} from the configured handlers. */
+        public {{ name }} build() {
+            return new {{ name }}(new ArrayList<>(handlers));
+        }
+    }
+}

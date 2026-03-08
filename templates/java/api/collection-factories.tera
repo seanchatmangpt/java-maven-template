@@ -1,0 +1,468 @@
+{# Collections factory methods and modern stream patterns for Java 9+ through Java 21+ #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "CollectionFactories"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.SequencedCollection;
+import java.util.SequencedMap;
+import java.util.SequencedSet;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.function.Function;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Modern Java collection factory methods and stream patterns.
+ *
+ * <p>Covers immutable collection factories (Java 9+), sequenced collections (Java 21+),
+ * advanced collectors, and stream operations with before/after migration examples.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // ========================================================================
+    // List.of() — Immutable list factory (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Creating an unmodifiable list required multiple steps.
+     *
+     * <pre>{@code
+     * List<String> list = new ArrayList<>();
+     * list.add("a");
+     * list.add("b");
+     * list.add("c");
+     * List<String> unmodifiable = Collections.unmodifiableList(list);
+     * }</pre>
+     *
+     * AFTER: Single expression, null-hostile, truly immutable.
+     */
+    public static List<String> listOfExample() {
+        return List.of("a", "b", "c");
+    }
+
+    // ========================================================================
+    // Set.of() — Immutable set factory (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Wrapping a mutable set.
+     *
+     * <pre>{@code
+     * Set<String> set = new HashSet<>();
+     * set.add("x");
+     * set.add("y");
+     * Set<String> unmodifiable = Collections.unmodifiableSet(set);
+     * }</pre>
+     *
+     * AFTER: Compact, rejects duplicates at creation time.
+     */
+    public static Set<String> setOfExample() {
+        return Set.of("x", "y", "z");
+    }
+
+    // ========================================================================
+    // Map.of() and Map.ofEntries() — Immutable map factories (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Building an unmodifiable map manually.
+     *
+     * <pre>{@code
+     * Map<String, Integer> map = new HashMap<>();
+     * map.put("one", 1);
+     * map.put("two", 2);
+     * Map<String, Integer> unmodifiable = Collections.unmodifiableMap(map);
+     * }</pre>
+     *
+     * AFTER: Map.of() for up to 10 entries, Map.ofEntries() for more.
+     */
+    public static Map<String, Integer> mapOfExample() {
+        // Up to 10 key-value pairs
+        return Map.of("one", 1, "two", 2, "three", 3);
+    }
+
+    /**
+     * Map.ofEntries() with Map.entry() for larger maps or improved readability.
+     */
+    public static Map<String, Integer> mapOfEntriesExample() {
+        return Map.ofEntries(
+                Map.entry("one", 1),
+                Map.entry("two", 2),
+                Map.entry("three", 3),
+                Map.entry("four", 4),
+                Map.entry("five", 5));
+    }
+
+    // ========================================================================
+    // List.copyOf(), Set.copyOf(), Map.copyOf() — Defensive copies (Java 10+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Wrapping with Collections.unmodifiableList() — still reflects mutations.
+     *
+     * <pre>{@code
+     * List<String> original = new ArrayList<>(List.of("a", "b"));
+     * List<String> wrapped = Collections.unmodifiableList(original);
+     * original.add("c"); // wrapped now sees "c" too!
+     * }</pre>
+     *
+     * AFTER: copyOf() creates a true snapshot — immune to source mutations.
+     */
+    public static List<String> listCopyOfExample(List<String> source) {
+        return List.copyOf(source); // Null-hostile, truly immutable snapshot
+    }
+
+    public static Set<String> setCopyOfExample(Set<String> source) {
+        return Set.copyOf(source);
+    }
+
+    public static Map<String, Integer> mapCopyOfExample(Map<String, Integer> source) {
+        return Map.copyOf(source);
+    }
+
+    // ========================================================================
+    // Arrays.asList() → List.of() migration
+    // ========================================================================
+
+    /**
+     * BEFORE: Arrays.asList() returns a fixed-size but mutable-element list backed by the array.
+     *
+     * <pre>{@code
+     * List<String> list = Arrays.asList("a", "b", "c");
+     * list.set(0, "z"); // Allowed! Mutates the backing array.
+     * }</pre>
+     *
+     * AFTER: List.of() is fully immutable. Use List.copyOf(Arrays.asList(...)) if you need
+     * to accept null-containing legacy arrays.
+     */
+    public static List<String> arraysAsListMigration() {
+        // Modern: fully immutable, null-hostile
+        return List.of("a", "b", "c");
+    }
+
+    // ========================================================================
+    // Collections.unmodifiableList() → List.copyOf() migration
+    // ========================================================================
+
+    /**
+     * BEFORE: unmodifiableList is just a view — mutations to the original propagate.
+     *
+     * <pre>{@code
+     * List<String> mutable = new ArrayList<>(List.of("a", "b"));
+     * List<String> view = Collections.unmodifiableList(mutable);
+     * mutable.add("c");
+     * // view.size() == 3  (surprise!)
+     * }</pre>
+     *
+     * AFTER: copyOf creates a true independent copy.
+     */
+    public static List<String> unmodifiableListMigration(List<String> mutable) {
+        return List.copyOf(mutable); // Independent snapshot, null-hostile
+    }
+
+    // ========================================================================
+    // Stream.toList() vs Collectors.toList() vs Collectors.toUnmodifiableList()
+    // ========================================================================
+
+    /**
+     * BEFORE: Collectors.toList() returns a mutable ArrayList (implementation detail).
+     *
+     * <pre>{@code
+     * List<String> list = stream.collect(Collectors.toList());
+     * list.add("extra"); // Works, but fragile — relies on implementation detail
+     * }</pre>
+     *
+     * AFTER (Java 16+): Stream.toList() returns an unmodifiable list.
+     */
+    public static List<String> streamToListExample(Stream<String> stream) {
+        return stream.toList(); // Unmodifiable, allows nulls (unlike List.of)
+    }
+
+    /**
+     * Collectors.toList() — still useful when you need a mutable result.
+     */
+    public static List<String> collectorsToListExample(Stream<String> stream) {
+        return stream.collect(Collectors.toList()); // Mutable ArrayList
+    }
+
+    /**
+     * Collectors.toUnmodifiableList() — null-hostile unmodifiable list (Java 10+).
+     */
+    public static List<String> collectorsToUnmodifiableListExample(Stream<String> stream) {
+        return stream.collect(Collectors.toUnmodifiableList()); // Null-hostile
+    }
+
+    // ========================================================================
+    // Collectors.teeing() — Dual-reduction collector (Java 12+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Two separate stream passes for two aggregations.
+     *
+     * <pre>{@code
+     * long count = numbers.stream().count();
+     * double sum = numbers.stream().mapToDouble(x -> x).sum();
+     * double average = sum / count;
+     * }</pre>
+     *
+     * AFTER: Single pass with teeing().
+     */
+    public static double teeingAverageExample(List<Integer> numbers) {
+        return numbers.stream()
+                .collect(
+                        Collectors.teeing(
+                                Collectors.summingDouble(Integer::doubleValue),
+                                Collectors.counting(),
+                                (sum, count) -> count == 0 ? 0.0 : sum / count));
+    }
+
+    /**
+     * Teeing to compute min and max in a single pass.
+     */
+    public static Map.Entry<Integer, Integer> teeingMinMaxExample(List<Integer> numbers) {
+        return numbers.stream()
+                .collect(
+                        Collectors.teeing(
+                                Collectors.minBy(Integer::compareTo),
+                                Collectors.maxBy(Integer::compareTo),
+                                (min, max) ->
+                                        Map.entry(min.orElseThrow(), max.orElseThrow())));
+    }
+
+    // ========================================================================
+    // Stream.mapMulti() — flatMap alternative (Java 16+)
+    // ========================================================================
+
+    /**
+     * BEFORE: flatMap creates intermediate streams for each element.
+     *
+     * <pre>{@code
+     * List<Integer> result = numbers.stream()
+     *     .flatMap(n -> n % 2 == 0 ? Stream.of(n, n * 2) : Stream.empty())
+     *     .toList();
+     * }</pre>
+     *
+     * AFTER: mapMulti avoids intermediate stream allocation.
+     */
+    public static List<Integer> mapMultiExample(List<Integer> numbers) {
+        return numbers.stream()
+                .<Integer>mapMulti(
+                        (n, consumer) -> {
+                            if (n % 2 == 0) {
+                                consumer.accept(n);
+                                consumer.accept(n * 2);
+                            }
+                        })
+                .toList();
+    }
+
+    /**
+     * mapMulti for type-safe filtering and casting (avoids unchecked casts).
+     */
+    public static List<String> mapMultiFilterCastExample(List<Object> mixed) {
+        return mixed.stream()
+                .<String>mapMulti(
+                        (obj, consumer) -> {
+                            if (obj instanceof String s) {
+                                consumer.accept(s);
+                            }
+                        })
+                .toList();
+    }
+
+    // ========================================================================
+    // Stream.takeWhile() and dropWhile() (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Manual iteration or filter with index tracking.
+     *
+     * <pre>{@code
+     * List<Integer> result = new ArrayList<>();
+     * for (int n : sorted) {
+     *     if (n >= 5) break;
+     *     result.add(n);
+     * }
+     * }</pre>
+     *
+     * AFTER: takeWhile on ordered streams.
+     */
+    public static List<Integer> takeWhileExample(List<Integer> sorted) {
+        return sorted.stream().takeWhile(n -> n < 5).toList();
+    }
+
+    /**
+     * BEFORE: Skip elements manually until condition is met.
+     *
+     * <pre>{@code
+     * boolean found = false;
+     * List<Integer> result = new ArrayList<>();
+     * for (int n : sorted) {
+     *     if (!found && n < 5) continue;
+     *     found = true;
+     *     result.add(n);
+     * }
+     * }</pre>
+     *
+     * AFTER: dropWhile on ordered streams.
+     */
+    public static List<Integer> dropWhileExample(List<Integer> sorted) {
+        return sorted.stream().dropWhile(n -> n < 5).toList();
+    }
+
+    // ========================================================================
+    // Collectors.flatMapping() and Collectors.filtering() (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Nested grouping with post-processing.
+     *
+     * <pre>{@code
+     * Map<String, List<String>> result = new HashMap<>();
+     * for (var entry : departments.entrySet()) {
+     *     result.computeIfAbsent(entry.getKey(), k -> new ArrayList<>())
+     *           .addAll(entry.getValue().stream()
+     *               .flatMap(e -> e.skills().stream())
+     *               .toList());
+     * }
+     * }</pre>
+     *
+     * AFTER: flatMapping as a downstream collector.
+     */
+    public static Map<String, List<String>> flatMappingExample(
+            List<Map.Entry<String, List<String>>> entries) {
+        return entries.stream()
+                .collect(
+                        Collectors.groupingBy(
+                                Map.Entry::getKey,
+                                Collectors.flatMapping(
+                                        e -> e.getValue().stream(), Collectors.toList())));
+    }
+
+    /**
+     * BEFORE: Filtering after grouping required a second pass.
+     *
+     * <pre>{@code
+     * Map<String, List<Integer>> grouped = items.stream()
+     *     .collect(Collectors.groupingBy(Item::category));
+     * grouped.replaceAll((k, v) -> v.stream()
+     *     .filter(i -> i > 10)
+     *     .toList());
+     * }</pre>
+     *
+     * AFTER: filtering as a downstream collector applies before collection.
+     */
+    public static Map<String, List<Integer>> filteringExample(
+            List<Map.Entry<String, Integer>> items) {
+        return items.stream()
+                .collect(
+                        Collectors.groupingBy(
+                                Map.Entry::getKey,
+                                Collectors.filtering(
+                                        e -> e.getValue() > 10,
+                                        Collectors.mapping(
+                                                Map.Entry::getValue, Collectors.toList()))));
+    }
+
+    // ========================================================================
+    // SequencedCollection, SequencedSet, SequencedMap (Java 21+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Accessing first/last elements required type-specific methods or iteration.
+     *
+     * <pre>{@code
+     * // LinkedList had getFirst()/getLast(), but List did not
+     * String first = list.get(0);
+     * String last = list.get(list.size() - 1);
+     *
+     * // No standard way to get a reversed view of a List
+     * List<String> reversed = new ArrayList<>(list);
+     * Collections.reverse(reversed);
+     * }</pre>
+     *
+     * AFTER: SequencedCollection provides uniform encounter-order access.
+     */
+    public static <E> E getFirstElement(SequencedCollection<E> collection) {
+        return collection.getFirst();
+    }
+
+    public static <E> E getLastElement(SequencedCollection<E> collection) {
+        return collection.getLast();
+    }
+
+    public static <E> SequencedCollection<E> reversedView(SequencedCollection<E> collection) {
+        return collection.reversed(); // Live view, not a copy
+    }
+
+    /**
+     * SequencedSet — ordered set with first/last access and reversed view.
+     *
+     * <pre>{@code
+     * // BEFORE: TreeSet had first()/last() but no reversed view
+     * TreeSet<String> ts = new TreeSet<>(Set.of("b", "a", "c"));
+     * String first = ts.first();
+     * NavigableSet<String> desc = ts.descendingSet();
+     *
+     * // AFTER: Uniform API via SequencedSet
+     * SequencedSet<String> ss = new TreeSet<>(Set.of("b", "a", "c"));
+     * String first = ss.getFirst();
+     * SequencedSet<String> reversed = ss.reversed();
+     * }</pre>
+     */
+    public static SequencedSet<String> sequencedSetExample() {
+        SequencedSet<String> set = new TreeSet<>(Set.of("banana", "apple", "cherry"));
+        // getFirst() = "apple", getLast() = "cherry" (natural order)
+        return set.reversed(); // "cherry", "banana", "apple"
+    }
+
+    /**
+     * SequencedMap — ordered map with first/last entry access and reversed view.
+     *
+     * <pre>{@code
+     * // BEFORE: No standard way to get first/last entry from a sorted map
+     * TreeMap<String, Integer> tm = new TreeMap<>();
+     * Map.Entry<String, Integer> first = tm.firstEntry();
+     * // No reversed() view
+     *
+     * // AFTER: SequencedMap provides uniform API
+     * SequencedMap<String, Integer> sm = new TreeMap<>();
+     * Map.Entry<String, Integer> first = sm.firstEntry();
+     * SequencedMap<String, Integer> reversed = sm.reversed();
+     * }</pre>
+     */
+    public static SequencedMap<String, Integer> sequencedMapExample() {
+        SequencedMap<String, Integer> map = new TreeMap<>();
+        map.put("alpha", 1);
+        map.put("beta", 2);
+        map.put("gamma", 3);
+        // firstEntry() = alpha=1, lastEntry() = gamma=3
+        return map.reversed();
+    }
+
+    /**
+     * SequencedCollection methods for adding/removing at both ends.
+     */
+    public static <E> void sequencedCollectionModification(SequencedCollection<E> collection, E element) {
+        collection.addFirst(element);
+        collection.addLast(element);
+        collection.removeFirst();
+        collection.removeLast();
+    }
+}

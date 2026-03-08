@@ -1,0 +1,172 @@
+{# Specification pattern using composable Predicate chains. Replaces abstract Specification
+   class hierarchies with @FunctionalInterface and static factory methods for named,
+   composable business rules. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Specifications"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  entity: "Order"
+  entity_package: "org.acme"
+---
+package {{ package }};
+
+import java.util.List;
+import java.util.function.Predicate;
+
+/**
+ * Composable specification pattern built on {@link Predicate}.
+ *
+ * <h2>Before — abstract Specification classes</h2>
+ * <pre>{@code
+ * // Heavy class hierarchy for every business rule
+ * public abstract class Specification<T> {
+ *     public abstract boolean isSatisfiedBy(T candidate);
+ *
+ *     public Specification<T> and(Specification<T> other) {
+ *         return new AndSpecification<>(this, other);
+ *     }
+ *
+ *     public Specification<T> or(Specification<T> other) {
+ *         return new OrSpecification<>(this, other);
+ *     }
+ *
+ *     public Specification<T> not() {
+ *         return new NotSpecification<>(this);
+ *     }
+ * }
+ *
+ * public class AndSpecification<T> extends Specification<T> {
+ *     private final Specification<T> left;
+ *     private final Specification<T> right;
+ *
+ *     public AndSpecification(Specification<T> left, Specification<T> right) {
+ *         this.left = left;
+ *         this.right = right;
+ *     }
+ *
+ *     @Override
+ *     public boolean isSatisfiedBy(T candidate) {
+ *         return left.isSatisfiedBy(candidate) && right.isSatisfiedBy(candidate);
+ *     }
+ * }
+ *
+ * // Repeat for OrSpecification, NotSpecification...
+ *
+ * public class HighValueOrderSpec extends Specification<Order> {
+ *     @Override
+ *     public boolean isSatisfiedBy(Order order) {
+ *         return order.total() > 1000;
+ *     }
+ * }
+ *
+ * // Usage:
+ * Specification<Order> spec = new HighValueOrderSpec()
+ *         .and(new ApprovedOrderSpec())
+ *         .and(new NotSpecification<>(new CancelledOrderSpec()));
+ * boolean matches = spec.isSatisfiedBy(order);
+ * }</pre>
+ *
+ * <h2>After — functional predicates with composition</h2>
+ * <pre>{@code
+ * Specification<Order> valuable = Specifications.highValue(1000);
+ * Specification<Order> ready = Specifications.approved()
+ *         .and(Specifications.notCancelled());
+ *
+ * var qualifying = orders.stream()
+ *         .filter(valuable.and(ready))
+ *         .toList();
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // -------------------------------------------------------------------------
+    // Core functional specification interface
+    // -------------------------------------------------------------------------
+
+    /**
+     * A composable business rule that tests whether a candidate satisfies a condition.
+     *
+     * <p>Extends {@link Predicate} so specifications can be used directly in
+     * {@link java.util.stream.Stream#filter Stream.filter()},
+     * {@link java.util.Optional#filter Optional.filter()}, and anywhere a
+     * {@code Predicate} is accepted.
+     *
+     * @param <T> the type of candidate being evaluated
+     */
+    @FunctionalInterface
+    public interface Specification<T> extends Predicate<T> {
+
+        /** Evaluates whether {@code candidate} satisfies this specification. */
+        boolean isSatisfiedBy(T candidate);
+
+        @Override
+        default boolean test(T candidate) {
+            return isSatisfiedBy(candidate);
+        }
+
+        /** Returns a specification that is the logical AND of {@code this} and {@code other}. */
+        default Specification<T> and(Specification<? super T> other) {
+            return candidate -> this.isSatisfiedBy(candidate) && other.isSatisfiedBy(candidate);
+        }
+
+        /** Returns a specification that is the logical OR of {@code this} and {@code other}. */
+        default Specification<T> or(Specification<? super T> other) {
+            return candidate -> this.isSatisfiedBy(candidate) || other.isSatisfiedBy(candidate);
+        }
+
+        /** Returns a specification that is the logical negation of {@code this}. */
+        default Specification<T> not() {
+            return candidate -> !this.isSatisfiedBy(candidate);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Named specification factories for {{ entity }}
+    // -------------------------------------------------------------------------
+
+    /**
+     * Orders whose total exceeds the given {@code threshold}.
+     *
+     * @param threshold minimum total (exclusive)
+     * @return a reusable, composable specification
+     */
+    public static Specification<{{ entity }}> highValue(double threshold) {
+        return order -> order.total() > threshold;
+    }
+
+    /** Orders in the {@code APPROVED} status. */
+    public static Specification<{{ entity }}> approved() {
+        return order -> "APPROVED".equalsIgnoreCase(order.status());
+    }
+
+    /** Orders that have NOT been cancelled. */
+    public static Specification<{{ entity }}> notCancelled() {
+        return ((Specification<{{ entity }}>) order -> "CANCELLED".equalsIgnoreCase(order.status()))
+                .not();
+    }
+
+    /** Orders containing at least {@code minItems} line items. */
+    public static Specification<{{ entity }}> minimumItems(int minItems) {
+        return order -> order.itemCount() >= minItems;
+    }
+
+    // -------------------------------------------------------------------------
+    // Convenience: filter a collection with a composed specification
+    // -------------------------------------------------------------------------
+
+    /**
+     * Filters the given list, returning only elements that satisfy {@code spec}.
+     *
+     * @param candidates the elements to evaluate
+     * @param spec       the composed specification
+     * @param <T>        element type
+     * @return an unmodifiable list of matching elements
+     */
+    public static <T> List<T> satisfying(List<T> candidates, Specification<T> spec) {
+        return candidates.stream().filter(spec).toList();
+    }
+}

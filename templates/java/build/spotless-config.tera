@@ -1,0 +1,107 @@
+{# Spotless Formatting Configuration — Maven plugin config for Google Java Format (AOSP style) with compile-phase check and apply command #}
+---
+to: "{{ output_dir }}/spotless-plugin.xml"
+vars:
+  name: "spotless-config"
+  package: "org.acme"
+  output_dir: "."
+  spotless_version: "2.44.4"
+  google_java_format_version: "1.25.2"
+  style: "AOSP"
+  phase: "compile"
+  line_endings: "UNIX"
+  includes: ["src/main/java/**/*.java", "src/test/java/**/*.java"]
+  excludes: ["**/generated/**"]
+---
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Spotless Maven Plugin — Google Java Format ({{ style }} style)
+
+     Add this plugin block to your pom.xml <build><plugins> section.
+
+     Commands:
+       ./mvnw spotless:check    — Check formatting without changes
+       ./mvnw spotless:apply    — Auto-format all Java files
+       ./mvnw compile           — Also runs spotless:check (bound to {{ phase }} phase)
+
+     This configuration uses Google Java Format with {{ style }} style:
+       - AOSP: 4-space indent (Android Open Source Project convention)
+       - GOOGLE: 2-space indent (Google convention)
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+<plugin>
+    <groupId>com.diffplug.spotless</groupId>
+    <artifactId>spotless-maven-plugin</artifactId>
+    <version>{{ spotless_version }}</version>
+    <configuration>
+        <!-- Line ending normalization -->
+        <lineEndings>{{ line_endings }}</lineEndings>
+
+        <java>
+            <!-- Google Java Format with {{ style }} style -->
+            <googleJavaFormat>
+                <version>{{ google_java_format_version }}</version>
+                <style>{{ style }}</style>
+                <reflowLongStrings>true</reflowLongStrings>
+                <formatJavadoc>true</formatJavadoc>
+            </googleJavaFormat>
+
+            <!-- File inclusion patterns -->
+            <includes>
+{% for include in includes %}
+                <include>{{ include }}</include>
+{% endfor %}
+            </includes>
+
+            <!-- File exclusion patterns -->
+            <excludes>
+{% for exclude in excludes %}
+                <exclude>{{ exclude }}</exclude>
+{% endfor %}
+            </excludes>
+
+            <!-- Remove unused imports -->
+            <removeUnusedImports/>
+
+            <!-- Trim trailing whitespace -->
+            <trimTrailingWhitespace/>
+
+            <!-- Ensure file ends with newline -->
+            <endWithNewline/>
+
+            <!-- Import ordering: static imports first, then regular -->
+            <importOrder>
+                <order>\#,</order>
+            </importOrder>
+        </java>
+    </configuration>
+    <executions>
+        <!-- Run spotless:check at {{ phase }} phase to fail fast -->
+        <execution>
+            <id>spotless-check</id>
+            <phase>{{ phase }}</phase>
+            <goals>
+                <goal>check</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Claude Code Hook Integration:
+
+     The PostToolUse hook automatically runs `./mvnw spotless:apply -q`
+     after every Java file edit, ensuring code is always formatted.
+     No manual formatting step is needed during development.
+
+     Hook configuration (in .claude/settings.json):
+     {
+       "hooks": {
+         "PostToolUse": [
+           {
+             "matcher": "Edit|Write on .java files",
+             "command": "./mvnw spotless:apply -q"
+           }
+         ]
+       }
+     }
+     ═══════════════════════════════════════════════════════════════════════ -->

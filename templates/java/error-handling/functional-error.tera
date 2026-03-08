@@ -1,0 +1,379 @@
+{# Functional error handling patterns using Result, flatMap pipelines, and error accumulation #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "FunctionalError"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/**
+ * Functional error handling patterns using the Result type.
+ *
+ * <p>Demonstrates migration from imperative try-catch to declarative railway-oriented
+ * programming with before/after examples for each pattern.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // ========================================================================
+    // Try-catch → Result.of() wrapping
+    // ========================================================================
+
+    /**
+     * BEFORE: Imperative try-catch with early return or side-effect.
+     *
+     * <pre>{@code
+     * String readFile(Path path) {
+     *     try {
+     *         return Files.readString(path);
+     *     } catch (IOException e) {
+     *         log.error("Failed to read file", e);
+     *         return "";
+     *     }
+     * }
+     * }</pre>
+     *
+     * AFTER: Wrap the throwing operation in Result.of() — error is captured, not swallowed.
+     */
+    public static Result<String, IOException> readFile(Path path) {
+        return Result.of(() -> Files.readString(path));
+    }
+
+    /**
+     * BEFORE: Nested try-catch blocks for sequential operations.
+     *
+     * <pre>{@code
+     * try {
+     *     String content = Files.readString(path);
+     *     try {
+     *         Config config = parseConfig(content);
+     *         try {
+     *             validate(config);
+     *             return config;
+     *         } catch (ValidationException e) { ... }
+     *     } catch (ParseException e) { ... }
+     * } catch (IOException e) { ... }
+     * }</pre>
+     *
+     * AFTER: Declarative wrapping with a single Result.of().
+     */
+    public static Result<Integer, Exception> parseIntSafe(String input) {
+        return Result.of(() -> Integer.parseInt(input));
+    }
+
+    // ========================================================================
+    // Exception chains → flatMap pipelines
+    // ========================================================================
+
+    /**
+     * BEFORE: Sequential try-catch with manual error propagation.
+     *
+     * <pre>{@code
+     * String process(String input) {
+     *     int number;
+     *     try {
+     *         number = Integer.parseInt(input);
+     *     } catch (NumberFormatException e) {
+     *         return "Parse error: " + e.getMessage();
+     *     }
+     *     if (number < 0) {
+     *         return "Validation error: negative number";
+     *     }
+     *     try {
+     *         return computeResult(number);
+     *     } catch (Exception e) {
+     *         return "Compute error: " + e.getMessage();
+     *     }
+     * }
+     * }</pre>
+     *
+     * AFTER: flatMap pipeline — each step short-circuits on failure.
+     */
+    public static Result<Double, String> processNumber(String input) {
+        return parseInteger(input)
+                .flatMap({{ name }}::validatePositive)
+                .flatMap({{ name }}::computeSquareRoot);
+    }
+
+    private static Result<Integer, String> parseInteger(String input) {
+        return Result.<Integer, NumberFormatException>of(() -> Integer.parseInt(input))
+                .mapError(e -> "Parse error: " + e.getMessage());
+    }
+
+    private static Result<Integer, String> validatePositive(int number) {
+        return number >= 0
+                ? Result.success(number)
+                : Result.failure("Validation error: negative number " + number);
+    }
+
+    private static Result<Double, String> computeSquareRoot(int number) {
+        return Result.success(Math.sqrt(number));
+    }
+
+    /**
+     * Multi-step pipeline with heterogeneous error mapping.
+     *
+     * <p>BEFORE: Deep nesting of try-catch.
+     * <pre>{@code
+     * try {
+     *     String content = readFile(path);
+     *     Config config = parse(content);
+     *     Config validated = validate(config);
+     *     apply(validated);
+     * } catch (IOException e) {
+     *     handleIo(e);
+     * } catch (ParseException e) {
+     *     handleParse(e);
+     * } catch (ValidationException e) {
+     *     handleValidation(e);
+     * }
+     * }</pre>
+     *
+     * AFTER: Unified error type via mapError, then flatMap chain.
+     */
+    public static Result<String, String> readAndParseNumber(Path path) {
+        return Result.<String, IOException>of(() -> Files.readString(path))
+                .mapError(e -> "IO error: " + e.getMessage())
+                .map(String::strip)
+                .flatMap(content -> parseInteger(content))
+                .map(n -> "Parsed value: " + n);
+    }
+
+    // ========================================================================
+    // Multiple possible errors → fold/recover
+    // ========================================================================
+
+    /**
+     * BEFORE: Switch on exception type or multiple catch blocks.
+     *
+     * <pre>{@code
+     * try {
+     *     return doWork();
+     * } catch (IOException e) {
+     *     return "File error: " + e.getMessage();
+     * } catch (ParseException e) {
+     *     return "Parse error at position " + e.getErrorOffset();
+     * } catch (Exception e) {
+     *     return "Unknown error: " + e.getMessage();
+     * }
+     * }</pre>
+     *
+     * AFTER: fold() to pattern-match on success/failure.
+     */
+    public static String processWithFold(String input) {
+        return parseInteger(input)
+                .flatMap({{ name }}::validatePositive)
+                .fold(
+                        value -> "Success: result is " + value,
+                        error -> "Failed: " + error);
+    }
+
+    /**
+     * BEFORE: Fallback logic scattered across catch blocks.
+     *
+     * <pre>{@code
+     * int value;
+     * try {
+     *     value = Integer.parseInt(primary);
+     * } catch (NumberFormatException e1) {
+     *     try {
+     *         value = Integer.parseInt(fallback);
+     *     } catch (NumberFormatException e2) {
+     *         value = defaultValue;
+     *     }
+     * }
+     * }</pre>
+     *
+     * AFTER: recover() for direct fallback values.
+     */
+    public static int parseWithFallback(String primary, int defaultValue) {
+        return parseInteger(primary).recover(error -> defaultValue);
+    }
+
+    /**
+     * recoverWith() for fallback chains that may also fail.
+     */
+    public static Result<String, String> readWithFallback(Path primary, Path fallback) {
+        return Result.<String, IOException>of(() -> Files.readString(primary))
+                .mapError(e -> "Primary failed: " + e.getMessage())
+                .recoverWith(
+                        err ->
+                                Result.<String, IOException>of(() -> Files.readString(fallback))
+                                        .mapError(e -> "Both failed. Primary: " + err
+                                                + ", Fallback: " + e.getMessage()));
+    }
+
+    // ========================================================================
+    // Combining Results — allOf pattern
+    // ========================================================================
+
+    /**
+     * BEFORE: Multiple try-catch blocks with manual aggregation.
+     *
+     * <pre>{@code
+     * List<String> errors = new ArrayList<>();
+     * String name = null;
+     * int age = 0;
+     * try { name = parseName(input); }
+     * catch (Exception e) { errors.add(e.getMessage()); }
+     * try { age = parseAge(input); }
+     * catch (Exception e) { errors.add(e.getMessage()); }
+     * if (!errors.isEmpty()) {
+     *     throw new ValidationException(String.join("; ", errors));
+     * }
+     * }</pre>
+     *
+     * AFTER: Combine multiple Results, collecting all errors.
+     */
+    public static <T> Result<List<T>, List<String>> allOf(List<Result<T, String>> results) {
+        List<T> successes = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+
+        for (Result<T, String> result : results) {
+            result.fold(
+                    value -> {
+                        successes.add(value);
+                        return null;
+                    },
+                    error -> {
+                        errors.add(error);
+                        return null;
+                    });
+        }
+
+        return errors.isEmpty()
+                ? Result.success(List.copyOf(successes))
+                : Result.failure(List.copyOf(errors));
+    }
+
+    /**
+     * Usage example for allOf: validating multiple fields.
+     */
+    public static Result<List<Integer>, List<String>> validateAllFields(
+            String name, String age, String score) {
+        List<Result<Integer, String>> validations =
+                List.of(
+                        validateNonEmpty(name).flatMap(s -> parseInteger(s)),
+                        parseInteger(age).flatMap({{ name }}::validatePositive),
+                        parseInteger(score)
+                                .flatMap(
+                                        s ->
+                                                s >= 0 && s <= 100
+                                                        ? Result.success(s)
+                                                        : Result.failure(
+                                                                "Score out of range: " + s)));
+        return allOf(validations);
+    }
+
+    private static Result<String, String> validateNonEmpty(String input) {
+        return input == null || input.isBlank()
+                ? Result.failure("Input must not be blank")
+                : Result.success(input.strip());
+    }
+
+    // ========================================================================
+    // Converting between Result and Optional
+    // ========================================================================
+
+    /**
+     * BEFORE: Optional with no error information.
+     *
+     * <pre>{@code
+     * Optional<User> user = findUser(id);
+     * if (user.isEmpty()) {
+     *     // Why is it empty? No information available.
+     * }
+     * }</pre>
+     *
+     * AFTER: Result preserves the reason for absence.
+     */
+    public static <T> Result<T, String> fromOptional(Optional<T> optional, String errorMessage) {
+        return optional
+                .map(value -> Result.<T, String>success(value))
+                .orElseGet(() -> Result.failure(errorMessage));
+    }
+
+    /**
+     * Converting Result back to Optional — drops error information.
+     * Use when downstream API requires Optional.
+     */
+    public static <T, E> Optional<T> toOptional(Result<T, E> result) {
+        return result.fold(Optional::of, error -> Optional.empty());
+    }
+
+    // ========================================================================
+    // Error accumulation pattern
+    // ========================================================================
+
+    /**
+     * BEFORE: Throwing on first error loses subsequent validation failures.
+     *
+     * <pre>{@code
+     * void validate(User user) {
+     *     if (user.name().isBlank()) throw new ValidationException("Name required");
+     *     if (user.age() < 0) throw new ValidationException("Age must be positive");
+     *     if (user.email().isBlank()) throw new ValidationException("Email required");
+     *     // Only first error is ever reported!
+     * }
+     * }</pre>
+     *
+     * AFTER: Accumulate all errors and report them together.
+     */
+    public static Result<String, List<String>> validateWithAccumulation(
+            String name, int age, String email) {
+        List<String> errors = new ArrayList<>();
+
+        if (name == null || name.isBlank()) {
+            errors.add("Name must not be blank");
+        }
+        if (age < 0) {
+            errors.add("Age must be non-negative, got: " + age);
+        }
+        if (age > 150) {
+            errors.add("Age must be realistic, got: " + age);
+        }
+        if (email == null || !email.contains("@")) {
+            errors.add("Email must contain '@'");
+        }
+
+        return errors.isEmpty()
+                ? Result.success("Valid: %s (age %d, %s)".formatted(name, age, email))
+                : Result.failure(List.copyOf(errors));
+    }
+
+    /**
+     * Accumulation using stream of Results.
+     */
+    public static <T> Result<List<T>, String> accumulate(List<Result<T, String>> results) {
+        List<T> successes = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+
+        for (Result<T, String> result : results) {
+            result.fold(
+                    value -> {
+                        successes.add(value);
+                        return null;
+                    },
+                    error -> {
+                        errors.add(error);
+                        return null;
+                    });
+        }
+
+        return errors.isEmpty()
+                ? Result.success(List.copyOf(successes))
+                : Result.failure(errors.stream().collect(Collectors.joining("; ")));
+    }
+}

@@ -1,0 +1,71 @@
+{# Value Object (Record) — Domain value with invariant enforcement and equality by value #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyValue"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  components: []
+  factory_methods: []
+  domain_methods: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% else %}
+/**
+ * Value object — identified by value, not identity. Immutable and self-validating.
+ *
+ * <p>Records automatically provide value-based equality (two value objects with the
+ * same components are {@code .equals()} without manual override).
+ */
+{% endif %}
+public record {{ name }}(
+{% for comp in components %}
+        {{ comp.type }} {{ comp.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+) {
+
+    /**
+     * Compact constructor — enforces domain invariants at construction time.
+     * Invalid values are rejected immediately, never stored.
+     */
+    public {{ name }} {
+{% for comp in components %}
+{% if comp.nullable is undefined or not comp.nullable %}
+        Objects.requireNonNull({{ comp.name }}, "{{ comp.name }} must not be null");
+{% endif %}
+{% if comp.validation is defined %}
+        {{ comp.validation }}
+{% endif %}
+{% endfor %}
+    }
+{% for factory in factory_methods %}
+
+    {% if factory.javadoc is defined %}/**
+     * {{ factory.javadoc }}
+     */
+    {% endif %}public static {{ name }} {{ factory.name }}({% for param in factory.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        {{ factory.body }}
+    }
+{% endfor %}
+{% for method in domain_methods %}
+
+    {% if method.javadoc is defined %}/**
+     * {{ method.javadoc }}
+     */
+    {% endif %}public {{ method.return_type }} {{ method.name }}({% for param in method.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        {{ method.body }}
+    }
+{% endfor %}
+}

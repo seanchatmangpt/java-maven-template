@@ -1,0 +1,66 @@
+{# Singleton (Enum-based) — Thread-safe singleton using enum (Josh Bloch, Effective Java) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MySingleton"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  fields: []
+  methods: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Enum-based singleton — guaranteed thread-safe, serialization-safe,
+ * and reflection-proof by the JVM specification.
+ */
+{% else %}
+/**
+ * Thread-safe enum singleton (Effective Java Item 3).
+ *
+ * <p>The JVM guarantees exactly one instance exists, handles serialization
+ * correctly, and prevents reflective instantiation.
+ */
+{% endif %}
+public enum {{ name }} {
+
+    INSTANCE;
+{% for field in fields %}
+
+    private {{ field.modifier | default(value="final") }} {{ field.type }} {{ field.name }}{% if field.init is defined %} = {{ field.init }}{% endif %};
+{% endfor %}
+{% if fields | length > 0 %}
+
+    {{ name }}() {
+{% for field in fields %}
+{% if field.lazy_init is defined %}
+        this.{{ field.name }} = {{ field.lazy_init }};
+{% endif %}
+{% endfor %}
+    }
+{% endif %}
+{% for method in methods %}
+
+    {% if method.javadoc is defined %}/**
+     * {{ method.javadoc }}
+     */
+    {% endif %}public {{ method.return_type }} {{ method.name }}({% for param in method.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        {{ method.body }}
+    }
+{% endfor %}
+
+    /**
+     * Convenience accessor (optional — callers may also use {@code {{ name }}.INSTANCE}).
+     */
+    public static {{ name }} getInstance() {
+        return INSTANCE;
+    }
+}

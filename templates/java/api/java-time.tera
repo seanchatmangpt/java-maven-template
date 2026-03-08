@@ -1,0 +1,144 @@
+{# java.time API — Migration from Date/Calendar/SimpleDateFormat to modern time API #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "JavaTimePatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.Period;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+
+/**
+ * java.time API migration patterns (Java 8+).
+ *
+ * <p>BEFORE: {@code java.util.Date}, {@code java.util.Calendar}, {@code SimpleDateFormat}.
+ * <p>AFTER: {@code java.time.*} — immutable, thread-safe, timezone-aware.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Current date/time
+    // BEFORE: new Date(), Calendar.getInstance()
+    // AFTER:
+    // =========================================================================
+    public static LocalDate today() { return LocalDate.now(); }
+    public static LocalTime now() { return LocalTime.now(); }
+    public static LocalDateTime dateTimeNow() { return LocalDateTime.now(); }
+    public static Instant instant() { return Instant.now(); }
+    public static ZonedDateTime zonedNow(String zone) { return ZonedDateTime.now(ZoneId.of(zone)); }
+
+    // =========================================================================
+    // PATTERN 2: Date creation
+    // BEFORE: Calendar cal = Calendar.getInstance(); cal.set(2024, Calendar.MARCH, 15);
+    // AFTER:
+    // =========================================================================
+    public static LocalDate date(int year, int month, int day) {
+        return LocalDate.of(year, month, day);
+    }
+
+    public static LocalDateTime dateTime(int year, int month, int day, int hour, int minute) {
+        return LocalDateTime.of(year, month, day, hour, minute);
+    }
+
+    // =========================================================================
+    // PATTERN 3: Formatting
+    // BEFORE: new SimpleDateFormat("yyyy-MM-dd").format(date)
+    //         (NOT thread-safe!)
+    // AFTER:  (thread-safe, immutable)
+    // =========================================================================
+    private static final DateTimeFormatter ISO_DATE = DateTimeFormatter.ISO_LOCAL_DATE;
+    private static final DateTimeFormatter CUSTOM = DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm");
+
+    public static String formatIso(LocalDate date) { return date.format(ISO_DATE); }
+    public static String formatCustom(LocalDateTime dt) { return dt.format(CUSTOM); }
+
+    // =========================================================================
+    // PATTERN 4: Parsing
+    // BEFORE: new SimpleDateFormat("yyyy-MM-dd").parse(str)
+    // AFTER:
+    // =========================================================================
+    public static LocalDate parseDate(String text) { return LocalDate.parse(text); }
+    public static LocalDate parseDate(String text, String pattern) {
+        return LocalDate.parse(text, DateTimeFormatter.ofPattern(pattern));
+    }
+
+    // =========================================================================
+    // PATTERN 5: Date arithmetic
+    // BEFORE: cal.add(Calendar.DAY_OF_MONTH, 7); cal.add(Calendar.MONTH, -1);
+    // AFTER:
+    // =========================================================================
+    public static LocalDate addDays(LocalDate date, int days) { return date.plusDays(days); }
+    public static LocalDate addMonths(LocalDate date, int months) { return date.plusMonths(months); }
+    public static LocalDate subtractYears(LocalDate date, int years) { return date.minusYears(years); }
+
+    // =========================================================================
+    // PATTERN 6: Duration and Period
+    // BEFORE: long diff = date2.getTime() - date1.getTime(); long days = diff / (1000 * 60 * 60 * 24);
+    // AFTER:
+    // =========================================================================
+    public static long daysBetween(LocalDate start, LocalDate end) {
+        return ChronoUnit.DAYS.between(start, end);
+    }
+
+    public static Period periodBetween(LocalDate start, LocalDate end) {
+        return Period.between(start, end);
+    }
+
+    public static Duration durationBetween(Instant start, Instant end) {
+        return Duration.between(start, end);
+    }
+
+    // =========================================================================
+    // PATTERN 7: Timezone conversion
+    // BEFORE: Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+    // AFTER:
+    // =========================================================================
+    public static ZonedDateTime toZone(LocalDateTime ldt, String fromZone, String toZone) {
+        return ldt.atZone(ZoneId.of(fromZone)).withZoneSameInstant(ZoneId.of(toZone));
+    }
+
+    public static Instant toInstant(LocalDateTime ldt, String zone) {
+        return ldt.atZone(ZoneId.of(zone)).toInstant();
+    }
+
+    public static LocalDateTime fromInstant(Instant instant, String zone) {
+        return LocalDateTime.ofInstant(instant, ZoneId.of(zone));
+    }
+
+    // =========================================================================
+    // PATTERN 8: Comparison
+    // BEFORE: date1.before(date2), date1.after(date2)
+    // AFTER:
+    // =========================================================================
+    public static boolean isBefore(LocalDate a, LocalDate b) { return a.isBefore(b); }
+    public static boolean isAfter(LocalDate a, LocalDate b) { return a.isAfter(b); }
+    public static boolean isBetween(LocalDate date, LocalDate start, LocalDate end) {
+        return !date.isBefore(start) && !date.isAfter(end);
+    }
+
+    // =========================================================================
+    // PATTERN 9: Testable clock injection
+    // BEFORE: new Date() — impossible to test
+    // AFTER:  Clock injection for deterministic testing
+    // =========================================================================
+    public static LocalDate today(Clock clock) { return LocalDate.now(clock); }
+    public static Instant instant(Clock clock) { return Instant.now(clock); }
+}

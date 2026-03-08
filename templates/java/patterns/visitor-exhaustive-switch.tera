@@ -1,0 +1,217 @@
+{# Visitor pattern via exhaustive switch expressions over a sealed hierarchy.
+   Eliminates the classic accept/visit double-dispatch by leveraging the compiler's
+   exhaustiveness checking on sealed types. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Expressions"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.util.StringJoiner;
+import java.util.function.Function;
+
+/**
+ * Visitor pattern via exhaustive switch — no accept/visit double-dispatch.
+ *
+ * <h2>Before — accept/visit double-dispatch</h2>
+ * <pre>{@code
+ * // Element hierarchy must know about the visitor
+ * public interface Expr {
+ *     <R> R accept(ExprVisitor<R> visitor);
+ * }
+ *
+ * public class Num implements Expr {
+ *     private final double value;
+ *     public Num(double value) { this.value = value; }
+ *     public double value() { return value; }
+ *
+ *     @Override
+ *     public <R> R accept(ExprVisitor<R> visitor) {
+ *         return visitor.visitNum(this);
+ *     }
+ * }
+ *
+ * public class Add implements Expr {
+ *     private final Expr left, right;
+ *     public Add(Expr left, Expr right) { this.left = left; this.right = right; }
+ *     public Expr left() { return left; }
+ *     public Expr right() { return right; }
+ *
+ *     @Override
+ *     public <R> R accept(ExprVisitor<R> visitor) {
+ *         return visitor.visitAdd(this);
+ *     }
+ * }
+ *
+ * // Visitor interface — must add a method for every new element type
+ * public interface ExprVisitor<R> {
+ *     R visitNum(Num num);
+ *     R visitAdd(Add add);
+ *     R visitMul(Mul mul);
+ *     R visitNeg(Neg neg);
+ *     R visitVar(Var var);
+ * }
+ *
+ * // Concrete visitor
+ * public class Evaluator implements ExprVisitor<Double> {
+ *     @Override public Double visitNum(Num num) { return num.value(); }
+ *     @Override public Double visitAdd(Add add) {
+ *         return add.left().accept(this) + add.right().accept(this);
+ *     }
+ *     // ... one method per element type
+ * }
+ *
+ * // Usage: double result = expr.accept(new Evaluator());
+ * }</pre>
+ *
+ * <h2>After — sealed hierarchy + exhaustive switch</h2>
+ * <pre>{@code
+ * var expr = new Add(new Num(1), new Mul(new Num(2), new Var("x")));
+ *
+ * double result = Expressions.evaluate(expr, Map.of("x", 3.0)); // 7.0
+ * String pretty = Expressions.prettyPrint(expr);                 // "(1.0 + (2.0 * x))"
+ * int depth     = Expressions.depth(expr);                       // 3
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // -------------------------------------------------------------------------
+    // Sealed element hierarchy — no accept() method needed
+    // -------------------------------------------------------------------------
+
+    /** An arithmetic expression. */
+    public sealed interface Expr
+            permits Num, Var, Neg, Add, Mul, Div {
+    }
+
+    /** A numeric literal. */
+    public record Num(double value) implements Expr {}
+
+    /** A named variable. */
+    public record Var(String name) implements Expr {}
+
+    /** Unary negation. */
+    public record Neg(Expr operand) implements Expr {}
+
+    /** Addition of two expressions. */
+    public record Add(Expr left, Expr right) implements Expr {}
+
+    /** Multiplication of two expressions. */
+    public record Mul(Expr left, Expr right) implements Expr {}
+
+    /** Division of two expressions. */
+    public record Div(Expr numerator, Expr denominator) implements Expr {}
+
+    // -------------------------------------------------------------------------
+    // "Visitor" operations — static methods with exhaustive switch
+    // -------------------------------------------------------------------------
+
+    /**
+     * Evaluates the expression tree, resolving variables from the given bindings.
+     *
+     * <p>Adding a new {@link Expr} subtype will cause a compile error here,
+     * guaranteeing that every operation handles the new case.
+     *
+     * @param expr     the expression to evaluate
+     * @param bindings variable name &rarr; value mappings
+     * @return the numeric result
+     * @throws IllegalArgumentException if a variable is unbound
+     */
+    public static double evaluate(Expr expr, java.util.Map<String, Double> bindings) {
+        return switch (expr) {
+            case Num(var v) -> v;
+            case Var(var name) -> {
+                Double val = bindings.get(name);
+                if (val == null) {
+                    throw new IllegalArgumentException("Unbound variable: " + name);
+                }
+                yield val;
+            }
+            case Neg(var operand) -> -evaluate(operand, bindings);
+            case Add(var l, var r) -> evaluate(l, bindings) + evaluate(r, bindings);
+            case Mul(var l, var r) -> evaluate(l, bindings) * evaluate(r, bindings);
+            case Div(var n, var d) -> evaluate(n, bindings) / evaluate(d, bindings);
+        };
+    }
+
+    /**
+     * Produces a human-readable, fully-parenthesized string representation.
+     *
+     * @param expr the expression to format
+     * @return a pretty-printed string
+     */
+    public static String prettyPrint(Expr expr) {
+        return switch (expr) {
+            case Num(var v) -> Double.toString(v);
+            case Var(var name) -> name;
+            case Neg(var operand) -> "(-" + prettyPrint(operand) + ")";
+            case Add(var l, var r) ->
+                    "(" + prettyPrint(l) + " + " + prettyPrint(r) + ")";
+            case Mul(var l, var r) ->
+                    "(" + prettyPrint(l) + " * " + prettyPrint(r) + ")";
+            case Div(var n, var d) ->
+                    "(" + prettyPrint(n) + " / " + prettyPrint(d) + ")";
+        };
+    }
+
+    /**
+     * Computes the depth (height) of the expression tree.
+     *
+     * @param expr the expression
+     * @return the maximum nesting depth (a leaf has depth 1)
+     */
+    public static int depth(Expr expr) {
+        return switch (expr) {
+            case Num _ -> 1;
+            case Var _ -> 1;
+            case Neg(var operand) -> 1 + depth(operand);
+            case Add(var l, var r) -> 1 + Math.max(depth(l), depth(r));
+            case Mul(var l, var r) -> 1 + Math.max(depth(l), depth(r));
+            case Div(var n, var d) -> 1 + Math.max(depth(n), depth(d));
+        };
+    }
+
+    /**
+     * Collects all variable names referenced in the expression.
+     *
+     * @param expr the expression tree
+     * @return an unmodifiable set of variable names
+     */
+    public static java.util.Set<String> variables(Expr expr) {
+        return switch (expr) {
+            case Num _ -> java.util.Set.of();
+            case Var(var name) -> java.util.Set.of(name);
+            case Neg(var operand) -> variables(operand);
+            case Add(var l, var r) -> union(variables(l), variables(r));
+            case Mul(var l, var r) -> union(variables(l), variables(r));
+            case Div(var n, var d) -> union(variables(n), variables(d));
+        };
+    }
+
+    /**
+     * Generic tree-fold: applies {@code fn} to every node via exhaustive switch.
+     *
+     * @param expr the expression tree
+     * @param fn   mapping function applied to each node
+     * @param <R>  result type
+     * @return the transformed expression
+     */
+    public static <R> R fold(Expr expr, Function<Expr, R> fn) {
+        return fn.apply(expr);
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    private static <T> java.util.Set<T> union(java.util.Set<T> a, java.util.Set<T> b) {
+        var result = new java.util.HashSet<>(a);
+        result.addAll(b);
+        return java.util.Collections.unmodifiableSet(result);
+    }
+}

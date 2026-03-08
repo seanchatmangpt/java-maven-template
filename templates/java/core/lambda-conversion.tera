@@ -1,0 +1,136 @@
+{# Lambda conversion — Converts anonymous inner classes to lambdas and method references #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "LambdaPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  conversions: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Comparator;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
+
+/**
+ * Lambda conversion patterns — anonymous inner classes → lambdas/method references.
+ *
+ * <h2>Conversion rules (Java 8+):</h2>
+ * <ol>
+ *     <li>Anonymous class implementing functional interface → lambda</li>
+ *     <li>Lambda calling single method on parameter → method reference</li>
+ *     <li>Lambda calling static method → static method reference</li>
+ *     <li>Lambda calling constructor → constructor reference</li>
+ * </ol>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Anonymous Runnable → lambda
+    // BEFORE: new Runnable() { @Override public void run() { doWork(); } }
+    // AFTER:
+    // =========================================================================
+    public static Runnable asRunnable(Runnable task) {
+        return task; // Call site: asRunnable(() -> doWork())
+    }
+
+    // =========================================================================
+    // PATTERN 2: Anonymous Comparator → lambda → method reference
+    // BEFORE: new Comparator<String>() {
+    //             @Override public int compare(String a, String b) {
+    //                 return a.compareTo(b);
+    //             }
+    //         }
+    // STEP 1 (lambda):     (a, b) -> a.compareTo(b)
+    // STEP 2 (method ref): String::compareTo
+    // =========================================================================
+    public static <T extends Comparable<T>> Comparator<T> naturalOrder() {
+        return Comparable::compareTo;
+    }
+
+    // =========================================================================
+    // PATTERN 3: Anonymous Predicate → lambda
+    // BEFORE: new Predicate<String>() {
+    //             @Override public boolean test(String s) {
+    //                 return s != null && !s.isBlank();
+    //             }
+    //         }
+    // AFTER:
+    // =========================================================================
+    public static Predicate<String> nonBlank() {
+        return s -> s != null && !s.isBlank();
+    }
+
+    // =========================================================================
+    // PATTERN 4: Method reference types
+    // =========================================================================
+
+    // Static method reference: ClassName::staticMethod
+    public static Function<String, Integer> parseInteger() {
+        return Integer::parseInt;
+    }
+
+    // Instance method reference (arbitrary object): ClassName::instanceMethod
+    public static Function<String, String> toUpperCase() {
+        return String::toUpperCase;
+    }
+
+    // Instance method reference (bound): object::method
+    public static Supplier<Integer> sizeOf(List<?> list) {
+        return list::size;
+    }
+
+    // Constructor reference: ClassName::new
+    public static Function<String, StringBuilder> newStringBuilder() {
+        return StringBuilder::new;
+    }
+
+    // =========================================================================
+    // PATTERN 5: Composable functional pipelines
+    // BEFORE: Multiple anonymous classes chained manually
+    // AFTER:  Composed lambdas
+    // =========================================================================
+    public static <T> Predicate<T> not(Predicate<T> predicate) {
+        return Predicate.not(predicate); // Java 11+
+    }
+
+    public static <T> Predicate<T> allOf(List<Predicate<T>> predicates) {
+        return predicates.stream()
+                .reduce(Predicate::and)
+                .orElse(_ -> true);
+    }
+
+    public static <T> UnaryOperator<T> compose(List<UnaryOperator<T>> operators) {
+        return operators.stream()
+                .reduce(UnaryOperator::andThen)
+                .orElse(UnaryOperator.identity());
+    }
+
+    // =========================================================================
+    // PATTERN 6: Consumer chaining
+    // BEFORE: consumer1.accept(x); consumer2.accept(x); consumer3.accept(x);
+    // AFTER:  consumer1.andThen(consumer2).andThen(consumer3).accept(x);
+    // =========================================================================
+    @SafeVarargs
+    public static <T> Consumer<T> chain(Consumer<T>... consumers) {
+        Consumer<T> result = _ -> {};
+        for (var consumer : consumers) {
+            result = result.andThen(consumer);
+        }
+        return result;
+    }
+{% for conversion in conversions %}
+
+    {{ conversion.body }}
+{% endfor %}
+}

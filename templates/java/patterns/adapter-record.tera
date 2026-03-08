@@ -1,0 +1,147 @@
+{# Adapter (Record) — Adapter pattern using records wrapping adaptees with default method bridging #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Adapters"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  adapters: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // Adapter pattern — records wrapping adaptees with interface default methods
+    // =========================================================================
+
+    /**
+     * BEFORE (legacy): Adapter class with manual delegation and boilerplate.
+     * A separate class holds a reference to the adaptee and manually delegates
+     * every method, translating between the target and adaptee interfaces.
+     *
+     * <pre>{@code
+     * public interface Target {
+     *     String request();
+     * }
+     *
+     * public class LegacyService {
+     *     public String specificRequest() { return "legacy data"; }
+     * }
+     *
+     * public class LegacyAdapter implements Target {
+     *     private final LegacyService adaptee;
+     *
+     *     public LegacyAdapter(LegacyService adaptee) {
+     *         this.adaptee = adaptee;
+     *     }
+     *
+     *     @Override
+     *     public String request() {
+     *         return "Adapted: " + adaptee.specificRequest();
+     *     }
+     * }
+     * }</pre>
+     *
+     * AFTER (modern): Records provide the wrapping with zero boilerplate — immutable,
+     * with automatic {@code equals()}, {@code hashCode()}, and {@code toString()}.
+     * Default methods on the target interface supply shared adaptation logic, so
+     * adapter records only override what differs.
+     *
+     * <pre>{@code
+     * public interface Target {
+     *     String rawData();
+     *
+     *     default String request() {
+     *         return "Adapted: " + rawData();
+     *     }
+     * }
+     *
+     * public record LegacyAdapter(LegacyService adaptee) implements Target {
+     *     public String rawData() { return adaptee.specificRequest(); }
+     * }
+     * }</pre>
+     */
+{% for adapter in adapters %}
+
+    // -------------------------------------------------------------------------
+    // {{ adapter.target_name }} — target interface
+    // -------------------------------------------------------------------------
+
+    {% if adapter.javadoc is defined %}/**
+     * {{ adapter.javadoc }}
+     */
+    {% endif %}public interface {{ adapter.target_name }} {
+{% for method in adapter.abstract_methods | default(value=[]) %}
+
+        {{ method.return_type }} {{ method.name }}({% for p in method.params | default(value=[]) %}{{ p.type }} {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+{% endfor %}
+{% for method in adapter.default_methods | default(value=[]) %}
+
+        /**{% if method.javadoc is defined %}
+         * {{ method.javadoc }}{% endif %}
+         */
+        default {{ method.return_type }} {{ method.name }}({% for p in method.params | default(value=[]) %}{{ p.type }} {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ method.body }}
+        }
+{% endfor %}
+    }
+
+    // -------------------------------------------------------------------------
+    // {{ adapter.adaptee_name }} — the existing class to adapt
+    // -------------------------------------------------------------------------
+
+    {% if adapter.adaptee_javadoc is defined %}/**
+     * {{ adapter.adaptee_javadoc }}
+     */
+    {% endif %}public static final class {{ adapter.adaptee_name }} {
+{% for method in adapter.adaptee_methods | default(value=[]) %}
+
+        public {{ method.return_type }} {{ method.name }}({% for p in method.params | default(value=[]) %}{{ p.type }} {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ method.body }}
+        }
+{% endfor %}
+    }
+
+    // -------------------------------------------------------------------------
+    // {{ adapter.record_name }} — record adapter bridging adaptee to target
+    // -------------------------------------------------------------------------
+
+    {% if adapter.record_javadoc is defined %}/**
+     * {{ adapter.record_javadoc }}
+     */
+    {% endif %}public record {{ adapter.record_name }}({{ adapter.adaptee_name }} adaptee) implements {{ adapter.target_name }} {
+
+        public {{ adapter.record_name }} {
+            Objects.requireNonNull(adaptee);
+        }
+{% for method in adapter.record_methods | default(value=[]) %}
+
+        @Override
+        public {{ method.return_type }} {{ method.name }}({% for p in method.params | default(value=[]) %}{{ p.type }} {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ method.body }}
+        }
+{% endfor %}
+    }
+
+    /**
+     * Factory method to adapt a {@link {{ adapter.adaptee_name }}} to the {@link {{ adapter.target_name }}} interface.
+     */
+    public static {{ adapter.target_name }} adapt({{ adapter.adaptee_name }} adaptee) {
+        return new {{ adapter.record_name }}(adaptee);
+    }
+{% endfor %}
+}

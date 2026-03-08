@@ -1,0 +1,105 @@
+{# Jakarta EE migration — javax.* → jakarta.* namespace migration patterns #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "JakartaMigration"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+/**
+ * Jakarta EE namespace migration reference.
+ *
+ * <p>Java EE was transferred to Eclipse Foundation and renamed to Jakarta EE.
+ * All {@code javax.*} packages were renamed to {@code jakarta.*}.
+ *
+ * <h2>Package renames (must change ALL imports):</h2>
+ * <table>
+ *     <tr><td><strong>Before (javax)</strong></td><td><strong>After (jakarta)</strong></td></tr>
+ *     <tr><td>{@code javax.servlet.*}</td><td>{@code jakarta.servlet.*}</td></tr>
+ *     <tr><td>{@code javax.persistence.*}</td><td>{@code jakarta.persistence.*}</td></tr>
+ *     <tr><td>{@code javax.annotation.*}</td><td>{@code jakarta.annotation.*}</td></tr>
+ *     <tr><td>{@code javax.inject.*}</td><td>{@code jakarta.inject.*}</td></tr>
+ *     <tr><td>{@code javax.enterprise.*}</td><td>{@code jakarta.enterprise.*}</td></tr>
+ *     <tr><td>{@code javax.ws.rs.*}</td><td>{@code jakarta.ws.rs.*}</td></tr>
+ *     <tr><td>{@code javax.json.*}</td><td>{@code jakarta.json.*}</td></tr>
+ *     <tr><td>{@code javax.validation.*}</td><td>{@code jakarta.validation.*}</td></tr>
+ *     <tr><td>{@code javax.transaction.*}</td><td>{@code jakarta.transaction.*}</td></tr>
+ *     <tr><td>{@code javax.mail.*}</td><td>{@code jakarta.mail.*}</td></tr>
+ *     <tr><td>{@code javax.activation.*}</td><td>{@code jakarta.activation.*}</td></tr>
+ *     <tr><td>{@code javax.xml.bind.*}</td><td>{@code jakarta.xml.bind.*}</td></tr>
+ * </table>
+ *
+ * <h2>NOT renamed (stay as javax.*):</h2>
+ * <ul>
+ *     <li>{@code javax.sql.*} — part of Java SE, not EE</li>
+ *     <li>{@code javax.naming.*} — part of Java SE</li>
+ *     <li>{@code javax.crypto.*} — part of Java SE</li>
+ *     <li>{@code javax.net.*} — part of Java SE</li>
+ *     <li>{@code javax.swing.*} — part of Java SE</li>
+ * </ul>
+ *
+ * <h2>Maven dependency changes:</h2>
+ * <pre>{@code
+ * <!-- BEFORE -->
+ * <dependency>
+ *     <groupId>javax.servlet</groupId>
+ *     <artifactId>javax.servlet-api</artifactId>
+ *     <version>4.0.1</version>
+ * </dependency>
+ *
+ * <!-- AFTER -->
+ * <dependency>
+ *     <groupId>jakarta.servlet</groupId>
+ *     <artifactId>jakarta.servlet-api</artifactId>
+ *     <version>6.1.0</version>
+ * </dependency>
+ * }</pre>
+ *
+ * <h2>Migration steps:</h2>
+ * <ol>
+ *     <li>Update all Maven/Gradle dependencies from javax to jakarta</li>
+ *     <li>Find-and-replace all imports: {@code javax.servlet} → {@code jakarta.servlet}</li>
+ *     <li>Update persistence.xml, web.xml, beans.xml namespaces</li>
+ *     <li>Update any string references to class names</li>
+ *     <li>Test thoroughly — some behavioral changes exist between versions</li>
+ * </ol>
+ */
+public final class {{ name }} {
+    private {{ name }}() {}
+
+    /**
+     * Detect javax.* usage in a source file.
+     * Returns the jakarta.* replacement for each detected import.
+     */
+    public static String migrateImport(String javaxImport) {
+        if (javaxImport.startsWith("javax.servlet")) {
+            return javaxImport.replace("javax.servlet", "jakarta.servlet");
+        } else if (javaxImport.startsWith("javax.persistence")) {
+            return javaxImport.replace("javax.persistence", "jakarta.persistence");
+        } else if (javaxImport.startsWith("javax.annotation")) {
+            return javaxImport.replace("javax.annotation", "jakarta.annotation");
+        } else if (javaxImport.startsWith("javax.inject")) {
+            return javaxImport.replace("javax.inject", "jakarta.inject");
+        } else if (javaxImport.startsWith("javax.enterprise")) {
+            return javaxImport.replace("javax.enterprise", "jakarta.enterprise");
+        } else if (javaxImport.startsWith("javax.ws.rs")) {
+            return javaxImport.replace("javax.ws.rs", "jakarta.ws.rs");
+        } else if (javaxImport.startsWith("javax.json")) {
+            return javaxImport.replace("javax.json", "jakarta.json");
+        } else if (javaxImport.startsWith("javax.validation")) {
+            return javaxImport.replace("javax.validation", "jakarta.validation");
+        } else if (javaxImport.startsWith("javax.transaction")) {
+            return javaxImport.replace("javax.transaction", "jakarta.transaction");
+        } else if (javaxImport.startsWith("javax.xml.bind")) {
+            return javaxImport.replace("javax.xml.bind", "jakarta.xml.bind");
+        }
+        // Java SE javax.* packages stay as-is
+        return javaxImport;
+    }
+}

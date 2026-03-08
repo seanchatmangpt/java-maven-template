@@ -1,0 +1,84 @@
+{# Maven Build Cache Configuration — Generates .mvn/extensions.xml with Maven Build Cache Extension for incremental builds #}
+---
+to: "{{ output_dir }}/.mvn/extensions.xml"
+vars:
+  name: "build-cache"
+  package: "org.acme"
+  output_dir: "."
+  build_cache_version: "1.2.0"
+  otel_version: "1.0.0"
+  enable_otel: true
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Maven Build Cache Extension
+
+     Enables incremental builds by caching module outputs. When source
+     files and configuration haven't changed, previously built artifacts
+     are restored from the local cache instead of rebuilding.
+
+     Benefits:
+       - Dramatically faster incremental builds
+       - Automatic invalidation when sources, dependencies, or config change
+       - Local disk cache (no server required)
+
+     Cache location: ${user.home}/.m2/build-cache/
+
+     To force a clean rebuild (bypass cache):
+       ./mvnw clean verify -Dmaven.build.cache.enabled=false
+     ═══════════════════════════════════════════════════════════════════════ -->
+<extensions>
+    <!-- Maven Build Cache Extension — skip unchanged modules automatically -->
+    <extension>
+        <groupId>org.apache.maven.extensions</groupId>
+        <artifactId>maven-build-cache-extension</artifactId>
+        <version>{{ build_cache_version }}</version>
+    </extension>
+{% if enable_otel %}
+
+    <!-- OpenTelemetry Maven Extension — build observability and tracing -->
+    <extension>
+        <groupId>io.opentelemetry.contrib</groupId>
+        <artifactId>opentelemetry-maven-extension</artifactId>
+        <version>{{ otel_version }}</version>
+    </extension>
+{% endif %}
+</extensions>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Optional: Build Cache Configuration File
+
+     For fine-grained control, create .mvn/build-cache-config.xml:
+
+     <?xml version="1.0" encoding="UTF-8"?>
+     <cache xmlns="http://maven.apache.org/BUILD-CACHE-CONFIG/1.0.0">
+         <configuration>
+             <enabled>true</enabled>
+             <hashAlgorithm>SHA-256</hashAlgorithm>
+             <maxLocalBuildsCached>3</maxLocalBuildsCached>
+         </configuration>
+         <input>
+             <global>
+                 <glob>{*.java,pom.xml,*.xml,*.properties,*.yaml,*.yml}</glob>
+                 <includes>
+                     <include>src/</include>
+                 </includes>
+                 <excludes>
+                     <exclude>target/</exclude>
+                 </excludes>
+             </global>
+         </input>
+         <executionControl>
+             <reconcile>
+                 <plugins>
+                     <plugin artifactId="maven-compiler-plugin" goal="compile">
+                         <reconciles>
+                             <reconcile propertyName="source"/>
+                             <reconcile propertyName="target"/>
+                         </reconciles>
+                     </plugin>
+                 </plugins>
+             </reconcile>
+         </executionControl>
+     </cache>
+     ═══════════════════════════════════════════════════════════════════════ -->

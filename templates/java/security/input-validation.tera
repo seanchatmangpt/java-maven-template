@@ -1,0 +1,184 @@
+{# Input validation — Record compact constructors with validation and error accumulation #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "ValidationPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
+
+/**
+ * Input validation patterns using record compact constructors.
+ *
+ * <p>BEFORE: Scattered validation in setters, service layer, or framework annotations.
+ * <p>AFTER: Centralized in compact constructor — invalid objects can never exist.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Record with compact constructor validation
+    // Invalid state is rejected at construction — no invalid objects can exist
+    // =========================================================================
+    public record Email(String value) {
+        private static final Pattern EMAIL_PATTERN =
+                Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
+        public Email {
+            Objects.requireNonNull(value, "email must not be null");
+            if (!EMAIL_PATTERN.matcher(value).matches()) {
+                throw new IllegalArgumentException("Invalid email: " + value);
+            }
+        }
+    }
+
+    public record PositiveAmount(double value) {
+        public PositiveAmount {
+            if (value <= 0) {
+                throw new IllegalArgumentException("Amount must be positive: " + value);
+            }
+            if (Double.isNaN(value) || Double.isInfinite(value)) {
+                throw new IllegalArgumentException("Amount must be finite: " + value);
+            }
+        }
+    }
+
+    public record NonBlankString(String value) {
+        public NonBlankString {
+            Objects.requireNonNull(value, "value must not be null");
+            if (value.isBlank()) {
+                throw new IllegalArgumentException("value must not be blank");
+            }
+        }
+    }
+
+    public record BoundedInt(int value, int min, int max) {
+        public BoundedInt {
+            if (value < min || value > max) {
+                throw new IllegalArgumentException(
+                        "value %d not in range [%d, %d]".formatted(value, min, max));
+            }
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 2: Validation error accumulation
+    // Collects ALL errors instead of failing on the first one
+    // =========================================================================
+    public sealed interface ValidationResult
+            permits ValidationResult.Valid, ValidationResult.Invalid {
+
+        record Valid() implements ValidationResult {}
+        record Invalid(List<String> errors) implements ValidationResult {
+            public Invalid {
+                errors = List.copyOf(errors);
+                if (errors.isEmpty()) {
+                    throw new IllegalArgumentException("Invalid must have at least one error");
+                }
+            }
+        }
+
+        default boolean isValid() { return this instanceof Valid; }
+
+        static ValidationResult valid() { return new Valid(); }
+        static ValidationResult invalid(String error) { return new Invalid(List.of(error)); }
+        static ValidationResult invalid(List<String> errors) { return new Invalid(errors); }
+    }
+
+    /**
+     * Accumulating validator — collects all errors before reporting.
+     */
+    public static final class Validator<T> {
+        private final T target;
+        private final List<String> errors = new ArrayList<>();
+
+        private Validator(T target) {
+            this.target = Objects.requireNonNull(target);
+        }
+
+        public static <T> Validator<T> of(T target) {
+            return new Validator<>(target);
+        }
+
+        public Validator<T> check(Predicate<T> predicate, String errorMessage) {
+            if (!predicate.test(target)) {
+                errors.add(errorMessage);
+            }
+            return this;
+        }
+
+        public Validator<T> checkNotNull(Object value, String fieldName) {
+            if (value == null) {
+                errors.add(fieldName + " must not be null");
+            }
+            return this;
+        }
+
+        public Validator<T> checkNotBlank(String value, String fieldName) {
+            if (value == null || value.isBlank()) {
+                errors.add(fieldName + " must not be blank");
+            }
+            return this;
+        }
+
+        public ValidationResult validate() {
+            if (errors.isEmpty()) {
+                return ValidationResult.valid();
+            }
+            return ValidationResult.invalid(Collections.unmodifiableList(errors));
+        }
+
+        /**
+         * Returns the target if valid, throws if any validation failed.
+         */
+        public T orThrow() {
+            if (!errors.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Validation failed: " + String.join("; ", errors));
+            }
+            return target;
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 3: Precondition utility methods
+    // =========================================================================
+    public static void requireNonBlank(String value, String name) {
+        Objects.requireNonNull(value, name + " must not be null");
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+    }
+
+    public static void requirePositive(int value, String name) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(name + " must be positive, was: " + value);
+        }
+    }
+
+    public static void requireInRange(int value, int min, int max, String name) {
+        if (value < min || value > max) {
+            throw new IllegalArgumentException(
+                    "%s must be in [%d, %d], was: %d".formatted(name, min, max, value));
+        }
+    }
+
+    public static <T> void requireNonEmpty(java.util.Collection<T> collection, String name) {
+        Objects.requireNonNull(collection, name + " must not be null");
+        if (collection.isEmpty()) {
+            throw new IllegalArgumentException(name + " must not be empty");
+        }
+    }
+}

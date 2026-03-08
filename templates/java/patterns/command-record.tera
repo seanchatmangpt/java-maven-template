@@ -1,0 +1,95 @@
+{# Command (Record + Sealed) — Immutable command objects in a sealed hierarchy #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyCommand"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  result_type: "String"
+  commands: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Instant;
+import java.util.Objects;
+import java.util.UUID;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public sealed interface {{ name }}
+        permits {% for cmd in commands %}{{ name }}.{{ cmd.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+
+    /**
+     * Unique command identifier.
+     */
+    UUID id();
+
+    /**
+     * Timestamp when this command was created.
+     */
+    Instant createdAt();
+{% for cmd in commands %}
+
+    /**{% if cmd.javadoc is defined %}
+     * {{ cmd.javadoc }}{% endif %}
+     */
+    record {{ cmd.name }}(
+            UUID id,
+            Instant createdAt{% for field in cmd.fields | default(value=[]) %},
+            {{ field.type }} {{ field.name }}{% endfor %}
+
+    ) implements {{ name }} {
+
+        public {{ cmd.name }} {
+            Objects.requireNonNull(id, "id must not be null");
+            Objects.requireNonNull(createdAt, "createdAt must not be null");
+{% for field in cmd.fields | default(value=[]) %}
+{% if field.nullable is undefined or not field.nullable %}
+            Objects.requireNonNull({{ field.name }}, "{{ field.name }} must not be null");
+{% endif %}
+{% endfor %}
+{% for v in cmd.validation | default(value=[]) %}
+            {{ v }}
+{% endfor %}
+        }
+
+        /**
+         * Convenience factory — auto-generates id and timestamp.
+         */
+        public static {{ cmd.name }} create({% for field in cmd.fields | default(value=[]) %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            return new {{ cmd.name }}(UUID.randomUUID(), Instant.now(){% for field in cmd.fields | default(value=[]) %}, {{ field.name }}{% endfor %});
+        }
+    }
+{% endfor %}
+
+    // =========================================================================
+    // Command handler — exhaustive switch over all command types
+    // =========================================================================
+
+    /**
+     * Functional command handler interface.
+     */
+    @FunctionalInterface
+    interface Handler<R> {
+        R handle({{ name }} command);
+    }
+
+    /**
+     * Dispatches this command through exhaustive pattern matching.
+     */
+    default {{ result_type }} dispatch({% for cmd in commands %}java.util.function.Function<{{ cmd.name }}, {{ result_type }}> on{{ cmd.name }}{% if not loop.last %},
+            {% endif %}{% endfor %}) {
+        return switch (this) {
+{% for cmd in commands %}
+            case {{ cmd.name }} cmd -> on{{ cmd.name }}.apply(cmd);
+{% endfor %}
+        };
+    }
+}

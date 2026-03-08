@@ -1,0 +1,44 @@
+{# Qualified Exports — Module with friend-only exports and reflection opens #}
+---
+to: "{{ output_dir }}/module-info.java"
+vars:
+  module_name: "org.acme"
+  output_dir: "src/main/java"
+  public_packages: []
+  friend_exports: []
+  reflection_opens: []
+  requires: []
+---
+/**
+ * Module with qualified exports — packages are only visible to named friend modules.
+ *
+ * <p>This pattern is used when internal APIs should be shared with specific
+ * collaborating modules but hidden from all others.
+ *
+ * <p>BEFORE (classpath): Everything in public packages is visible to everyone.
+ * <p>AFTER (JPMS): Fine-grained control over which modules can access which packages.
+ */
+module {{ module_name }} {
+
+    // Standard dependencies
+{% for req in requires %}
+    requires {{ req.transitive | default(value=false) | ternary(true_val="transitive ", false_val="") }}{{ req.name }};
+{% endfor %}
+
+    // Public API — accessible by any module
+{% for pkg in public_packages %}
+    exports {{ pkg }};
+{% endfor %}
+
+    // Friend-only exports — visible only to named modules
+{% for exp in friend_exports %}
+    exports {{ exp.package }} to {% for friend in exp.friends %}{{ friend }}{% if not loop.last %},
+            {% endif %}{% endfor %};
+{% endfor %}
+
+    // Reflection opens — for frameworks that need deep reflection
+{% for opn in reflection_opens %}
+    opens {{ opn.package }} to {% for framework in opn.frameworks %}{{ framework }}{% if not loop.last %},
+            {% endif %}{% endfor %};
+{% endfor %}
+}

@@ -1,0 +1,208 @@
+{# Stream pipeline — Converts imperative loops to declarative stream chains #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "StreamPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  custom_pipelines: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Stream pipeline patterns — imperative for-loops → declarative streams.
+ *
+ * <h2>Conversion guide:</h2>
+ * <ul>
+ *     <li>{@code for + if + add} → {@code stream().filter().toList()}</li>
+ *     <li>{@code for + transform + add} → {@code stream().map().toList()}</li>
+ *     <li>{@code for + accumulate} → {@code stream().reduce()}</li>
+ *     <li>{@code for + group} → {@code stream().collect(groupingBy())}</li>
+ *     <li>{@code for + nested for} → {@code stream().flatMap()}</li>
+ *     <li>{@code for + first match} → {@code stream().filter().findFirst()}</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Filter
+    // BEFORE: List<T> result = new ArrayList<>();
+    //         for (T item : items) { if (predicate.test(item)) result.add(item); }
+    // AFTER:
+    // =========================================================================
+    public static <T> List<T> filter(Collection<T> items, Predicate<T> predicate) {
+        return items.stream().filter(predicate).toList();
+    }
+
+    // =========================================================================
+    // PATTERN 2: Map (transform)
+    // BEFORE: List<R> result = new ArrayList<>();
+    //         for (T item : items) { result.add(mapper.apply(item)); }
+    // AFTER:
+    // =========================================================================
+    public static <T, R> List<R> map(Collection<T> items, Function<T, R> mapper) {
+        return items.stream().map(mapper).toList();
+    }
+
+    // =========================================================================
+    // PATTERN 3: Filter + Map
+    // BEFORE: for (T item : items) {
+    //             if (predicate.test(item)) result.add(mapper.apply(item));
+    //         }
+    // AFTER:
+    // =========================================================================
+    public static <T, R> List<R> filterAndMap(
+            Collection<T> items, Predicate<T> predicate, Function<T, R> mapper) {
+        return items.stream()
+                .filter(predicate)
+                .map(mapper)
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 4: Reduce (accumulate)
+    // BEFORE: int total = 0; for (T item : items) { total += extractor.apply(item); }
+    // AFTER:
+    // =========================================================================
+    public static <T> int sumBy(Collection<T> items, java.util.function.ToIntFunction<T> extractor) {
+        return items.stream().mapToInt(extractor).sum();
+    }
+
+    public static <T> Optional<T> reduceBy(Collection<T> items, java.util.function.BinaryOperator<T> accumulator) {
+        return items.stream().reduce(accumulator);
+    }
+
+    // =========================================================================
+    // PATTERN 5: FlatMap (nested collections)
+    // BEFORE: for (A a : as) { for (B b : a.bs()) { result.add(b); } }
+    // AFTER:
+    // =========================================================================
+    public static <T, R> List<R> flatMap(
+            Collection<T> items, Function<T, ? extends Collection<R>> expander) {
+        return items.stream()
+                .flatMap(item -> expander.apply(item).stream())
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 6: Group by
+    // BEFORE: Map<K, List<T>> groups = new HashMap<>();
+    //         for (T item : items) { groups.computeIfAbsent(key(item), k -> new ArrayList<>()).add(item); }
+    // AFTER:
+    // =========================================================================
+    public static <T, K> Map<K, List<T>> groupBy(Collection<T> items, Function<T, K> classifier) {
+        return items.stream().collect(Collectors.groupingBy(classifier));
+    }
+
+    // =========================================================================
+    // PATTERN 7: Partition by
+    // BEFORE: List<T> trueList = ...; List<T> falseList = ...;
+    //         for (T item : items) { if (pred.test(item)) trueList.add(item); else falseList.add(item); }
+    // AFTER:
+    // =========================================================================
+    public static <T> Map<Boolean, List<T>> partitionBy(Collection<T> items, Predicate<T> predicate) {
+        return items.stream().collect(Collectors.partitioningBy(predicate));
+    }
+
+    // =========================================================================
+    // PATTERN 8: Find first/any
+    // BEFORE: for (T item : items) { if (pred.test(item)) return item; } return null;
+    // AFTER:
+    // =========================================================================
+    public static <T> Optional<T> findFirst(Collection<T> items, Predicate<T> predicate) {
+        return items.stream().filter(predicate).findFirst();
+    }
+
+    // =========================================================================
+    // PATTERN 9: Any/All/None match
+    // BEFORE: boolean found = false; for (T item : items) { if (pred.test(item)) { found = true; break; } }
+    // AFTER:
+    // =========================================================================
+    public static <T> boolean anyMatch(Collection<T> items, Predicate<T> predicate) {
+        return items.stream().anyMatch(predicate);
+    }
+
+    public static <T> boolean allMatch(Collection<T> items, Predicate<T> predicate) {
+        return items.stream().allMatch(predicate);
+    }
+
+    public static <T> boolean noneMatch(Collection<T> items, Predicate<T> predicate) {
+        return items.stream().noneMatch(predicate);
+    }
+
+    // =========================================================================
+    // PATTERN 10: Distinct + Sorted
+    // BEFORE: Set<T> seen = new HashSet<>(); List<T> result = new ArrayList<>();
+    //         for (T item : items) { if (seen.add(item)) result.add(item); }
+    //         Collections.sort(result, comparator);
+    // AFTER:
+    // =========================================================================
+    public static <T> List<T> distinctSorted(Collection<T> items, Comparator<T> comparator) {
+        return items.stream().distinct().sorted(comparator).toList();
+    }
+
+    // =========================================================================
+    // PATTERN 11: To Map
+    // BEFORE: Map<K, V> map = new HashMap<>();
+    //         for (T item : items) { map.put(keyFn.apply(item), valueFn.apply(item)); }
+    // AFTER:
+    // =========================================================================
+    public static <T, K, V> Map<K, V> toMap(
+            Collection<T> items, Function<T, K> keyMapper, Function<T, V> valueMapper) {
+        return items.stream().collect(Collectors.toMap(keyMapper, valueMapper));
+    }
+
+    // =========================================================================
+    // PATTERN 12: Joining strings
+    // BEFORE: StringBuilder sb = new StringBuilder();
+    //         for (T item : items) { if (!sb.isEmpty()) sb.append(", "); sb.append(item); }
+    // AFTER:
+    // =========================================================================
+    public static <T> String joining(Collection<T> items, Function<T, String> toStr, String delimiter) {
+        return items.stream().map(toStr).collect(Collectors.joining(delimiter));
+    }
+
+    // =========================================================================
+    // PATTERN 13: toList() shorthand (Java 16+)
+    // BEFORE: .collect(Collectors.toList())
+    //         .collect(Collectors.toUnmodifiableList())
+    // AFTER:  .toList()
+    // =========================================================================
+    public static <T> List<T> toImmutableList(Stream<T> stream) {
+        return stream.toList(); // Unmodifiable, null-hostile since Java 16
+    }
+
+    // =========================================================================
+    // PATTERN 14: Teeing collector (Java 12+)
+    // BEFORE: Run stream twice or use custom collector
+    // AFTER:
+    // =========================================================================
+    public static <T> Map.Entry<Long, Optional<T>> countAndMax(
+            Collection<T> items, Comparator<T> comparator) {
+        return items.stream()
+                .collect(Collectors.teeing(
+                        Collectors.counting(),
+                        Collectors.maxBy(comparator),
+                        Map::entry));
+    }
+{% for pipeline in custom_pipelines %}
+
+    {{ pipeline.body }}
+{% endfor %}
+}

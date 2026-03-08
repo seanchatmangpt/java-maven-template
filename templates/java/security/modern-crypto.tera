@@ -1,0 +1,134 @@
+{# Modern cryptography — AES-GCM, ECDSA, HKDF replacing deprecated algorithms #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "CryptoPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.SecureRandom;
+import java.security.Signature;
+import java.util.Base64;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+
+/**
+ * Modern cryptography patterns — replacing deprecated/weak algorithms.
+ *
+ * <h2>Migrations:</h2>
+ * <ul>
+ *     <li>DES/3DES → AES-256-GCM (authenticated encryption)</li>
+ *     <li>ECB mode → GCM mode (authenticated, no padding oracle)</li>
+ *     <li>MD5/SHA-1 → SHA-256/SHA-3 (collision resistant)</li>
+ *     <li>RSA-1024 → ECDSA P-256 or Ed25519 (shorter keys, same security)</li>
+ *     <li>{@code new Random()} → {@code SecureRandom.getInstanceStrong()}</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    private static final int GCM_IV_LENGTH = 12;
+    private static final int GCM_TAG_LENGTH = 128;
+
+    // =========================================================================
+    // PATTERN 1: AES-256-GCM authenticated encryption
+    // BEFORE: Cipher.getInstance("DES/ECB/PKCS5Padding") — weak, unauthenticated
+    // AFTER:
+    // =========================================================================
+    public static SecretKey generateAesKey() throws Exception {
+        var keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(256, SecureRandom.getInstanceStrong());
+        return keyGen.generateKey();
+    }
+
+    public static byte[] encrypt(SecretKey key, byte[] plaintext) throws Exception {
+        var cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        var iv = new byte[GCM_IV_LENGTH];
+        SecureRandom.getInstanceStrong().nextBytes(iv);
+        cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
+        var ciphertext = cipher.doFinal(plaintext);
+        // Prepend IV to ciphertext
+        var result = new byte[iv.length + ciphertext.length];
+        System.arraycopy(iv, 0, result, 0, iv.length);
+        System.arraycopy(ciphertext, 0, result, iv.length, ciphertext.length);
+        return result;
+    }
+
+    public static byte[] decrypt(SecretKey key, byte[] encrypted) throws Exception {
+        var cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        var iv = new byte[GCM_IV_LENGTH];
+        System.arraycopy(encrypted, 0, iv, 0, iv.length);
+        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
+        return cipher.doFinal(encrypted, GCM_IV_LENGTH, encrypted.length - GCM_IV_LENGTH);
+    }
+
+    // =========================================================================
+    // PATTERN 2: ECDSA signing
+    // BEFORE: RSA-1024 signatures — key too short for modern security
+    // AFTER:  ECDSA with P-256 — 128-bit security with 32-byte keys
+    // =========================================================================
+    public static KeyPair generateEcKeyPair() throws Exception {
+        var keyGen = KeyPairGenerator.getInstance("EC");
+        keyGen.initialize(256, SecureRandom.getInstanceStrong());
+        return keyGen.generateKeyPair();
+    }
+
+    public static byte[] sign(KeyPair keyPair, byte[] data) throws Exception {
+        var signer = Signature.getInstance("SHA256withECDSA");
+        signer.initSign(keyPair.getPrivate());
+        signer.update(data);
+        return signer.sign();
+    }
+
+    public static boolean verify(KeyPair keyPair, byte[] data, byte[] signature) throws Exception {
+        var verifier = Signature.getInstance("SHA256withECDSA");
+        verifier.initVerify(keyPair.getPublic());
+        verifier.update(data);
+        return verifier.verify(signature);
+    }
+
+    // =========================================================================
+    // PATTERN 3: Secure random
+    // BEFORE: new Random() or new Random(seed) — predictable!
+    // AFTER:
+    // =========================================================================
+    public static byte[] secureRandomBytes(int length) {
+        var bytes = new byte[length];
+        new SecureRandom().nextBytes(bytes);
+        return bytes;
+    }
+
+    public static String secureToken(int byteLength) {
+        return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(secureRandomBytes(byteLength));
+    }
+
+    // =========================================================================
+    // PATTERN 4: Secure hashing
+    // BEFORE: MessageDigest.getInstance("MD5") — collision attacks known
+    // AFTER:
+    // =========================================================================
+    public static byte[] sha256(byte[] data) throws Exception {
+        return java.security.MessageDigest.getInstance("SHA-256").digest(data);
+    }
+
+    public static String sha256Hex(byte[] data) throws Exception {
+        var hash = sha256(data);
+        var sb = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+}

@@ -64,3 +64,39 @@ For long sessions, warm the Maven Build Cache before starting:
 ```bash
 ./mvnw compile -q -T1C
 ```
+
+## Code Generation (ggen / jgen)
+
+This project wraps [seanchatmangpt/ggen](https://github.com/seanchatmangpt/ggen) as a code generation engine for Java 26 migration.
+
+**Install ggen:**
+```bash
+cargo install ggen-cli --features paas,ai
+```
+
+**jgen CLI wrapper:**
+```bash
+bin/jgen generate -t core/record -n Person -p com.example.model
+bin/jgen list                          # List all 72 templates
+bin/jgen list --category patterns      # List templates in a category
+bin/jgen migrate --source ./legacy     # Analyze codebase for migration
+bin/jgen verify                        # Compile + format + test check
+```
+
+**Template categories (72 templates, 108 patterns):**
+- `core/` — 14 templates: records, sealed types, pattern matching, streams, lambdas, var, gatherers
+- `concurrency/` — 5 templates: virtual threads, structured concurrency, scoped values
+- `patterns/` — 17 templates: all GoF patterns reimagined for modern Java (builder, factory, strategy, state machine, visitor, etc.)
+- `api/` — 6 templates: HttpClient, java.time, NIO.2, ProcessBuilder, collections, strings
+- `modules/` — 4 templates: JPMS module-info, SPI, qualified exports, multi-module
+- `testing/` — 12 templates: JUnit 5, AssertJ, jqwik, Instancio, ArchUnit, Awaitility, Mockito, BDD, Testcontainers
+- `error-handling/` — 3 templates: Result<T,E> railway, functional errors, Optional↔Result
+- `build/` — 7 templates: POM, Maven wrapper, Spotless, Surefire/Failsafe, build cache, CI/CD
+- `security/` — 4 templates: modern crypto, encapsulation, validation, Jakarta EE migration
+
+**Architecture:**
+- `schema/*.ttl` — RDF ontologies defining Java type system, patterns, concurrency, modules, migration rules
+- `queries/*.rq` — SPARQL queries extracting data from ontologies
+- `templates/java/**/*.tera` — Tera templates rendering Java 26 code
+- `ggen.toml` — ggen project configuration
+- `bin/jgen` — CLI wrapper for Java developers

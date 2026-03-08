@@ -1,0 +1,84 @@
+{# Sealed class — Generates a sealed abstract class with permitted subtypes #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyBase"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  type_parameters: []
+  fields: []
+  abstract_methods: []
+  concrete_methods: []
+  permitted_types: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public sealed abstract class {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if tp.bound is defined %} extends {{ tp.bound }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %}
+
+        permits {% for pt in permitted_types %}{{ pt.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+{% for field in fields %}
+
+    private final {{ field.type }} {{ field.name }};
+{% endfor %}
+
+    protected {{ name }}({% for field in fields %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+{% for field in fields %}
+        this.{{ field.name }} = Objects.requireNonNull({{ field.name }}, "{{ field.name }} must not be null");
+{% endfor %}
+    }
+{% for field in fields %}
+
+    public {{ field.type }} {{ field.name }}() {
+        return {{ field.name }};
+    }
+{% endfor %}
+{% for method in abstract_methods %}
+
+    public abstract {{ method.return_type }} {{ method.name }}({% for param in method.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+{% endfor %}
+{% for method in concrete_methods %}
+
+    public {{ method.return_type }} {{ method.name }}({% for param in method.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        {{ method.body }}
+    }
+{% endfor %}
+{% for pt in permitted_types %}
+
+    public static final class {{ pt.name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} extends {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} {
+{% for field in pt.extra_fields | default(value=[]) %}
+        private final {{ field.type }} {{ field.name }};
+{% endfor %}
+
+        public {{ pt.name }}({% for field in fields %}{{ field.type }} {{ field.name }}{% if pt.extra_fields is defined and pt.extra_fields | length > 0 %}, {% endif %}{% endfor %}{% for field in pt.extra_fields | default(value=[]) %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            super({% for field in fields %}{{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+{% for field in pt.extra_fields | default(value=[]) %}
+            this.{{ field.name }} = {{ field.name }};
+{% endfor %}
+        }
+{% for field in pt.extra_fields | default(value=[]) %}
+
+        public {{ field.type }} {{ field.name }}() {
+            return {{ field.name }};
+        }
+{% endfor %}
+{% for method in pt.method_impls | default(value=[]) %}
+
+        @Override
+        public {{ method.return_type }} {{ method.name }}({% for param in method.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ method.body }}
+        }
+{% endfor %}
+    }
+{% endfor %}
+}

@@ -1,0 +1,152 @@
+{# HttpClient — Modern HTTP client patterns replacing HttpURLConnection (Java 11+) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "HttpClientPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Modern HttpClient patterns (Java 11+).
+ *
+ * <p>BEFORE: {@code java.net.HttpURLConnection} with manual stream handling.
+ * <p>AFTER: {@code java.net.http.HttpClient} with builder API and async support.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_2)
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
+
+    // =========================================================================
+    // PATTERN 1: Synchronous GET
+    // BEFORE: URL url = new URL(urlStr);
+    //         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+    //         conn.setRequestMethod("GET");
+    //         BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+    //         ... read line by line ... conn.disconnect();
+    // AFTER:
+    // =========================================================================
+    public static String get(String url) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .GET()
+                .header("Accept", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .build();
+        var response = CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        return response.body();
+    }
+
+    // =========================================================================
+    // PATTERN 2: Synchronous POST with JSON body
+    // BEFORE: conn.setDoOutput(true); conn.setRequestMethod("POST");
+    //         OutputStream os = conn.getOutputStream();
+    //         os.write(jsonBody.getBytes()); os.flush(); os.close();
+    // AFTER:
+    // =========================================================================
+    public static HttpResponse<String> postJson(String url, String jsonBody) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .build();
+        return CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    // =========================================================================
+    // PATTERN 3: Async GET with CompletableFuture
+    // BEFORE: ExecutorService + Future + HttpURLConnection
+    // AFTER:
+    // =========================================================================
+    public static CompletableFuture<String> getAsync(String url) {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .GET()
+                .build();
+        return CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .thenApply(HttpResponse::body);
+    }
+
+    // =========================================================================
+    // PATTERN 4: Async POST
+    // =========================================================================
+    public static CompletableFuture<HttpResponse<String>> postJsonAsync(String url, String jsonBody) {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .header("Content-Type", "application/json")
+                .build();
+        return CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    // =========================================================================
+    // PATTERN 5: PUT and DELETE
+    // =========================================================================
+    public static HttpResponse<String> put(String url, String jsonBody) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .PUT(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .header("Content-Type", "application/json")
+                .build();
+        return CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    public static HttpResponse<Void> delete(String url) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .DELETE()
+                .build();
+        return CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
+    }
+
+    // =========================================================================
+    // PATTERN 6: Response handling with status code checks
+    // =========================================================================
+    public static <T> T getOrThrow(String url, HttpResponse.BodyHandler<T> handler) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .GET()
+                .build();
+        var response = CLIENT.send(request, handler);
+        if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            return response.body();
+        }
+        throw new RuntimeException("HTTP " + response.statusCode() + " from " + url);
+    }
+
+    // =========================================================================
+    // PATTERN 7: Concurrent fan-out with virtual threads
+    // BEFORE: ExecutorService pool = Executors.newFixedThreadPool(10); List<Future<String>> futures = ...
+    // AFTER:
+    // =========================================================================
+    public static java.util.List<String> getAll(java.util.List<String> urls) {
+        return urls.stream()
+                .gather(java.util.stream.Gatherers.mapConcurrent(10, url -> {
+                    try {
+                        return get(url);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }))
+                .toList();
+    }
+}

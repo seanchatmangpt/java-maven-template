@@ -1,0 +1,98 @@
+{# BDD-style test — Given/When/Then structure with JUnit 5 and AssertJ #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "BddExamples"
+  package: "org.acme.test"
+  output_dir: "src/test/java"
+  class_under_test: ""
+  scenarios: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+/**
+ * BDD-style tests using Nested classes for Given/When/Then structure.
+ *
+ * <h2>Structure:</h2>
+ * <pre>{@code
+ * @Nested class Given_[context] {
+ *     @Nested class When_[action] {
+ *         @Test void then_[expectation]() { ... }
+ *     }
+ * }
+ * }</pre>
+ */
+@DisplayName("{{ class_under_test | default(value=name) }}")
+class {{ name }} implements WithAssertions {
+{% for scenario in scenarios %}
+
+    @Nested
+    @DisplayName("Given {{ scenario.given }}")
+    class Given_{{ scenario.given_id }} {
+
+        {% if scenario.setup is defined %}{{ scenario.setup }}{% endif %}
+
+        @Nested
+        @DisplayName("When {{ scenario.when }}")
+        class When_{{ scenario.when_id }} {
+
+            @Test
+            @DisplayName("Then {{ scenario.then }}")
+            void then_{{ scenario.then_id }}() {
+                {{ scenario.body }}
+            }
+        }
+    }
+{% endfor %}
+{% if scenarios | length == 0 %}
+
+    // Example BDD structure:
+
+    @Nested
+    @DisplayName("Given a new empty list")
+    class GivenNewEmptyList {
+
+        private final java.util.List<String> list = new java.util.ArrayList<>();
+
+        @Nested
+        @DisplayName("When an element is added")
+        class WhenElementAdded {
+
+            {
+                list.add("item");
+            }
+
+            @Test
+            @DisplayName("Then the list has one element")
+            void thenListHasOneElement() {
+                assertThat(list).hasSize(1);
+            }
+
+            @Test
+            @DisplayName("Then the list contains the added element")
+            void thenListContainsElement() {
+                assertThat(list).containsExactly("item");
+            }
+        }
+
+        @Nested
+        @DisplayName("When no elements are added")
+        class WhenNoElementsAdded {
+
+            @Test
+            @DisplayName("Then the list is empty")
+            void thenListIsEmpty() {
+                assertThat(list).isEmpty();
+            }
+        }
+    }
+{% endif %}
+}

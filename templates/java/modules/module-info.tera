@@ -1,0 +1,59 @@
+{# module-info.java — JPMS module declaration with requires, exports, opens #}
+---
+to: "{{ output_dir }}/module-info.java"
+vars:
+  module_name: "org.acme"
+  output_dir: "src/main/java"
+  is_open: false
+  requires: []
+  requires_transitive: []
+  requires_static: []
+  exports: []
+  qualified_exports: []
+  opens: []
+  qualified_opens: []
+  uses: []
+  provides: []
+---
+{% if is_open %}open {% endif %}module {{ module_name }} {
+
+{% for req in requires %}
+    requires {{ req }};
+{% endfor %}
+{% for req in requires_transitive %}
+    requires transitive {{ req }};
+{% endfor %}
+{% for req in requires_static %}
+    requires static {{ req }};
+{% endfor %}
+{% if requires | length > 0 or requires_transitive | length > 0 or requires_static | length > 0 %}
+
+{% endif %}
+{% for exp in exports %}
+    exports {{ exp }};
+{% endfor %}
+{% for exp in qualified_exports %}
+    exports {{ exp.package }} to {% for target in exp.to %}{{ target }}{% if not loop.last %}, {% endif %}{% endfor %};
+{% endfor %}
+{% if exports | length > 0 or qualified_exports | length > 0 %}
+
+{% endif %}
+{% for opn in opens %}
+    opens {{ opn }};
+{% endfor %}
+{% for opn in qualified_opens %}
+    opens {{ opn.package }} to {% for target in opn.to %}{{ target }}{% if not loop.last %}, {% endif %}{% endfor %};
+{% endfor %}
+{% if opens | length > 0 or qualified_opens | length > 0 %}
+
+{% endif %}
+{% for use in uses %}
+    uses {{ use }};
+{% endfor %}
+{% if uses | length > 0 %}
+
+{% endif %}
+{% for prov in provides %}
+    provides {{ prov.service }} with {% for impl in prov.implementations %}{{ impl }}{% if not loop.last %}, {% endif %}{% endfor %};
+{% endfor %}
+}

@@ -1,0 +1,41 @@
+{# GitHub Actions CI/CD — Build, test, and publish workflow for Java 26 #}
+---
+to: ".github/workflows/ci.yml"
+vars:
+  java_version: "26"
+  maven_goals: "verify"
+---
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK {{ java_version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: '{{ java_version }}'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build and test
+        run: ./mvnw {{ maven_goals }} --no-transfer-progress
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: target/surefire-reports/

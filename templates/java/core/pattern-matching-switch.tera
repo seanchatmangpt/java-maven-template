@@ -1,0 +1,65 @@
+{# Pattern matching switch — Generates exhaustive switch expressions over sealed types #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyDispatcher"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  sealed_type: "MyType"
+  sealed_type_import: ""
+  method_name: "dispatch"
+  return_type: "String"
+  type_parameters: []
+  cases: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+{% if sealed_type_import %}
+import {{ sealed_type_import }};
+{% endif %}
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public final class {{ name }} {
+
+    private {{ name }}() {} // utility class
+
+    /**
+     * Exhaustive pattern match over {@link {{ sealed_type }}}.
+     * <p>
+     * The compiler verifies all permitted subtypes are covered.
+     * Adding a new subtype to the sealed hierarchy will cause a compile error here,
+     * ensuring every dispatch point is updated.
+     */
+    public static {% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if tp.bound is defined %} extends {{ tp.bound }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}> {% endif %}{{ return_type }} {{ method_name }}({{ sealed_type }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} value) {
+        return switch (value) {
+{% for case in cases %}
+{% if case.guard is defined %}
+            case {{ case.pattern }}{% if case.bindings is defined %}({% for b in case.bindings %}var {{ b }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %} when {{ case.guard }} -> {{ case.body }};
+{% else %}
+            case {{ case.pattern }}{% if case.bindings is defined %}({% for b in case.bindings %}var {{ b }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %} -> {{ case.body }};
+{% endif %}
+{% endfor %}
+        };
+    }
+{% if cases | length > 0 %}
+
+    /**
+     * Void dispatch variant — executes side effects for each case.
+     */
+    public static {% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if tp.bound is defined %} extends {{ tp.bound }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}> {% endif %}void handle({{ sealed_type }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} value) {
+        switch (value) {
+{% for case in cases %}
+            case {{ case.pattern }}{% if case.bindings is defined %}({% for b in case.bindings %}var {{ b }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %} -> {{ case.action | default(value="{}") }};
+{% endfor %}
+        }
+    }
+{% endif %}
+}

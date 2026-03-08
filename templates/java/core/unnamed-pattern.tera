@@ -1,0 +1,143 @@
+{# Unnamed patterns — Uses _ for unused variables in patterns, catches, and lambdas #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "UnnamedPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+
+/**
+ * Unnamed patterns and variables (Java 22+).
+ *
+ * <p>Use {@code _} (underscore) for any variable whose value is intentionally unused.
+ * This eliminates unused-variable warnings and signals clear intent.
+ *
+ * <h2>Where {@code _} can be used:</h2>
+ * <ul>
+ *     <li>Pattern matching: {@code case Foo(var x, _) ->}</li>
+ *     <li>Lambda parameters: {@code (_, value) -> value}</li>
+ *     <li>Catch blocks: {@code catch (Exception _)}</li>
+ *     <li>Enhanced for: {@code for (var _ : collection)}</li>
+ *     <li>Try-with-resources: {@code try (var _ = lock())}</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    record Pair<A, B>(A first, B second) {}
+    record Triple<A, B, C>(A first, B second, C third) {}
+
+    // =========================================================================
+    // PATTERN 1: Unnamed in switch/pattern matching
+    // BEFORE: case Pair(var first, var _unused) -> first
+    // AFTER:
+    // =========================================================================
+    public static <A, B> A firstOf(Pair<A, B> pair) {
+        return switch (pair) {
+            case Pair(var first, _) -> first;
+        };
+    }
+
+    // =========================================================================
+    // PATTERN 2: Multiple unnamed in nested record patterns
+    // =========================================================================
+    public static <A, B, C> A firstOfTriple(Triple<A, B, C> triple) {
+        return switch (triple) {
+            case Triple(var first, _, _) -> first;
+        };
+    }
+
+    // =========================================================================
+    // PATTERN 3: Unnamed in catch blocks
+    // BEFORE: catch (NumberFormatException ignored) { return defaultValue; }
+    // AFTER:
+    // =========================================================================
+    public static int parseOrDefault(String s, int defaultValue) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException _) {
+            return defaultValue;
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 4: Unnamed in lambda parameters
+    // BEFORE: map.forEach((key, value) -> System.out.println(value));
+    //         (where key is unused)
+    // AFTER:
+    // =========================================================================
+    public static <K, V> void printValues(Map<K, V> map) {
+        map.forEach((_, value) -> System.out.println(value));
+    }
+
+    public static <K, V> List<V> valuesAsList(Map<K, V> map) {
+        return map.entrySet().stream()
+                .map(entry -> switch (entry) {
+                    case Map.Entry(_, var v) -> v;
+                })
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 5: Unnamed in enhanced for-loop (counting iterations)
+    // BEFORE: for (String ignored : list) { count++; }
+    // AFTER:
+    // =========================================================================
+    public static int count(List<?> list) {
+        int count = 0;
+        for (var _ : list) {
+            count++;
+        }
+        return count;
+    }
+
+    // =========================================================================
+    // PATTERN 6: Unnamed in try-with-resources
+    // BEFORE: try (var lock = acquireLock()) { ... }
+    //         (lock variable never referenced in body)
+    // AFTER:
+    // =========================================================================
+    public static void withAutoCloseable(AutoCloseable resource, Runnable action) throws Exception {
+        try (var _ = resource) {
+            action.run();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 7: Unnamed in sealed type exhaustive switch
+    // When you only care about certain subtypes
+    // =========================================================================
+    sealed interface Shape permits Circle, Rectangle, Triangle {}
+    record Circle(double radius) implements Shape {}
+    record Rectangle(double w, double h) implements Shape {}
+    record Triangle(double a, double b, double c) implements Shape {}
+
+    public static double area(Shape shape) {
+        return switch (shape) {
+            case Circle(var r) -> Math.PI * r * r;
+            case Rectangle(var w, var h) -> w * h;
+            case Triangle(var a, var b, var c) -> {
+                var s = (a + b + c) / 2;
+                yield Math.sqrt(s * (s - a) * (s - b) * (s - c));
+            }
+        };
+    }
+
+    // When only one variant matters:
+    public static boolean isCircle(Shape shape) {
+        return switch (shape) {
+            case Circle _ -> true;
+            case Rectangle _, Triangle _ -> false;
+        };
+    }
+}

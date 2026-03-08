@@ -1,0 +1,152 @@
+{# NIO.2 Files — Modern file I/O replacing java.io.File (Java 7+/11+) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "NioFilePatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.OpenOption;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
+import java.util.stream.Stream;
+
+/**
+ * NIO.2 file I/O patterns (Java 7+, enhanced Java 11+).
+ *
+ * <p>BEFORE: {@code java.io.File}, {@code FileInputStream}, {@code FileOutputStream}, {@code BufferedReader}.
+ * <p>AFTER: {@code java.nio.file.Path}, {@code java.nio.file.Files} with one-liner utilities.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Path creation
+    // BEFORE: new File("/path/to/file")
+    // AFTER:
+    // =========================================================================
+    public static Path path(String first, String... more) {
+        return Path.of(first, more);
+    }
+
+    // =========================================================================
+    // PATTERN 2: Read entire file as String (Java 11+)
+    // BEFORE: new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
+    //         or BufferedReader line-by-line loop
+    // AFTER:
+    // =========================================================================
+    public static String readString(Path path) throws IOException {
+        return Files.readString(path, StandardCharsets.UTF_8);
+    }
+
+    // =========================================================================
+    // PATTERN 3: Write String to file (Java 11+)
+    // BEFORE: try (FileWriter fw = new FileWriter(file)) { fw.write(content); }
+    // AFTER:
+    // =========================================================================
+    public static void writeString(Path path, String content) throws IOException {
+        Files.writeString(path, content, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    public static void appendString(Path path, String content) throws IOException {
+        Files.writeString(path, content, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+    }
+
+    // =========================================================================
+    // PATTERN 4: Read all lines
+    // BEFORE: BufferedReader br = new BufferedReader(new FileReader(file));
+    //         String line; List<String> lines = new ArrayList<>();
+    //         while ((line = br.readLine()) != null) lines.add(line);
+    // AFTER:
+    // =========================================================================
+    public static List<String> readAllLines(Path path) throws IOException {
+        return Files.readAllLines(path, StandardCharsets.UTF_8);
+    }
+
+    // =========================================================================
+    // PATTERN 5: Stream lines (lazy, for large files)
+    // BEFORE: BufferedReader with manual iteration
+    // AFTER:  (MUST use try-with-resources — stream holds file handle)
+    // =========================================================================
+    public static long countNonBlankLines(Path path) throws IOException {
+        try (var lines = Files.lines(path, StandardCharsets.UTF_8)) {
+            return lines.filter(line -> !line.isBlank()).count();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 6: Walk directory tree
+    // BEFORE: File[] files = dir.listFiles(); // then recursive calls
+    // AFTER:
+    // =========================================================================
+    public static List<Path> findByExtension(Path dir, String extension) throws IOException {
+        try (var walk = Files.walk(dir)) {
+            return walk
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.toString().endsWith(extension))
+                    .toList();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 7: Find files with predicate
+    // BEFORE: Recursive directory scanning with FileFilter
+    // AFTER:
+    // =========================================================================
+    public static List<Path> findLargeFiles(Path dir, long minBytes) throws IOException {
+        try (var found = Files.find(dir, Integer.MAX_VALUE,
+                (path, attrs) -> attrs.isRegularFile() && attrs.size() > minBytes)) {
+            return found.toList();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 8: Copy and move
+    // BEFORE: FileInputStream + FileOutputStream byte-by-byte
+    // AFTER:
+    // =========================================================================
+    public static void copy(Path source, Path target) throws IOException {
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    public static void move(Path source, Path target) throws IOException {
+        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    // =========================================================================
+    // PATTERN 9: Create directories and temp files
+    // BEFORE: new File(path).mkdirs()
+    // AFTER:
+    // =========================================================================
+    public static Path createDirs(Path dir) throws IOException {
+        return Files.createDirectories(dir);
+    }
+
+    public static Path createTempFile(String prefix, String suffix) throws IOException {
+        return Files.createTempFile(prefix, suffix);
+    }
+
+    // =========================================================================
+    // PATTERN 10: File existence and type checks
+    // BEFORE: file.exists(), file.isFile(), file.isDirectory()
+    // AFTER:
+    // =========================================================================
+    public static boolean exists(Path path) { return Files.exists(path); }
+    public static boolean isRegularFile(Path path) { return Files.isRegularFile(path); }
+    public static boolean isDirectory(Path path) { return Files.isDirectory(path); }
+    public static long size(Path path) throws IOException { return Files.size(path); }
+}

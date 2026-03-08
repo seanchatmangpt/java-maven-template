@@ -1,0 +1,74 @@
+{# Service Layer — Module-scoped service interface with implementation #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyService"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  operations: []
+  dependencies: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% else %}
+/**
+ * Service layer interface — defines business operations.
+ *
+ * <p>BEFORE (legacy): Monolithic service class with static utility methods.
+ * <p>AFTER (modern): Interface + record-based impl with constructor injection.
+ */
+{% endif %}
+public interface {{ name }} {
+
+    // =========================================================================
+    // Business operations
+    // =========================================================================
+{% for op in operations %}
+
+    {% if op.javadoc is defined %}/**
+     * {{ op.javadoc }}
+     */
+    {% endif %}{{ op.return_type }} {{ op.name }}({% for param in op.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+{% endfor %}
+
+    // =========================================================================
+    // Default implementation — injectable via constructor
+    // =========================================================================
+
+    /**
+     * Standard implementation of {@link {{ name }}}.
+     *
+     * <p>Uses record for immutable dependency injection — all dependencies
+     * are validated at construction time.
+     */
+    record Impl(
+{% for dep in dependencies %}
+            {{ dep.type }} {{ dep.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+    ) implements {{ name }} {
+
+        public Impl {
+{% for dep in dependencies %}
+            Objects.requireNonNull({{ dep.name }}, "{{ dep.name }} must not be null");
+{% endfor %}
+        }
+{% for op in operations %}
+
+        @Override
+        public {{ op.return_type }} {{ op.name }}({% for param in op.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ op.body | default(value="throw new UnsupportedOperationException(\"Not yet implemented\");") }}
+        }
+{% endfor %}
+    }
+}

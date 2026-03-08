@@ -1,0 +1,275 @@
+{# Virtual thread patterns — Thread.ofVirtual(), startVirtualThread(), and I/O-bound concurrency (Java 21+) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "VirtualThreadPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.function.Consumer;
+
+/**
+ * Virtual thread patterns for lightweight concurrency (Java 21+).
+ *
+ * <p>Virtual threads are cheap, lightweight threads managed by the JVM rather than
+ * the OS. They are ideal for I/O-bound workloads (HTTP calls, database queries,
+ * file I/O) where threads spend most of their time waiting. Virtual threads are
+ * <strong>not</strong> designed for CPU-bound computation — use platform threads
+ * or parallel streams for that.
+ *
+ * <h2>Key rules:</h2>
+ * <ul>
+ *     <li>Never pool virtual threads — create a new one per task</li>
+ *     <li>Avoid {@code synchronized} blocks that guard I/O; use {@link java.util.concurrent.locks.ReentrantLock} instead</li>
+ *     <li>Virtual threads are always daemon threads</li>
+ *     <li>Use {@link Thread#ofVirtual()} for named threads or {@link Thread#startVirtualThread(Runnable)} for fire-and-forget</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Basic virtual thread creation
+    // BEFORE (platform thread):
+    //     Thread thread = new Thread(task);
+    //     thread.setDaemon(true);
+    //     thread.setName("worker-0");
+    //     thread.start();
+    // AFTER (virtual thread):
+    // =========================================================================
+
+    /**
+     * Starts a single named virtual thread.
+     *
+     * @param name the thread name
+     * @param task the task to run
+     * @return the started virtual thread
+     */
+    public static Thread startNamed(String name, Runnable task) {
+        return Thread.ofVirtual()
+                .name(name)
+                .start(task);
+    }
+
+    // =========================================================================
+    // PATTERN 2: Fire-and-forget virtual thread
+    // BEFORE:
+    //     new Thread(task).start();
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Starts a virtual thread for a fire-and-forget task.
+     *
+     * @param task the task to run
+     * @return the started virtual thread
+     */
+    public static Thread startFireAndForget(Runnable task) {
+        return Thread.startVirtualThread(task);
+    }
+
+    // =========================================================================
+    // PATTERN 3: Named virtual thread factory with auto-incrementing names
+    // BEFORE:
+    //     AtomicInteger counter = new AtomicInteger();
+    //     ThreadFactory factory = r -> {
+    //         Thread t = new Thread(r);
+    //         t.setName("worker-" + counter.getAndIncrement());
+    //         t.setDaemon(true);
+    //         return t;
+    //     };
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Creates multiple named virtual threads with a common prefix and
+     * auto-incrementing numeric suffix (e.g., "worker-0", "worker-1", ...).
+     *
+     * @param prefix the name prefix
+     * @param tasks  the tasks to run
+     * @return list of started virtual threads
+     */
+    public static List<Thread> startAll(String prefix, List<Runnable> tasks) {
+        var builder = Thread.ofVirtual().name(prefix, 0);
+        return tasks.stream()
+                .map(builder::start)
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 4: I/O-bound task — fetch multiple URLs concurrently
+    // BEFORE (platform threads with fixed pool):
+    //     ExecutorService pool = Executors.newFixedThreadPool(10);
+    //     List<Future<String>> futures = urls.stream()
+    //             .map(url -> pool.submit(() -> httpGet(url)))
+    //             .toList();
+    //     // manually collect results, handle exceptions, shut down pool
+    // AFTER (virtual threads — no pool needed):
+    // =========================================================================
+
+    /**
+     * Processes I/O-bound items concurrently using virtual threads.
+     * Each item gets its own virtual thread; results are collected
+     * in a thread-safe queue.
+     *
+     * @param <T>       the item type
+     * @param <R>       the result type
+     * @param items     the items to process
+     * @param processor the I/O-bound processing function
+     * @return collected results (order not guaranteed)
+     * @throws InterruptedException if the current thread is interrupted while waiting
+     */
+    public static <T, R> List<R> processAllConcurrently(
+            List<T> items,
+            java.util.function.Function<T, R> processor) throws InterruptedException {
+
+        var results = new ConcurrentLinkedQueue<R>();
+        var latch = new CountDownLatch(items.size());
+
+        var threads = items.stream()
+                .map(item -> Thread.ofVirtual()
+                        .name("io-worker-", 0)
+                        .start(() -> {
+                            try {
+                                results.add(processor.apply(item));
+                            } finally {
+                                latch.countDown();
+                            }
+                        }))
+                .toList();
+
+        latch.await();
+        return List.copyOf(results);
+    }
+
+    // =========================================================================
+    // PATTERN 5: Request handling — one virtual thread per request
+    // BEFORE (thread-per-request with platform threads):
+    //     ExecutorService pool = Executors.newFixedThreadPool(200);
+    //     // limited to 200 concurrent requests by pool size
+    // AFTER (virtual threads — millions of concurrent requests):
+    // =========================================================================
+
+    /**
+     * Handles incoming requests by dispatching each to its own virtual thread.
+     * This pattern replaces thread pools in server applications.
+     *
+     * @param <T>     the request type
+     * @param requests the incoming requests
+     * @param handler  the request handler
+     * @throws InterruptedException if interrupted while waiting for completion
+     */
+    public static <T> void handleRequests(
+            List<T> requests,
+            Consumer<T> handler) throws InterruptedException {
+
+        var latch = new CountDownLatch(requests.size());
+
+        for (var request : requests) {
+            Thread.ofVirtual()
+                    .name("request-handler-", 0)
+                    .start(() -> {
+                        try {
+                            handler.accept(request);
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+        }
+
+        latch.await();
+    }
+
+    // =========================================================================
+    // PATTERN 6: Batch processing with virtual threads
+    // BEFORE:
+    //     ExecutorService pool = Executors.newFixedThreadPool(
+    //             Runtime.getRuntime().availableProcessors());
+    //     List<List<T>> batches = partition(items, batchSize);
+    //     pool.invokeAll(batches.stream()
+    //             .map(batch -> (Callable<Void>) () -> { process(batch); return null; })
+    //             .toList());
+    //     pool.shutdown();
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Processes items in batches, with one virtual thread per batch.
+     *
+     * @param <T>       the item type
+     * @param items     the items to process
+     * @param batchSize the number of items per batch
+     * @param batchProcessor processes a single batch of items
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static <T> void processBatches(
+            List<T> items,
+            int batchSize,
+            Consumer<List<T>> batchProcessor) throws InterruptedException {
+
+        var latch = new CountDownLatch((items.size() + batchSize - 1) / batchSize);
+
+        for (int i = 0; i < items.size(); i += batchSize) {
+            var batch = items.subList(i, Math.min(i + batchSize, items.size()));
+            Thread.ofVirtual()
+                    .name("batch-", 0)
+                    .start(() -> {
+                        try {
+                            batchProcessor.accept(batch);
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+        }
+
+        latch.await();
+    }
+
+    // =========================================================================
+    // PATTERN 7: Virtual thread with timeout
+    // BEFORE:
+    //     Future<?> future = executor.submit(task);
+    //     try {
+    //         future.get(5, TimeUnit.SECONDS);
+    //     } catch (TimeoutException e) {
+    //         future.cancel(true);
+    //     }
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Runs a task on a virtual thread with a timeout. If the task does not
+     * complete within the specified duration, the thread is interrupted.
+     *
+     * @param task    the task to run
+     * @param timeout the maximum duration to wait
+     * @return {@code true} if the task completed within the timeout
+     * @throws InterruptedException if the calling thread is interrupted
+     */
+    public static boolean runWithTimeout(Runnable task, Duration timeout)
+            throws InterruptedException {
+
+        var thread = Thread.ofVirtual()
+                .name("timeout-task")
+                .start(task);
+
+        thread.join(timeout);
+
+        if (thread.isAlive()) {
+            thread.interrupt();
+            return false;
+        }
+        return true;
+    }
+}
