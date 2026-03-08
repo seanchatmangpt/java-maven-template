@@ -1,152 +1,313 @@
-{# HttpClient — Modern HTTP client patterns replacing HttpURLConnection (Java 11+) #}
+{# Modern HttpClient (Java 11+) with sync and async HTTP methods, JSON body handling,
+   and CompletableFuture patterns. Replaces legacy HttpURLConnection usage. #}
 ---
 to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
 vars:
-  name: "HttpClientPatterns"
+  name: "HttpClientExample"
   package: "org.acme"
   output_dir: "src/main/java"
-  imports: []
+  base_url: "https://api.example.com"
 ---
 package {{ package }};
-{% for import in imports %}
-import {{ import }};
-{% endfor %}
+
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
- * Modern HttpClient patterns (Java 11+).
+ * Modern {@link HttpClient} usage (Java 11+).
  *
- * <p>BEFORE: {@code java.net.HttpURLConnection} with manual stream handling.
- * <p>AFTER: {@code java.net.http.HttpClient} with builder API and async support.
+ * <h2>Before — HttpURLConnection</h2>
+ * <pre>{@code
+ * // GET request with HttpURLConnection
+ * URL url = new URL("https://api.example.com/users/1");
+ * HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+ * conn.setRequestMethod("GET");
+ * conn.setRequestProperty("Accept", "application/json");
+ * conn.setConnectTimeout(5000);
+ * conn.setReadTimeout(5000);
+ *
+ * int status = conn.getResponseCode();
+ * if (status == 200) {
+ *     try (BufferedReader br = new BufferedReader(
+ *             new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
+ *         StringBuilder sb = new StringBuilder();
+ *         String line;
+ *         while ((line = br.readLine()) != null) {
+ *             sb.append(line);
+ *         }
+ *         String body = sb.toString();
+ *     }
+ * }
+ * conn.disconnect();
+ *
+ * // POST request — even more boilerplate
+ * HttpURLConnection post = (HttpURLConnection) new URL("https://api.example.com/users").openConnection();
+ * post.setRequestMethod("POST");
+ * post.setDoOutput(true);
+ * post.setRequestProperty("Content-Type", "application/json");
+ * try (OutputStream os = post.getOutputStream()) {
+ *     os.write("{\"name\":\"Alice\"}".getBytes("UTF-8"));
+ * }
+ * int postStatus = post.getResponseCode();
+ * post.disconnect();
+ *
+ * // Async? Wrap everything in a thread manually...
+ * }</pre>
+ *
+ * <h2>After — HttpClient</h2>
+ * <pre>{@code
+ * var api = new HttpClientExample("https://api.example.com");
+ *
+ * // Synchronous
+ * String user = api.get("/users/1");
+ * String created = api.post("/users", "{\"name\":\"Alice\"}");
+ *
+ * // Asynchronous with CompletableFuture
+ * api.getAsync("/users/1")
+ *    .thenApply(HttpResponse::body)
+ *    .thenAccept(System.out::println);
+ *
+ * // Fan-out: concurrent requests
+ * var users = api.getAll(List.of("/users/1", "/users/2", "/users/3"));
+ * }</pre>
  */
 public final class {{ name }} {
 
-    private {{ name }}() {}
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+    private static final String JSON = "application/json";
 
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_2)
-            .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private final HttpClient client;
+    private final String baseUrl;
 
-    // =========================================================================
-    // PATTERN 1: Synchronous GET
-    // BEFORE: URL url = new URL(urlStr);
-    //         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-    //         conn.setRequestMethod("GET");
-    //         BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-    //         ... read line by line ... conn.disconnect();
-    // AFTER:
-    // =========================================================================
-    public static String get(String url) throws Exception {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(30))
-                .build();
-        var response = CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        return response.body();
+    /**
+     * Creates an HTTP helper targeting the given base URL.
+     *
+     * @param baseUrl the API base URL (e.g., {@code "{{ base_url }}"})
+     */
+    public {{ name }}(String baseUrl) {
+        this(baseUrl, Executors.newVirtualThreadPerTaskExecutor());
     }
 
-    // =========================================================================
-    // PATTERN 2: Synchronous POST with JSON body
-    // BEFORE: conn.setDoOutput(true); conn.setRequestMethod("POST");
-    //         OutputStream os = conn.getOutputStream();
-    //         os.write(jsonBody.getBytes()); os.flush(); os.close();
-    // AFTER:
-    // =========================================================================
-    public static HttpResponse<String> postJson(String url, String jsonBody) throws Exception {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(30))
-                .build();
-        return CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+    /**
+     * Creates an HTTP helper with a custom executor for async operations.
+     *
+     * @param baseUrl  the API base URL
+     * @param executor the executor for async requests
+     */
+    public {{ name }}(String baseUrl, Executor executor) {
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.client =
+                HttpClient.newBuilder()
+                        .connectTimeout(DEFAULT_TIMEOUT)
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .executor(executor)
+                        .build();
     }
 
-    // =========================================================================
-    // PATTERN 3: Async GET with CompletableFuture
-    // BEFORE: ExecutorService + Future + HttpURLConnection
-    // AFTER:
-    // =========================================================================
-    public static CompletableFuture<String> getAsync(String url) {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .build();
-        return CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(HttpResponse::body);
+    // -------------------------------------------------------------------------
+    // Synchronous methods
+    // -------------------------------------------------------------------------
+
+    /**
+     * Performs a synchronous GET request.
+     *
+     * @param path the path relative to the base URL
+     * @return the response body as a string
+     * @throws IOException          if an I/O error occurs
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public String get(String path) throws IOException, InterruptedException {
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(resolve(path))
+                        .header("Accept", JSON)
+                        .timeout(DEFAULT_TIMEOUT)
+                        .GET()
+                        .build();
+
+        HttpResponse<String> response =
+                client.send(request, HttpResponse.BodyHandlers.ofString());
+        return requireOk(response).body();
     }
 
-    // =========================================================================
-    // PATTERN 4: Async POST
-    // =========================================================================
-    public static CompletableFuture<HttpResponse<String>> postJsonAsync(String url, String jsonBody) {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .header("Content-Type", "application/json")
-                .build();
-        return CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+    /**
+     * Performs a synchronous POST request with a JSON body.
+     *
+     * @param path    the path relative to the base URL
+     * @param jsonBody the JSON request body
+     * @return the response body as a string
+     * @throws IOException          if an I/O error occurs
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public String post(String path, String jsonBody) throws IOException, InterruptedException {
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(resolve(path))
+                        .header("Content-Type", JSON)
+                        .header("Accept", JSON)
+                        .timeout(DEFAULT_TIMEOUT)
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .build();
+
+        HttpResponse<String> response =
+                client.send(request, HttpResponse.BodyHandlers.ofString());
+        return requireOk(response).body();
     }
 
-    // =========================================================================
-    // PATTERN 5: PUT and DELETE
-    // =========================================================================
-    public static HttpResponse<String> put(String url, String jsonBody) throws Exception {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .PUT(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .header("Content-Type", "application/json")
-                .build();
-        return CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+    /**
+     * Performs a synchronous PUT request with a JSON body.
+     *
+     * @param path     the path relative to the base URL
+     * @param jsonBody the JSON request body
+     * @return the response body as a string
+     * @throws IOException          if an I/O error occurs
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public String put(String path, String jsonBody) throws IOException, InterruptedException {
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(resolve(path))
+                        .header("Content-Type", JSON)
+                        .header("Accept", JSON)
+                        .timeout(DEFAULT_TIMEOUT)
+                        .PUT(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .build();
+
+        HttpResponse<String> response =
+                client.send(request, HttpResponse.BodyHandlers.ofString());
+        return requireOk(response).body();
     }
 
-    public static HttpResponse<Void> delete(String url) throws Exception {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .DELETE()
-                .build();
-        return CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
+    /**
+     * Performs a synchronous DELETE request.
+     *
+     * @param path the path relative to the base URL
+     * @return the response body as a string
+     * @throws IOException          if an I/O error occurs
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public String delete(String path) throws IOException, InterruptedException {
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(resolve(path))
+                        .header("Accept", JSON)
+                        .timeout(DEFAULT_TIMEOUT)
+                        .DELETE()
+                        .build();
+
+        HttpResponse<String> response =
+                client.send(request, HttpResponse.BodyHandlers.ofString());
+        return requireOk(response).body();
     }
 
-    // =========================================================================
-    // PATTERN 6: Response handling with status code checks
-    // =========================================================================
-    public static <T> T getOrThrow(String url, HttpResponse.BodyHandler<T> handler) throws Exception {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .build();
-        var response = CLIENT.send(request, handler);
-        if (response.statusCode() >= 200 && response.statusCode() < 300) {
-            return response.body();
+    // -------------------------------------------------------------------------
+    // Asynchronous methods — CompletableFuture patterns
+    // -------------------------------------------------------------------------
+
+    /**
+     * Performs an asynchronous GET request.
+     *
+     * @param path the path relative to the base URL
+     * @return a future completing with the HTTP response
+     */
+    public CompletableFuture<HttpResponse<String>> getAsync(String path) {
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(resolve(path))
+                        .header("Accept", JSON)
+                        .timeout(DEFAULT_TIMEOUT)
+                        .GET()
+                        .build();
+
+        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * Performs an asynchronous POST request with a JSON body.
+     *
+     * @param path     the path relative to the base URL
+     * @param jsonBody the JSON request body
+     * @return a future completing with the HTTP response
+     */
+    public CompletableFuture<HttpResponse<String>> postAsync(String path, String jsonBody) {
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(resolve(path))
+                        .header("Content-Type", JSON)
+                        .header("Accept", JSON)
+                        .timeout(DEFAULT_TIMEOUT)
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .build();
+
+        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * Fan-out: performs concurrent GET requests for multiple paths and collects
+     * all results.
+     *
+     * <p>Uses {@link CompletableFuture#allOf} to wait for all requests in parallel.
+     *
+     * @param paths the paths to request concurrently
+     * @return a future completing with a list of response bodies in input order
+     */
+    public CompletableFuture<List<String>> getAll(List<String> paths) {
+        List<CompletableFuture<String>> futures =
+                paths.stream()
+                        .map(
+                                path ->
+                                        getAsync(path)
+                                                .thenApply(HttpResponse::body))
+                        .toList();
+
+        return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .thenApply(_ -> futures.stream().map(CompletableFuture::join).toList());
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private URI resolve(String path) {
+        String normalized = path.startsWith("/") ? path : "/" + path;
+        return URI.create(baseUrl + normalized);
+    }
+
+    private static HttpResponse<String> requireOk(HttpResponse<String> response) {
+        int status = response.statusCode();
+        if (status >= 200 && status < 300) {
+            return response;
         }
-        throw new RuntimeException("HTTP " + response.statusCode() + " from " + url);
+        throw new HttpException(status, response.body());
     }
 
-    // =========================================================================
-    // PATTERN 7: Concurrent fan-out with virtual threads
-    // BEFORE: ExecutorService pool = Executors.newFixedThreadPool(10); List<Future<String>> futures = ...
-    // AFTER:
-    // =========================================================================
-    public static java.util.List<String> getAll(java.util.List<String> urls) {
-        return urls.stream()
-                .gather(java.util.stream.Gatherers.mapConcurrent(10, url -> {
-                    try {
-                        return get(url);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }))
-                .toList();
+    /** Exception thrown when the server returns a non-2xx status code. */
+    public static final class HttpException extends RuntimeException {
+
+        private final int statusCode;
+        private final String responseBody;
+
+        public HttpException(int statusCode, String responseBody) {
+            super("HTTP %d: %s".formatted(statusCode, responseBody));
+            this.statusCode = statusCode;
+            this.responseBody = responseBody;
+        }
+
+        public int statusCode() {
+            return statusCode;
+        }
+
+        public String responseBody() {
+            return responseBody;
+        }
     }
 }
