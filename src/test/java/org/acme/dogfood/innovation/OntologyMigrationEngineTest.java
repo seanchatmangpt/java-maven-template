@@ -213,4 +213,93 @@ class OntologyMigrationEngineTest implements WithAssertions {
                 .isThrownBy(() -> new OntologyMigrationEngine.SourceSignal("text", 0))
                 .withMessageContaining("lineNumber");
     }
+
+    // ── OTP migration rules ───────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("static Map detected → StaticStateToProc plan")
+    void staticMapDetected() {
+        var source =
+                """
+                package com.example;
+                import java.util.Map;
+                import java.util.HashMap;
+                public class UserCache {
+                    private static final Map<String, Object> cache = new HashMap<>();
+                }
+                """;
+
+        var result = OntologyMigrationEngine.analyze("UserCache.java", source);
+
+        assertThat(result.plans())
+                .anyMatch(
+                        p ->
+                                p.rule().id().equals("StaticStateToProc")
+                                        && p instanceof OntologyMigrationEngine.MigrationPlan.GenericMigration);
+    }
+
+    @Test
+    @DisplayName("ThreadLocal detected → ThreadLocalToScopedValue plan")
+    void threadLocalDetected() {
+        var source =
+                """
+                package com.example;
+                public class Context {
+                    private static final ThreadLocal<String> current = new ThreadLocal<>();
+                }
+                """;
+
+        var result = OntologyMigrationEngine.analyze("Context.java", source);
+
+        assertThat(result.plans())
+                .anyMatch(p -> p.rule().id().equals("ThreadLocalToScopedValue"));
+    }
+
+    @Test
+    @DisplayName("swallowed catch detected → CatchToCrashRecovery plan")
+    void swallowedCatchDetected() {
+        var source =
+                """
+                package com.example;
+                public class Service {
+                    boolean save(Object o) {
+                        try { repo.save(o); return true; }
+                        catch (Exception e) { return false; }
+                    }
+                }
+                """;
+
+        var result = OntologyMigrationEngine.analyze("Service.java", source);
+
+        assertThat(result.plans())
+                .anyMatch(p -> p.rule().id().equals("CatchToCrashRecovery"));
+    }
+
+    @Test
+    @DisplayName("allRules() includes the 3 new OTP rules")
+    void allRulesIncludesNewOtpRules() {
+        var ids = OntologyMigrationEngine.allRules().stream()
+                .map(OntologyMigrationEngine.MigrationRule::id)
+                .toList();
+
+        assertThat(ids)
+                .contains("StaticStateToProc", "ThreadLocalToScopedValue", "CatchToCrashRecovery");
+    }
+
+    @Test
+    @DisplayName("OTP rules have CONCURRENCY or ERROR_HANDLING category")
+    void otpRuleCategories() {
+        var otpRules = OntologyMigrationEngine.allRules().stream()
+                .filter(r -> r.id().startsWith("Static")
+                        || r.id().startsWith("Thread")
+                        || r.id().startsWith("Catch"))
+                .toList();
+
+        assertThat(otpRules)
+                .allMatch(
+                        r ->
+                                r.category() == OntologyMigrationEngine.Category.CONCURRENCY
+                                        || r.category()
+                                                == OntologyMigrationEngine.Category.ERROR_HANDLING);
+    }
 }

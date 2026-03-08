@@ -261,6 +261,41 @@ public final class ModernizationScorer {
                         3,
                         "concurrency/structured-concurrency"));
 
+        // Legacy: ThreadLocal — implicit shared context, should be ScopedValue
+        rules.add(
+                rule(
+                        Category.CONCURRENCY,
+                        "\\bThreadLocal\\s*<",
+                        false,
+                        "ThreadLocal implicit context",
+                        "Use ScopedValue<T> (Java 21+): structured, bounded, immutable context"
+                                + " — no leak across virtual-thread boundaries",
+                        3,
+                        "concurrency/scoped-values"));
+
+        // Legacy: static Atomic* as shared mutable state
+        rules.add(
+                rule(
+                        Category.CONCURRENCY,
+                        "static\\s+(?:final\\s+)?Atomic(?:Integer|Long|Reference|Boolean)\\s+",
+                        false,
+                        "Static AtomicX shared state",
+                        "Move to Proc<State, Msg>: a process owns its counters,"
+                                + " no one else touches them",
+                        2,
+                        "patterns/actor"));
+
+        // Modern: ScopedValue (Java 21+ structured context)
+        rules.add(
+                rule(
+                        Category.CONCURRENCY,
+                        "ScopedValue\\.newInstance|ScopedValue\\.where",
+                        true,
+                        "ScopedValue structured context",
+                        null,
+                        3,
+                        "concurrency/scoped-values"));
+
         // ── API ──
 
         // Legacy: java.util.Date
