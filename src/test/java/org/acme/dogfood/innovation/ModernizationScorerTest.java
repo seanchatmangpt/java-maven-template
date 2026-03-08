@@ -1,5 +1,7 @@
 package org.acme.dogfood.innovation;
 
+import java.util.List;
+
 import org.acme.dogfood.innovation.ModernizationScorer.CategoryScore;
 import org.acme.dogfood.innovation.ModernizationScorer.CodebaseScore;
 import org.acme.dogfood.innovation.ModernizationScorer.Finding;

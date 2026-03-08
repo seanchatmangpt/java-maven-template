@@ -97,7 +97,9 @@ public final class LivingDocGenerator {
     private static final Pattern RECORD_PATTERN =
             Pattern.compile(
                     "(?:/\\*\\*([^*]|\\*(?!/))*\\*/\\s*)?"
-                            + "(?:public\\s+)?record\\s+(\\w+)\\s*\\(([^)]*)\\)");
+                            + "(?:public\\s+)?record\\s+(\\w+)"
+                            + "(?:<[^>]*>)?"
+                            + "\\s*\\(([^)]*)\\)");
 
     private static final Pattern SEALED_PATTERN =
             Pattern.compile(
@@ -109,9 +111,9 @@ public final class LivingDocGenerator {
     private static final Pattern METHOD_PATTERN =
             Pattern.compile(
                     "(?:/\\*\\*([^*]|\\*(?!/))*\\*/\\s*)?"
-                            + "((?:(?:public|protected|private|static|default|final|abstract|synchronized)\\s+)*)"
-                            + "(?:<[^>]*>\\s+)?"
-                            + "([\\w<>\\[\\]?,\\s]+?)\\s+"
+                            + "((?:(?:public|protected|private|static|default|final|abstract|synchronized)\\s+)+)"
+                            + "(?:<[^>]*>\\h+)?"
+                            + "([\\w<>\\[\\]?,\\h]+?)\\h+"
                             + "(\\w+)\\s*\\(([^)]*)\\)");
 
     private static final Pattern MODULE_PATTERN =
