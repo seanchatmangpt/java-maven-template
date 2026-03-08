@@ -1,4 +1,4 @@
-{# Instancio Test Data Generation — Generates tests using Instancio.create(), Instancio.of() with set/generate/supply, and reusable Models #}
+{# Instancio Test Data Generation — Generates tests using Instancio.create(), Instancio.of() with set/generate/supply, and reusable Models for Java 26 #}
 ---
 to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}DataTest.java"
 vars:
