@@ -67,7 +67,7 @@ mvnd verify -Dit.test=MathsIT  # integration test
 
 **Formatting:** Spotless with Google Java Format (AOSP style) runs automatically at compile phase. The PostToolUse hook (see below) auto-runs `spotless:apply` after every Java file edit — do not run it manually.
 
-**Joe Armstrong / Erlang/OTP patterns** — ten primitives in `org.acme`:
+**Joe Armstrong / Erlang/OTP patterns** — fifteen primitives in `org.acme`:
 - `Proc<S,M>` — lightweight process: virtual-thread mailbox + pure state handler (OTP: `spawn/3`)
 - `ProcRef<S,M>` — stable Pid: opaque handle that survives supervisor restarts
 - `Supervisor` — supervision tree: ONE_FOR_ONE / ONE_FOR_ALL / REST_FOR_ONE with sliding restart window
@@ -78,6 +78,11 @@ mvnd verify -Dit.test=MathsIT  # integration test
 - `ProcessMonitor` — unilateral DOWN notifications: `monitor(process, Pid)` / `demonitor/1`; fires on any exit (normal or abnormal); does NOT kill the monitoring side (unlike links)
 - `ProcessRegistry` — global name table: `register/2`, `whereis/1`, `unregister/1`, `registered/0`; auto-deregisters when a process terminates
 - `ProcTimer` — timed message delivery: `timer:send_after/3`, `timer:send_interval/3`, `timer:cancel/1`
+- `ExitSignal` — exit signal record delivered as a mailbox message when a process traps exits (`process_flag(trap_exit, true)`)
+- `ProcSys` — sys module: `get_state`, `suspend`, `resume`, `statistics` — process introspection without stopping
+- `ProcLib` — proc_lib startup handshake: `start_link` blocks until child calls `initAck()`, returning `StartResult.Ok | Err`
+- `EventManager<E>` — gen_event: typed event manager with `addHandler`, `notify`, `syncNotify`, `deleteHandler`, `call`; crashes handlers without killing the manager
+- `Proc.trapExits(boolean)` / `Proc.ask(msg, timeout)` — `process_flag(trap_exit)` and timed `gen_server:call` added to core `Proc`
 
 ## Claude Code Configuration (`.claude/`)
 

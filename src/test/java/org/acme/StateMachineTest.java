@@ -205,38 +205,63 @@ class StateMachineTest implements WithAssertions {
 
     // ── nextState vs keepState data ───────────────────────────────────────────
 
+    sealed interface NSState permits NSState.A, NSState.B {
+        record A() implements NSState {}
+
+        record B() implements NSState {}
+    }
+
+    sealed interface NSEvent permits NSEvent.Go {
+        record Go() implements NSEvent {}
+    }
+
+    sealed interface KSState permits KSState.A {
+        record A() implements KSState {}
+    }
+
+    sealed interface KSEvent permits KSEvent.Inc {
+        record Inc() implements KSEvent {}
+    }
+
+    sealed interface ConcState permits ConcState.On {
+        record On() implements ConcState {}
+    }
+
+    sealed interface ConcEvent permits ConcEvent.Inc {
+        record Inc() implements ConcEvent {}
+    }
+
     @Test
     void nextState_updatesStateAndData() throws Exception {
-        sealed interface S permits S.A, S.B { record A() implements S {} record B() implements S {} }
-        sealed interface E permits E.Go { record Go() implements E {} }
+        var sm =
+                new StateMachine<NSState, NSEvent, String>(
+                        new NSState.A(),
+                        "init",
+                        (state, event, data) ->
+                                switch (state) {
+                                    case NSState.A() ->
+                                            StateMachine.Transition.nextState(
+                                                    new NSState.B(), "transitioned");
+                                    case NSState.B() -> StateMachine.Transition.keepState(data);
+                                });
 
-        var sm = new StateMachine<S, E, String>(
-                new S.A(),
-                "init",
-                (state, event, data) -> switch (state) {
-                    case S.A() -> StateMachine.Transition.nextState(new S.B(), "transitioned");
-                    case S.B() -> StateMachine.Transition.keepState(data);
-                });
-
-        var data = sm.call(new E.Go()).get(5, TimeUnit.SECONDS);
-        assertThat(sm.state()).isInstanceOf(S.B.class);
+        var data = sm.call(new NSEvent.Go()).get(5, TimeUnit.SECONDS);
+        assertThat(sm.state()).isInstanceOf(NSState.B.class);
         assertThat(data).isEqualTo("transitioned");
         sm.stop();
     }
 
     @Test
     void keepState_updatesDataOnly() throws Exception {
-        sealed interface S permits S.A { record A() implements S {} }
-        sealed interface E permits E.Inc { record Inc() implements E {} }
+        var sm =
+                new StateMachine<KSState, KSEvent, Integer>(
+                        new KSState.A(),
+                        0,
+                        (state, event, data) -> StateMachine.Transition.keepState(data + 1));
 
-        var sm = new StateMachine<S, E, Integer>(
-                new S.A(),
-                0,
-                (state, event, data) -> StateMachine.Transition.keepState(data + 1));
-
-        sm.call(new E.Inc()).get(5, TimeUnit.SECONDS);
-        var data = sm.call(new E.Inc()).get(5, TimeUnit.SECONDS);
-        assertThat(sm.state()).isInstanceOf(S.A.class); // state unchanged
+        sm.call(new KSEvent.Inc()).get(5, TimeUnit.SECONDS);
+        var data = sm.call(new KSEvent.Inc()).get(5, TimeUnit.SECONDS);
+        assertThat(sm.state()).isInstanceOf(KSState.A.class); // state unchanged
         assertThat(data).isEqualTo(2);
         sm.stop();
     }
@@ -245,23 +270,21 @@ class StateMachineTest implements WithAssertions {
 
     @Test
     void concurrentSend_isSerializedByMailbox() throws Exception {
-        sealed interface S permits S.On { record On() implements S {} }
-        sealed interface E permits E.Inc { record Inc() implements E {} }
-
-        var sm = new StateMachine<S, E, Integer>(
-                new S.On(),
-                0,
-                (state, event, data) -> StateMachine.Transition.keepState(data + 1));
+        var sm =
+                new StateMachine<ConcState, ConcEvent, Integer>(
+                        new ConcState.On(),
+                        0,
+                        (state, event, data) -> StateMachine.Transition.keepState(data + 1));
 
         int senderCount = 50;
         var threads = new Thread[senderCount];
         for (int i = 0; i < senderCount; i++) {
-            threads[i] = Thread.ofVirtual().start(() -> sm.send(new E.Inc()));
+            threads[i] = Thread.ofVirtual().start(() -> sm.send(new ConcEvent.Inc()));
         }
         for (var t : threads) t.join();
 
         // Drain with a final call to sync
-        sm.call(new E.Inc()).get(5, TimeUnit.SECONDS);
+        sm.call(new ConcEvent.Inc()).get(5, TimeUnit.SECONDS);
 
         // Must be exactly senderCount + 1 (the final sync call)
         assertThat(sm.data()).isEqualTo(senderCount + 1);

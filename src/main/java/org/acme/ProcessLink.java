@@ -39,8 +39,8 @@ public final class ProcessLink {
      * <p>Mirrors Erlang's {@code link(Pid)} BIF.
      */
     public static void link(Proc<?, ?> a, Proc<?, ?> b) {
-        a.addCrashCallback(() -> b.interruptAbnormally(a.lastError));
-        b.addCrashCallback(() -> a.interruptAbnormally(b.lastError));
+        a.addCrashCallback(() -> b.deliverExitSignal(a.lastError));
+        b.addCrashCallback(() -> a.deliverExitSignal(b.lastError));
     }
 
     /**
