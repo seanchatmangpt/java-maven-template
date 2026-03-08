@@ -605,6 +605,43 @@ TOML
     echo "Run 'jgen list' to see available templates."
 }
 
+cmd_stress() {
+    local source=""
+    local plan_flag=false
+    local generate_flag=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --source)   source="$2"; shift 2;;
+            --plan)     plan_flag=true; shift;;
+            --generate) generate_flag=true; shift;;
+            *) shift;;
+        esac
+    done
+
+    if [[ -z "$source" ]]; then
+        echo -e "${RED}Usage: jgen stress --source <dir> [--plan] [--generate]${NC}"
+        echo ""
+        echo "  Scans any Java source tree for Armstrong-style breaking-point patterns"
+        echo "  and generates bin/jgen commands to scaffold stress tests."
+        echo ""
+        echo "  --source <dir>   Root directory to scan (e.g. src/main/java)"
+        echo "  --plan           Write stress-tests.sh with all generation commands"
+        echo "  --generate       Write and immediately run stress-tests.sh"
+        exit 1
+    fi
+
+    local args="$source"
+    [[ "$plan_flag"     == "true" ]] && args="$args --plan"
+    [[ "$generate_flag" == "true" ]] && args="$args --generate"
+
+    echo -e "${BLUE}Armstrong Stress Scan: $source${NC}"
+    ./mvnw exec:java -q \
+        -Dexec.mainClass="org.acme.dogfood.innovation.StressTestScanner" \
+        -Dexec.args="$args" \
+        -Dexec.classpathScope="test"
+}
+
 # =============================================================================
 # Main dispatch
 # =============================================================================
@@ -625,6 +662,7 @@ case "$command" in
     list)       cmd_list "$@" ;;
     inspect)    cmd_inspect "$@" ;;
     init)       cmd_init "$@" ;;
+    stress)     cmd_stress "$@" ;;
     -h|--help)  usage ;;
     *)
         echo -e "${RED}Unknown command: $command${NC}"
