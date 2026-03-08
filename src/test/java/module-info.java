@@ -8,4 +8,6 @@ open module org.acme.test {
     requires transitive org.junit.jupiter.api;
     requires transitive org.junit.jupiter.engine;
     requires awaitility;
+    requires com.tngtech.archunit;
+    requires jmh.core;
 }
