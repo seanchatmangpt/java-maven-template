@@ -10,7 +10,7 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>26</maven.compiler.release>
         <junit.version>6.0.0</junit.version>
         <awaitility.version>4.3.0</awaitility.version>
         <assertj.version>3.27.6</assertj.version>

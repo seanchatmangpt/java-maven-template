@@ -239,7 +239,7 @@ class PatternCorrectnessTest implements WithAssertions {
         @DisplayName("deduplicateConsecutive: no consecutive duplicates remain")
         void deduplicateConsecutiveRemovesDuplicates() {
             var input = List.of(1, 1, 2, 3, 3, 3, 2, 1, 1);
-            var result = GathererPatterns.deduplicateConsecutive(input);
+            var result = input.stream().gather(GathererPatterns.deduplicateConsecutive()).toList();
             assertThat(result).containsExactly(1, 2, 3, 2, 1);
         }
 

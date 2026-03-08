@@ -7,11 +7,10 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Subtask;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 /**
- * Structured concurrency patterns using {@link StructuredTaskScope} (Java 21 preview).
+ * Structured concurrency patterns using {@link StructuredTaskScope} (Java 26).
  *
  * <p>Generated from {@code templates/java/concurrency/structured-task-scope.tera}.
  *
@@ -20,15 +19,15 @@ import java.util.function.Function;
  * finished (successfully, with failure, or via cancellation). This eliminates thread leaks and
  * dangling tasks.
  *
- * <h2>Two built-in policies (Java 21 preview):</h2>
+ * <h2>Two built-in joiners (Java 26):</h2>
  *
  * <ul>
- *   <li>{@code ShutdownOnFailure} — all subtasks must succeed; the first failure cancels the rest
- *   <li>{@code ShutdownOnSuccess<T>} — first successful result wins; remaining subtasks are
- *       cancelled
+ *   <li>{@code Joiner.awaitAllSuccessfulOrThrow()} — all subtasks must succeed; first failure
+ *       shuts down remaining subtasks
+ *   <li>{@code Joiner.anySuccessfulResultOrThrow()} — first successful result wins; remaining
+ *       subtasks are cancelled
  * </ul>
  */
-@SuppressWarnings("preview")
 public final class StructuredTaskScopePatterns {
 
     private StructuredTaskScopePatterns() {}
@@ -45,10 +44,12 @@ public final class StructuredTaskScopePatterns {
      */
     public static <A, B> Pair<A, B> runBoth(Callable<A> taskA, Callable<B> taskB)
             throws ExecutionException, InterruptedException {
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
             Subtask<A> a = scope.fork(taskA);
             Subtask<B> b = scope.fork(taskB);
-            scope.join().throwIfFailed();
+            scope.join();
             return new Pair<>(a.get(), b.get());
         }
     }
@@ -63,11 +64,13 @@ public final class StructuredTaskScopePatterns {
     public static <A, B, C> Triple<A, B, C> runAll(
             Callable<A> taskA, Callable<B> taskB, Callable<C> taskC)
             throws ExecutionException, InterruptedException {
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
             Subtask<A> a = scope.fork(taskA);
             Subtask<B> b = scope.fork(taskB);
             Subtask<C> c = scope.fork(taskC);
-            scope.join().throwIfFailed();
+            scope.join();
             return new Triple<>(a.get(), b.get(), c.get());
         }
     }
@@ -82,10 +85,11 @@ public final class StructuredTaskScopePatterns {
      */
     public static <T> T raceForFirst(List<Callable<T>> tasks)
             throws ExecutionException, InterruptedException {
-        try (var scope = new StructuredTaskScope.ShutdownOnSuccess<T>()) {
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<T>anySuccessfulResultOrThrow())) {
             for (var task : tasks) scope.fork(task);
-            scope.join();
-            return scope.result();
+            return scope.join();
         }
     }
 
@@ -98,10 +102,12 @@ public final class StructuredTaskScopePatterns {
      * scope throws.
      */
     public static <T> T runWithTimeout(Callable<T> task, Duration timeout)
-            throws ExecutionException, InterruptedException, TimeoutException {
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            throws ExecutionException, InterruptedException {
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
             Subtask<T> subtask = scope.fork(task);
-            scope.joinUntil(Instant.now().plus(timeout)).throwIfFailed();
+            scope.joinUntil(Instant.now().plus(timeout));
             return subtask.get();
         }
     }
@@ -116,10 +122,12 @@ public final class StructuredTaskScopePatterns {
      */
     public static <T, R> List<R> fanOut(List<T> items, Function<T, R> processor)
             throws ExecutionException, InterruptedException {
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
             List<Subtask<R>> subtasks =
                     items.stream().map(item -> scope.fork(() -> processor.apply(item))).toList();
-            scope.join().throwIfFailed();
+            scope.join();
             return subtasks.stream().map(Subtask::get).toList();
         }
     }
@@ -134,11 +142,13 @@ public final class StructuredTaskScopePatterns {
      */
     public static <T, R> List<R> fanOutWithTimeout(
             List<T> items, Function<T, R> processor, Duration timeout)
-            throws ExecutionException, InterruptedException, TimeoutException {
-        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            throws ExecutionException, InterruptedException {
+        try (var scope =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
             List<Subtask<R>> subtasks =
                     items.stream().map(item -> scope.fork(() -> processor.apply(item))).toList();
-            scope.joinUntil(Instant.now().plus(timeout)).throwIfFailed();
+            scope.joinUntil(Instant.now().plus(timeout));
             return subtasks.stream().map(Subtask::get).toList();
         }
     }
@@ -154,10 +164,12 @@ public final class StructuredTaskScopePatterns {
     public static <T, R> Pair<List<R>, List<R>> nestedFanOut(
             List<T> groupA, List<T> groupB, Function<T, R> processor)
             throws ExecutionException, InterruptedException {
-        try (var outer = new StructuredTaskScope.ShutdownOnFailure()) {
+        try (var outer =
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
             Subtask<List<R>> resultsA = outer.fork(() -> fanOut(groupA, processor));
             Subtask<List<R>> resultsB = outer.fork(() -> fanOut(groupB, processor));
-            outer.join().throwIfFailed();
+            outer.join();
             return new Pair<>(resultsA.get(), resultsB.get());
         }
     }

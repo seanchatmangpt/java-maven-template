@@ -123,7 +123,6 @@ public final class ScopedValuePatterns {
      * Demonstrates that scoped values are automatically inherited by subtasks forked within a
      * {@link StructuredTaskScope}. No manual context passing is needed.
      */
-    @SuppressWarnings("preview")
     public static <T> java.util.List<T> concurrentWithContext(
             String userId, String traceId, Callable<T> taskA, Callable<T> taskB) throws Exception {
         return ScopedValue.where(CURRENT_USER, userId)
@@ -131,10 +130,12 @@ public final class ScopedValuePatterns {
                 .call(
                         () -> {
                             try (var scope =
-                                    new StructuredTaskScope.ShutdownOnFailure()) {
+                                    StructuredTaskScope.open(
+                                            StructuredTaskScope.Joiner
+                                                    .<Object>awaitAllSuccessfulOrThrow())) {
                                 var a = scope.fork(taskA);
                                 var b = scope.fork(taskB);
-                                scope.join().throwIfFailed();
+                                scope.join();
                                 return java.util.List.of(a.get(), b.get());
                             }
                         });
