@@ -11,6 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw spotless:check    # Check formatting without applying
 ./mvnw jshell:run        # Start interactive JShell REPL
 ./mvnw package -Dshade   # Build a fat/uber JAR (shade profile)
+./mvnw verify -Ddogfood  # Run dogfood: generate-check + compile + test + report
+bin/mvndw verify          # Same as ./mvnw but with Maven Daemon (faster)
 ```
 
 **Run a single test class:**
@@ -100,3 +102,33 @@ bin/jgen verify                        # Compile + format + test check
 - `templates/java/**/*.tera` — Tera templates rendering Java 26 code
 - `ggen.toml` — ggen project configuration
 - `bin/jgen` — CLI wrapper for Java developers
+- `bin/dogfood` — validates templates produce compilable, testable Java code
+- `bin/mvndw` — Maven Daemon wrapper (faster builds with persistent JVM)
+
+## Dogfood (Eating Our Own Dog Food)
+
+The `org.acme.dogfood` package contains real Java code rendered from templates, proving they compile and pass tests.
+
+**Dogfood commands:**
+```bash
+bin/dogfood generate     # Check all dogfood source files exist
+bin/dogfood report       # Show template coverage report
+bin/dogfood verify       # Full pipeline: check + compile + test + report
+./mvnw verify -Ddogfood  # Same via Maven (includes dogfood in build lifecycle)
+bin/mvndw verify -Ddogfood  # Same via Maven Daemon (fastest)
+```
+
+**Dogfood coverage** (one example per template category):
+- `core/` → `Person.java` (record with validation + builder)
+- `concurrency/` → `VirtualThreadPatterns.java` (virtual thread utilities)
+- `patterns/` → `TextTransformStrategy.java` (functional strategy pattern)
+- `api/` → `StringMethodPatterns.java` (modern String API)
+- `error-handling/` → `ResultRailway.java` (sealed Result type)
+- `security/` → `InputValidation.java` (preconditions + error accumulation)
+- `testing/` → `PersonTest.java`, `PersonProperties.java` (JUnit 5 + jqwik)
+- `build/` → validated implicitly via pom.xml
+- `modules/` → validated implicitly via module-info.java
+
+## Maven Daemon (mvnd)
+
+`bin/mvndw` wraps [Apache Maven Daemon](https://github.com/apache/maven-mvnd) for faster builds. It auto-downloads mvnd on first use. Configuration in `.mvn/daemon.properties`.
