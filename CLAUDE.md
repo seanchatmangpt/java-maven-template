@@ -53,7 +53,7 @@ mvnd verify -Dit.test=MathsIT  # integration test
 
 ## Architecture
 
-**Java 25 JPMS library** (`org.acme` module) targeting Java 25 with preview features enabled (`--enable-preview`). JDK: GraalVM Community CE 25.0.2.
+**Java 26 JPMS library** (`org.acme` module) targeting Java 26 with preview features enabled (`--enable-preview`). JDK: GraalVM Community CE 25.0.2 (Java 26 EA builds required for Java 26 target).
 
 **Test separation:**
 - Unit tests: `*Test.java` — run by maven-surefire-plugin via `./mvnw test`
@@ -112,7 +112,10 @@ cargo install ggen-cli --features paas,ai
 bin/jgen generate -t core/record -n Person -p com.example.model
 bin/jgen list                          # List all 72 templates
 bin/jgen list --category patterns      # List templates in a category
-bin/jgen migrate --source ./legacy     # Analyze codebase for migration
+bin/jgen migrate --source ./legacy     # Detect legacy patterns (grep-based)
+bin/jgen refactor --source ./legacy    # Full analysis: score + ranked commands
+bin/jgen refactor --source ./legacy --plan   # Saves executable migrate.sh
+bin/jgen refactor --source ./legacy --score  # Score-only modernization report
 bin/jgen verify                        # Compile + format + test check
 ```
 
@@ -136,6 +139,38 @@ bin/jgen verify                        # Compile + format + test check
 - `bin/dogfood` — validates templates produce compilable, testable Java code
 - `bin/mvndw` — Maven Daemon wrapper (faster builds with persistent JVM)
 
+## Innovation Engine (`org.acme.dogfood.innovation`)
+
+Five coordinated analysis engines power the automated refactor pipeline:
+
+| Class | Role |
+|---|---|
+| `OntologyMigrationEngine` | Analyzes Java source against 12 ontology-driven migration rules; returns sealed `MigrationPlan` hierarchy |
+| `ModernizationScorer` | Scores source files 0-100 across 40+ modern/legacy signal detectors; ranks by ROI |
+| `TemplateCompositionEngine` | Composes multiple Tera templates into coherent features (CRUD, value objects, service layers) |
+| `BuildDiagnosticEngine` | Maps compiler error output to concrete `DiagnosticFix` suggestions (10 fix subtypes) |
+| `LivingDocGenerator` | Parses Java source into structured `DocElement` hierarchy; renders Markdown documentation |
+| `RefactorEngine` | **Orchestrator**: chains all engines into a single `RefactorPlan` with per-file scores, `JgenCommand` lists, `toScript()`, and `summary()` |
+
+**One-command refactor of any codebase:**
+```java
+// Java API
+var plan = RefactorEngine.analyze(Path.of("./legacy/src"));
+System.out.println(plan.summary());
+Files.writeString(Path.of("migrate.sh"), plan.toScript());
+```
+```bash
+# CLI
+bin/jgen refactor --source ./legacy/src --plan  # writes migrate.sh
+bash migrate.sh                                  # applies migrations
+```
+
+## PhD Thesis
+
+`docs/phd-thesis-otp-java26.md` — *"OTP 28 in Pure Java 26: A Formal Equivalence and Migration Framework for Enterprise-Grade Fault-Tolerant Systems"*
+
+Establishes formal equivalence between the 7 OTP primitives and Java 26, benchmarks BEAM vs. JVM under fault conditions, provides migration paths from Elixir, Go, Rust, and Scala/Akka, and frames this as a blue ocean strategy for Oracle ecosystem influencers.
+
 ## Dogfood (Eating Our Own Dog Food)
 
 The `org.acme.dogfood` package contains real Java code rendered from templates, proving they compile and pass tests.
@@ -153,10 +188,11 @@ bin/mvndw verify -Ddogfood  # Same via Maven Daemon (fastest)
 - `core/` → `Person.java` (record with validation + builder)
 - `concurrency/` → `VirtualThreadPatterns.java` (virtual thread utilities)
 - `patterns/` → `TextTransformStrategy.java` (functional strategy pattern)
-- `api/` → `StringMethodPatterns.java` (modern String API)
-- `error-handling/` → `ResultRailway.java` (sealed Result type)
-- `security/` → `InputValidation.java` (preconditions + error accumulation)
+- `api/` → `StringMethodPatterns.java` (modern String API) + `StringMethodPatternsTest.java`
+- `error-handling/` → `ResultRailway.java` (sealed Result type) + `ResultRailwayTest.java`
+- `security/` → `InputValidation.java` (preconditions + error accumulation) + `InputValidationTest.java`
 - `testing/` → `PersonTest.java`, `PersonProperties.java` (JUnit 5 + jqwik)
+- `innovation/` → all 6 engine classes + full test suites (`RefactorEngineTest`, etc.)
 - `build/` → validated implicitly via pom.xml
 - `modules/` → validated implicitly via module-info.java
 
