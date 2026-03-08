@@ -1,0 +1,400 @@
+{# Modern String API methods and migration patterns for Java 11+ through Java 15+ #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "StringMethods"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+/**
+ * Modern Java String API methods and migration patterns.
+ *
+ * <p>Covers String enhancements from Java 11 through Java 15+, including blank/strip methods,
+ * repeat, indent, transform, chars/codePoints streams, and file read/write utilities.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // ========================================================================
+    // String.isBlank() vs isEmpty() (Java 11+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Manual whitespace checking.
+     *
+     * <pre>{@code
+     * boolean blank = str == null || str.trim().isEmpty();
+     * }</pre>
+     *
+     * AFTER: isBlank() detects all Unicode whitespace (not just ASCII).
+     * isEmpty() returns true only for length == 0.
+     */
+    public static boolean isBlankExample(String str) {
+        // isEmpty(): true only for ""
+        // isBlank(): true for "", " ", "\t", "\u2003" (em space), etc.
+        return str.isBlank(); // Unicode-aware whitespace detection
+    }
+
+    public static boolean isEmptyExample(String str) {
+        return str.isEmpty(); // Only true when length() == 0
+    }
+
+    /**
+     * Common guard pattern using isBlank().
+     */
+    public static Optional<String> normalizeBlank(String input) {
+        return Optional.ofNullable(input).filter(s -> !s.isBlank());
+    }
+
+    // ========================================================================
+    // String.strip() vs trim() — Unicode-aware stripping (Java 11+)
+    // ========================================================================
+
+    /**
+     * BEFORE: trim() only removes ASCII whitespace (chars <= U+0020).
+     *
+     * <pre>{@code
+     * String cleaned = str.trim();
+     * // Fails to remove Unicode whitespace like \u2000 (en quad), \u3000 (ideographic space)
+     * }</pre>
+     *
+     * AFTER: strip() uses Character.isWhitespace() — handles all Unicode whitespace.
+     */
+    public static String stripExample(String str) {
+        return str.strip(); // Removes leading and trailing Unicode whitespace
+    }
+
+    // ========================================================================
+    // String.stripLeading() and stripTrailing() (Java 11+)
+    // ========================================================================
+
+    /**
+     * BEFORE: No built-in single-side stripping — required regex.
+     *
+     * <pre>{@code
+     * String noLeading = str.replaceAll("^\\s+", "");
+     * String noTrailing = str.replaceAll("\\s+$", "");
+     * }</pre>
+     *
+     * AFTER: Dedicated methods for each side.
+     */
+    public static String stripLeadingExample(String str) {
+        return str.stripLeading();
+    }
+
+    public static String stripTrailingExample(String str) {
+        return str.stripTrailing();
+    }
+
+    // ========================================================================
+    // String.repeat(n) (Java 11+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Manual loop or StringBuilder.
+     *
+     * <pre>{@code
+     * StringBuilder sb = new StringBuilder();
+     * for (int i = 0; i < n; i++) {
+     *     sb.append(str);
+     * }
+     * return sb.toString();
+     * }</pre>
+     *
+     * AFTER: Single method call.
+     */
+    public static String repeatExample(String str, int count) {
+        return str.repeat(count);
+    }
+
+    /**
+     * Practical use: generating separators, padding, indentation.
+     */
+    public static String horizontalRule(int width) {
+        return "-".repeat(width);
+    }
+
+    public static String padLeft(String str, int totalWidth) {
+        int padding = Math.max(0, totalWidth - str.length());
+        return " ".repeat(padding) + str;
+    }
+
+    // ========================================================================
+    // String.indent(n) and stripIndent() (Java 12+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Manual indentation with stream or loop.
+     *
+     * <pre>{@code
+     * String indented = Arrays.stream(str.split("\n"))
+     *     .map(line -> "    " + line)
+     *     .collect(Collectors.joining("\n"));
+     * }</pre>
+     *
+     * AFTER: indent(n) adds n spaces to each line (negative n removes up to |n| leading spaces).
+     * Also normalizes line endings and ensures trailing newline.
+     */
+    public static String indentExample(String text, int spaces) {
+        return text.indent(spaces);
+    }
+
+    /**
+     * stripIndent() removes common leading whitespace (same algorithm as text blocks).
+     *
+     * <pre>{@code
+     * String text = "    line1\n    line2\n    line3";
+     * text.stripIndent(); // "line1\nline2\nline3"
+     * }</pre>
+     */
+    public static String stripIndentExample(String text) {
+        return text.stripIndent();
+    }
+
+    // ========================================================================
+    // String.formatted() (Java 15+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Static method call with format string as first argument.
+     *
+     * <pre>{@code
+     * String msg = String.format("Hello, %s! You have %d messages.", name, count);
+     * }</pre>
+     *
+     * AFTER: Instance method — reads more naturally in fluent chains.
+     */
+    public static String formattedExample(String name, int count) {
+        return "Hello, %s! You have %d messages.".formatted(name, count);
+    }
+
+    /**
+     * Fluent usage with text blocks.
+     */
+    public static String formattedTextBlockExample(String title, String body) {
+        return """
+                <html>
+                  <head><title>%s</title></head>
+                  <body>%s</body>
+                </html>
+                """
+                .formatted(title, body);
+    }
+
+    // ========================================================================
+    // String.chars() and codePoints() streams (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Manual charAt() loop.
+     *
+     * <pre>{@code
+     * Map<Character, Long> freq = new HashMap<>();
+     * for (int i = 0; i < str.length(); i++) {
+     *     freq.merge(str.charAt(i), 1L, Long::sum);
+     * }
+     * }</pre>
+     *
+     * AFTER: Stream-based character processing.
+     */
+    public static long countVowels(String str) {
+        return str.chars()
+                .mapToObj(c -> (char) c)
+                .filter(c -> "aeiouAEIOU".indexOf(c) >= 0)
+                .count();
+    }
+
+    /**
+     * codePoints() handles supplementary characters (emoji, CJK extensions) correctly.
+     *
+     * <pre>{@code
+     * // chars() splits surrogate pairs — broken for emoji!
+     * // codePoints() handles full Unicode correctly
+     * }</pre>
+     */
+    public static List<String> codePointsExample(String str) {
+        return str.codePoints()
+                .mapToObj(Character::toString) // Full Unicode character as String
+                .toList();
+    }
+
+    /**
+     * Check if string contains only ASCII printable characters.
+     */
+    public static boolean isAsciiPrintable(String str) {
+        return str.codePoints().allMatch(cp -> cp >= 0x20 && cp <= 0x7E);
+    }
+
+    // ========================================================================
+    // String.transform() pipeline (Java 12+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Nested method calls or temporary variables.
+     *
+     * <pre>{@code
+     * String result = removePrefix(trim(toLowerCase(input)));
+     * // or
+     * String step1 = input.toLowerCase();
+     * String step2 = step1.trim();
+     * String step3 = removePrefix(step2);
+     * }</pre>
+     *
+     * AFTER: Fluent pipeline via transform().
+     */
+    public static String transformExample(String input) {
+        return input.strip()
+                .toLowerCase()
+                .transform(s -> s.startsWith("the ") ? s.substring(4) : s)
+                .transform(s -> s.replaceAll("\\s+", "-"));
+    }
+
+    /**
+     * transform() can change the return type — useful for parsing.
+     */
+    public static int transformParseExample(String input) {
+        return input.strip().transform(Integer::parseInt);
+    }
+
+    /**
+     * Chaining transform with Optional for safe processing.
+     */
+    public static Optional<String> transformSafeExample(String input) {
+        return Optional.ofNullable(input)
+                .filter(s -> !s.isBlank())
+                .map(s -> s.strip().transform(String::toUpperCase));
+    }
+
+    // ========================================================================
+    // Files.readString() and Files.writeString() (Java 11+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Verbose multi-step file reading.
+     *
+     * <pre>{@code
+     * byte[] bytes = Files.readAllBytes(path);
+     * String content = new String(bytes, StandardCharsets.UTF_8);
+     *
+     * // or with BufferedReader
+     * try (BufferedReader reader = Files.newBufferedReader(path)) {
+     *     String content = reader.lines().collect(Collectors.joining("\n"));
+     * }
+     * }</pre>
+     *
+     * AFTER: Single method call.
+     */
+    public static String readFileAsString(Path path) {
+        try {
+            return Files.readString(path); // UTF-8 by default
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * BEFORE: Verbose file writing.
+     *
+     * <pre>{@code
+     * try (BufferedWriter writer = Files.newBufferedWriter(path)) {
+     *     writer.write(content);
+     * }
+     * }</pre>
+     *
+     * AFTER: Single method call.
+     */
+    public static void writeStringToFile(Path path, String content) {
+        try {
+            Files.writeString(path, content); // UTF-8 by default
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    // ========================================================================
+    // String.join() vs StringBuilder
+    // ========================================================================
+
+    /**
+     * BEFORE: StringBuilder with manual delimiter handling.
+     *
+     * <pre>{@code
+     * StringBuilder sb = new StringBuilder();
+     * for (int i = 0; i < items.size(); i++) {
+     *     if (i > 0) sb.append(", ");
+     *     sb.append(items.get(i));
+     * }
+     * return sb.toString();
+     * }</pre>
+     *
+     * AFTER: String.join() for simple cases, Collectors.joining() for streams.
+     */
+    public static String joinExample(List<String> items) {
+        return String.join(", ", items);
+    }
+
+    /**
+     * Collectors.joining() with prefix and suffix.
+     */
+    public static String joinWithBrackets(List<String> items) {
+        return items.stream().collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /**
+     * StringBuilder is still preferred for dynamic/conditional building.
+     */
+    public static String buildDynamic(String name, boolean includeGreeting, int count) {
+        var sb = new StringBuilder();
+        if (includeGreeting) {
+            sb.append("Hello, ").append(name).append("! ");
+        }
+        sb.append("Count: ").append(count);
+        return sb.toString();
+    }
+
+    // ========================================================================
+    // lines() — Stream of lines (Java 11+)
+    // ========================================================================
+
+    /**
+     * BEFORE: Split and stream manually.
+     *
+     * <pre>{@code
+     * String[] lines = text.split("\\R");
+     * List<String> nonEmpty = Arrays.stream(lines)
+     *     .filter(l -> !l.isEmpty())
+     *     .toList();
+     * }</pre>
+     *
+     * AFTER: lines() provides a lazy stream, handles all line terminators.
+     */
+    public static List<String> nonBlankLines(String text) {
+        return text.lines().filter(line -> !line.isBlank()).toList();
+    }
+
+    /**
+     * Practical example: parse key-value config from a string.
+     */
+    public static java.util.Map<String, String> parseConfig(String text) {
+        return text.lines()
+                .filter(line -> !line.isBlank())
+                .filter(line -> !line.startsWith("#"))
+                .map(line -> line.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(
+                        parts -> parts[0].strip(),
+                        parts -> parts[1].strip()));
+    }
+}

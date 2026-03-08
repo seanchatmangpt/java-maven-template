@@ -1,0 +1,155 @@
+{# JUnit 5 Nested Tests — BDD-style test organization with @Nested inner classes and shared enclosing-class state for Java 26 #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"
+vars:
+  name: "MyClass"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  subject_class: ""
+  nested_groups: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@DisplayName("{{ name }}")
+class {{ name }}Test implements WithAssertions {
+
+{% if subject_class %}
+    private {{ subject_class }} subject;
+
+    @BeforeEach
+    void setUp() {
+        subject = new {{ subject_class }}();
+    }
+{% endif %}
+{% for group in nested_groups %}
+
+    @Nested
+    @DisplayName("{{ group.display_name }}")
+    class {{ group.class_name }} {
+{% if group.setup is defined %}
+
+        @BeforeEach
+        void setUp() {
+            {{ group.setup }}
+        }
+{% endif %}
+{% for test in group.tests %}
+
+        @Test
+        @DisplayName("{{ test.display_name | default(value=test.name) }}")
+        void {{ test.name }}() {
+{% if test.body is defined %}
+            {{ test.body }}
+{% else %}
+            // TODO: implement test
+{% endif %}
+        }
+{% endfor %}
+{% if group.nested is defined %}
+{% for sub in group.nested %}
+
+        @Nested
+        @DisplayName("{{ sub.display_name }}")
+        class {{ sub.class_name }} {
+{% if sub.setup is defined %}
+
+            @BeforeEach
+            void setUp() {
+                {{ sub.setup }}
+            }
+{% endif %}
+{% for test in sub.tests %}
+
+            @Test
+            @DisplayName("{{ test.display_name | default(value=test.name) }}")
+            void {{ test.name }}() {
+{% if test.body is defined %}
+                {{ test.body }}
+{% else %}
+                // TODO: implement test
+{% endif %}
+            }
+{% endfor %}
+        }
+{% endfor %}
+{% endif %}
+    }
+{% endfor %}
+{% if nested_groups | length == 0 %}
+
+    @Nested
+    @DisplayName("when initialized with defaults")
+    class WhenInitializedWithDefaults {
+
+{% if subject_class %}
+        @BeforeEach
+        void setUp() {
+            subject = new {{ subject_class }}();
+        }
+
+{% endif %}
+        @Test
+        @DisplayName("should not be null")
+        void shouldNotBeNull() {
+{% if subject_class %}
+            assertThat(subject).isNotNull();
+{% else %}
+            // TODO: verify initial state
+{% endif %}
+        }
+
+        @Nested
+        @DisplayName("and a mutation is applied")
+        class AndMutationApplied {
+
+            @Test
+            @DisplayName("should reflect the change")
+            void shouldReflectTheChange() {
+                // TODO: apply mutation and assert
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("when given invalid input")
+    class WhenGivenInvalidInput {
+
+        @Test
+        @DisplayName("should throw IllegalArgumentException")
+        void shouldThrowOnInvalidInput() {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(
+                            () -> {
+                                // TODO: invoke with invalid input
+                            })
+                    .withMessageContaining("invalid");
+        }
+
+        @Test
+        @DisplayName("should throw NullPointerException for null")
+        void shouldThrowOnNull() {
+            assertThatNullPointerException()
+                    .isThrownBy(
+                            () -> {
+                                // TODO: invoke with null
+                            });
+        }
+    }
+{% endif %}
+}

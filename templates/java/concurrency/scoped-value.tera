@@ -1,0 +1,326 @@
+{# ScopedValue — Immutable, inheritable context values for virtual threads (Java 26) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "ScopedValuePatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.concurrent.Callable;
+import java.util.concurrent.StructuredTaskScope;
+import java.util.function.Supplier;
+
+/**
+ * {@link ScopedValue} patterns for immutable, inheritable context (Java 26).
+ *
+ * <p>Scoped values provide a mechanism to share immutable data within a thread
+ * and its child threads (virtual or platform) for a bounded period. They are
+ * the modern replacement for {@link ThreadLocal} and are designed to work
+ * naturally with virtual threads and structured concurrency.
+ *
+ * <h2>Why ScopedValue over ThreadLocal?</h2>
+ * <ul>
+ *     <li>Immutable — cannot be mutated once bound; no stale-value bugs</li>
+ *     <li>Bounded lifetime — automatically unbound when scope exits</li>
+ *     <li>Inherited by child virtual threads — works with {@link StructuredTaskScope}</li>
+ *     <li>No memory leaks — no need for {@code remove()} calls</li>
+ *     <li>Better performance — optimized for virtual threads</li>
+ * </ul>
+ *
+ * <h2>Key rules:</h2>
+ * <ul>
+ *     <li>Declare as {@code static final} fields</li>
+ *     <li>Bind with {@code ScopedValue.where(KEY, value).run/call(...)}</li>
+ *     <li>Read with {@code KEY.get()} inside the bound scope</li>
+ *     <li>Use {@code KEY.isBound()} to check before reading</li>
+ *     <li>Nested bindings shadow outer bindings for the duration of the inner scope</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Basic scoped value — request context
+    // BEFORE (ThreadLocal):
+    //     private static final ThreadLocal<String> CURRENT_USER = new ThreadLocal<>();
+    //     CURRENT_USER.set("alice");
+    //     try {
+    //         handleRequest();
+    //     } finally {
+    //         CURRENT_USER.remove(); // easy to forget → memory leak
+    //     }
+    // AFTER (ScopedValue):
+    // =========================================================================
+
+    /** The currently authenticated user for this request scope. */
+    public static final ScopedValue<String> CURRENT_USER = ScopedValue.newInstance();
+
+    /**
+     * Runs a request handler with a bound user identity.
+     * The binding is automatically removed when the scope exits.
+     *
+     * @param userId  the authenticated user ID
+     * @param handler the request handler to run
+     */
+    public static void handleAsUser(String userId, Runnable handler) {
+        ScopedValue.where(CURRENT_USER, userId).run(handler);
+    }
+
+    /**
+     * Returns the current user within a scoped context.
+     *
+     * @return the current user ID
+     * @throws java.util.NoSuchElementException if not in a user scope
+     */
+    public static String currentUser() {
+        return CURRENT_USER.get();
+    }
+
+    // =========================================================================
+    // PATTERN 2: Scoped value with a return value — call()
+    // BEFORE (ThreadLocal):
+    //     CONTEXT.set(value);
+    //     try {
+    //         return doWork();
+    //     } finally {
+    //         CONTEXT.remove();
+    //     }
+    // AFTER (ScopedValue.call):
+    // =========================================================================
+
+    /** A trace ID for distributed tracing. */
+    public static final ScopedValue<String> TRACE_ID = ScopedValue.newInstance();
+
+    /**
+     * Executes a callable within a tracing scope and returns the result.
+     *
+     * @param <T>     the result type
+     * @param traceId the trace ID for this operation
+     * @param task    the task to execute
+     * @return the task result
+     * @throws Exception if the task throws
+     */
+    public static <T> T withTrace(String traceId, Callable<T> task) throws Exception {
+        return ScopedValue.where(TRACE_ID, traceId).call(task);
+    }
+
+    // =========================================================================
+    // PATTERN 3: Multiple scoped values bound together (Carrier)
+    // BEFORE (multiple ThreadLocals):
+    //     USER_TL.set(user);
+    //     TRACE_TL.set(traceId);
+    //     TENANT_TL.set(tenant);
+    //     try { ... } finally {
+    //         USER_TL.remove();
+    //         TRACE_TL.remove();
+    //         TENANT_TL.remove();
+    //     }
+    // AFTER (Carrier with chained where):
+    // =========================================================================
+
+    /** The tenant ID for multi-tenant applications. */
+    public static final ScopedValue<String> TENANT_ID = ScopedValue.newInstance();
+
+    /**
+     * Represents the full context for an incoming request.
+     *
+     * @param userId  the authenticated user
+     * @param traceId the distributed trace ID
+     * @param tenantId the tenant this request belongs to
+     */
+    public record RequestContext(String userId, String traceId, String tenantId) {}
+
+    /**
+     * Binds a full request context (user, trace, tenant) and runs the handler.
+     * All three values are bound atomically and inherited by child threads.
+     *
+     * @param ctx     the request context
+     * @param handler the handler to run
+     */
+    public static void withRequestContext(RequestContext ctx, Runnable handler) {
+        ScopedValue.where(CURRENT_USER, ctx.userId())
+                .where(TRACE_ID, ctx.traceId())
+                .where(TENANT_ID, ctx.tenantId())
+                .run(handler);
+    }
+
+    /**
+     * Binds a full request context and returns a result.
+     *
+     * @param <T>  the result type
+     * @param ctx  the request context
+     * @param task the task to execute
+     * @return the task result
+     * @throws Exception if the task throws
+     */
+    public static <T> T withRequestContext(RequestContext ctx, Callable<T> task)
+            throws Exception {
+        return ScopedValue.where(CURRENT_USER, ctx.userId())
+                .where(TRACE_ID, ctx.traceId())
+                .where(TENANT_ID, ctx.tenantId())
+                .call(task);
+    }
+
+    // =========================================================================
+    // PATTERN 4: Nested scopes — inner binding shadows outer
+    // BEFORE (ThreadLocal):
+    //     String old = CURRENT_USER.get();
+    //     CURRENT_USER.set("system");
+    //     try {
+    //         doSystemWork();
+    //     } finally {
+    //         CURRENT_USER.set(old); // manual restore, error-prone
+    //     }
+    // AFTER (ScopedValue — automatic restore via nesting):
+    // =========================================================================
+
+    /**
+     * Runs a privileged operation as a system user, temporarily shadowing
+     * any existing user binding. The outer binding is automatically restored
+     * when the inner scope exits.
+     *
+     * @param systemAction the action to perform as system user
+     */
+    public static void runAsSystem(Runnable systemAction) {
+        ScopedValue.where(CURRENT_USER, "SYSTEM").run(systemAction);
+    }
+
+    /**
+     * Demonstrates nested scoping: the inner scope shadows the outer
+     * binding, and the outer value is automatically restored on exit.
+     *
+     * @param outerUser   the user for the outer scope
+     * @param innerUser   the user for the inner (privileged) scope
+     * @param outerAction runs in the outer scope (sees outerUser)
+     * @param innerAction runs in the inner scope (sees innerUser)
+     */
+    public static void nestedScopes(
+            String outerUser,
+            String innerUser,
+            Runnable outerAction,
+            Runnable innerAction) {
+
+        ScopedValue.where(CURRENT_USER, outerUser).run(() -> {
+            // CURRENT_USER.get() == outerUser here
+            outerAction.run();
+
+            // Shadow the outer binding with innerUser
+            ScopedValue.where(CURRENT_USER, innerUser).run(() -> {
+                // CURRENT_USER.get() == innerUser here
+                innerAction.run();
+            });
+
+            // CURRENT_USER.get() == outerUser again (automatically restored)
+            outerAction.run();
+        });
+    }
+
+    // =========================================================================
+    // PATTERN 5: ScopedValue with StructuredTaskScope — inherited by child tasks
+    // BEFORE (ThreadLocal + ExecutorService):
+    //     // ThreadLocal values are NOT inherited by executor threads
+    //     // Must manually pass context to each task
+    //     executor.submit(() -> {
+    //         CONTEXT.set(parentContext); // manual, error-prone
+    //         return doWork();
+    //     });
+    // AFTER (ScopedValue + StructuredTaskScope — automatic inheritance):
+    // =========================================================================
+
+    /**
+     * Demonstrates that scoped values are automatically inherited by
+     * subtasks forked within a {@link StructuredTaskScope}. No manual
+     * context passing is needed.
+     *
+     * @param <T>       the result type
+     * @param userId    the user to bind
+     * @param traceId   the trace ID to bind
+     * @param taskA     first concurrent task (can read CURRENT_USER and TRACE_ID)
+     * @param taskB     second concurrent task (can read CURRENT_USER and TRACE_ID)
+     * @return both results as a list
+     * @throws Exception if any subtask fails
+     */
+    public static <T> java.util.List<T> concurrentWithContext(
+            String userId,
+            String traceId,
+            Callable<T> taskA,
+            Callable<T> taskB) throws Exception {
+
+        return ScopedValue.where(CURRENT_USER, userId)
+                .where(TRACE_ID, traceId)
+                .call(() -> {
+                    try (var scope = StructuredTaskScope.open(
+                            StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+                        var a = scope.fork(taskA); // inherits CURRENT_USER, TRACE_ID
+                        var b = scope.fork(taskB); // inherits CURRENT_USER, TRACE_ID
+
+                        scope.join();
+
+                        return java.util.List.of(a.get(), b.get());
+                    }
+                });
+    }
+
+    // =========================================================================
+    // PATTERN 6: Conditional binding — check isBound() before reading
+    // BEFORE (ThreadLocal):
+    //     String user = CURRENT_USER.get(); // returns null if not set
+    //     if (user == null) { user = "anonymous"; }
+    // AFTER (ScopedValue):
+    // =========================================================================
+
+    /**
+     * Safely reads the current user, returning a default if no binding exists.
+     *
+     * @param defaultUser the fallback user ID
+     * @return the bound user ID or the default
+     */
+    public static String currentUserOrDefault(String defaultUser) {
+        return CURRENT_USER.isBound() ? CURRENT_USER.get() : defaultUser;
+    }
+
+    /**
+     * Returns the current user wrapped in an Optional.
+     *
+     * @return the current user, or empty if not bound
+     */
+    public static java.util.Optional<String> currentUserOptional() {
+        return CURRENT_USER.isBound()
+                ? java.util.Optional.of(CURRENT_USER.get())
+                : java.util.Optional.empty();
+    }
+
+    // =========================================================================
+    // PATTERN 7: Real-world server pattern — binding context at the edge
+    // =========================================================================
+
+    /**
+     * Simulates a server request handler that binds scoped values at the
+     * entry point and uses structured concurrency for parallel work.
+     * All downstream code reads context via {@code ScopedValue.get()}
+     * without explicit parameter passing.
+     *
+     * @param userId   the authenticated user
+     * @param tenantId the tenant
+     * @param traceId  the trace ID from the incoming request
+     * @param handler  the business logic handler
+     */
+    public static void serveRequest(
+            String userId,
+            String tenantId,
+            String traceId,
+            Runnable handler) {
+
+        ScopedValue.where(CURRENT_USER, userId)
+                .where(TENANT_ID, tenantId)
+                .where(TRACE_ID, traceId)
+                .run(handler);
+    }
+}

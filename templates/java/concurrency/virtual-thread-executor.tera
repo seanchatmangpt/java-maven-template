@@ -1,0 +1,320 @@
+{# Virtual thread executor — Executors.newVirtualThreadPerTaskExecutor() patterns (Java 21+) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "VirtualThreadExecutorPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Duration;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.function.Function;
+
+/**
+ * Virtual thread executor patterns using {@link Executors#newVirtualThreadPerTaskExecutor()} (Java 21+).
+ *
+ * <p>The virtual-thread-per-task executor creates a new virtual thread for each
+ * submitted task. Unlike traditional thread pools, there is no fixed pool size —
+ * virtual threads are so lightweight that pooling them is unnecessary and
+ * counterproductive.
+ *
+ * <h2>When to use this executor:</h2>
+ * <ul>
+ *     <li>Migrating existing {@link ExecutorService} code to virtual threads</li>
+ *     <li>When you need {@code submit()}, {@code invokeAll()}, or {@code invokeAny()}</li>
+ *     <li>Server patterns that accept connections in a loop</li>
+ *     <li>Any I/O-bound work that benefits from high concurrency</li>
+ * </ul>
+ *
+ * <h2>Key rules:</h2>
+ * <ul>
+ *     <li>Always use try-with-resources — the executor is {@link AutoCloseable}</li>
+ *     <li>{@code close()} waits for all submitted tasks to complete</li>
+ *     <li>Do <strong>not</strong> pool virtual thread executors — create them on demand</li>
+ *     <li>For structured concurrency, prefer {@link java.util.concurrent.StructuredTaskScope}</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Basic try-with-resources executor
+    // BEFORE (fixed thread pool):
+    //     ExecutorService pool = Executors.newFixedThreadPool(10);
+    //     try {
+    //         pool.submit(task1);
+    //         pool.submit(task2);
+    //     } finally {
+    //         pool.shutdown();
+    //         if (!pool.awaitTermination(60, TimeUnit.SECONDS)) {
+    //             pool.shutdownNow();
+    //         }
+    //     }
+    // AFTER (virtual thread executor — AutoCloseable):
+    // =========================================================================
+
+    /**
+     * Runs multiple tasks using a virtual-thread-per-task executor.
+     * The try-with-resources block ensures all tasks complete before
+     * the method returns — no manual shutdown required.
+     *
+     * @param tasks the tasks to execute
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static void runAll(List<Runnable> tasks) throws InterruptedException {
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (var task : tasks) {
+                executor.submit(task);
+            }
+        } // close() waits for all tasks to finish
+    }
+
+    // =========================================================================
+    // PATTERN 2: Submit and collect results
+    // BEFORE (newFixedThreadPool):
+    //     ExecutorService pool = Executors.newFixedThreadPool(
+    //             Runtime.getRuntime().availableProcessors());
+    //     List<Future<R>> futures = items.stream()
+    //             .map(item -> pool.submit(() -> process(item)))
+    //             .toList();
+    //     List<R> results = new ArrayList<>();
+    //     for (Future<R> f : futures) {
+    //         results.add(f.get()); // blocks one-by-one
+    //     }
+    //     pool.shutdown();
+    // AFTER (virtual thread executor):
+    // =========================================================================
+
+    /**
+     * Submits work for each item and collects results via {@link Future#get()}.
+     *
+     * @param <T>       the input type
+     * @param <R>       the result type
+     * @param items     the items to process
+     * @param processor the processing function
+     * @return list of results in input order
+     * @throws InterruptedException if interrupted while waiting
+     * @throws ExecutionException   if any task fails
+     */
+    public static <T, R> List<R> submitAndCollect(
+            List<T> items,
+            Function<T, R> processor) throws InterruptedException, ExecutionException {
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<R>> futures = items.stream()
+                    .map(item -> executor.submit(() -> processor.apply(item)))
+                    .toList();
+
+            var results = new java.util.ArrayList<R>(futures.size());
+            for (var future : futures) {
+                results.add(future.get());
+            }
+            return List.copyOf(results);
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 3: invokeAll — submit batch and wait for all results
+    // BEFORE (newCachedThreadPool):
+    //     ExecutorService pool = Executors.newCachedThreadPool();
+    //     List<Future<R>> futures = pool.invokeAll(callables);
+    //     // unbounded thread creation with platform threads is dangerous
+    //     pool.shutdown();
+    // AFTER (virtual thread executor — unbounded is safe):
+    // =========================================================================
+
+    /**
+     * Invokes all callables concurrently using virtual threads.
+     * Blocks until every task completes (successfully or not).
+     *
+     * @param <R>       the result type
+     * @param callables the tasks to invoke
+     * @return list of completed futures in input order
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static <R> List<Future<R>> invokeAll(
+            Collection<? extends Callable<R>> callables) throws InterruptedException {
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            return executor.invokeAll(callables);
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 4: invokeAny — race tasks, first result wins
+    // BEFORE:
+    //     ExecutorService pool = Executors.newFixedThreadPool(5);
+    //     try {
+    //         return pool.invokeAny(callables);
+    //     } finally {
+    //         pool.shutdownNow();
+    //     }
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Races multiple callables; returns the result of the first to complete
+     * successfully. Remaining tasks are cancelled when the executor closes.
+     *
+     * @param <R>       the result type
+     * @param callables the competing tasks
+     * @return the first successful result
+     * @throws InterruptedException if interrupted while waiting
+     * @throws ExecutionException   if no task completes successfully
+     */
+    public static <R> R invokeAny(
+            Collection<? extends Callable<R>> callables)
+            throws InterruptedException, ExecutionException {
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            return executor.invokeAny(callables);
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 5: Server accept loop — one virtual thread per connection
+    // BEFORE (thread-per-connection with bounded pool):
+    //     ExecutorService pool = Executors.newFixedThreadPool(200);
+    //     while (!serverSocket.isClosed()) {
+    //         Socket client = serverSocket.accept();
+    //         pool.submit(() -> handleClient(client));
+    //         // limited to 200 concurrent connections
+    //     }
+    //     pool.shutdown();
+    // AFTER (virtual thread executor — millions of concurrent connections):
+    // =========================================================================
+
+    /**
+     * Simulates a server accept loop that dispatches each connection to
+     * its own virtual thread. The executor's {@code close()} ensures all
+     * in-flight connections are drained on shutdown.
+     *
+     * @param <C>              the connection type
+     * @param connectionSource supplies new connections (blocks until one arrives)
+     * @param handler          handles a single connection
+     * @param shouldContinue   returns {@code false} to stop the accept loop
+     * @throws InterruptedException if interrupted
+     */
+    public static <C> void acceptLoop(
+            Callable<C> connectionSource,
+            java.util.function.Consumer<C> handler,
+            java.util.function.BooleanSupplier shouldContinue) throws InterruptedException {
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            while (shouldContinue.getAsBoolean()) {
+                try {
+                    C connection = connectionSource.call();
+                    executor.submit(() -> handler.accept(connection));
+                } catch (Exception e) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    // Log and continue accepting
+                }
+            }
+        } // close() waits for all in-flight handlers to complete
+    }
+
+    // =========================================================================
+    // PATTERN 6: Periodic task fan-out with executor
+    // BEFORE:
+    //     ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    //     ExecutorService pool = Executors.newFixedThreadPool(20);
+    //     scheduler.scheduleAtFixedRate(() -> {
+    //         for (var item : getItems()) {
+    //             pool.submit(() -> process(item));
+    //         }
+    //     }, 0, 1, TimeUnit.MINUTES);
+    // AFTER (virtual threads — new executor per batch):
+    // =========================================================================
+
+    /**
+     * Processes a batch of items concurrently, creating a fresh executor
+     * for each invocation. This is the recommended pattern for periodic
+     * fan-out because virtual thread executors are cheap to create.
+     *
+     * @param <T>       the item type
+     * @param <R>       the result type
+     * @param items     the items to process
+     * @param processor the processing function
+     * @return list of results
+     * @throws InterruptedException if interrupted while waiting
+     * @throws ExecutionException   if any task fails
+     */
+    public static <T, R> List<R> batchProcess(
+            List<T> items,
+            Function<T, R> processor) throws InterruptedException, ExecutionException {
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Callable<R>> callables = items.stream()
+                    .<Callable<R>>map(item -> () -> processor.apply(item))
+                    .toList();
+
+            List<Future<R>> futures = executor.invokeAll(callables);
+
+            var results = new java.util.ArrayList<R>(futures.size());
+            for (var future : futures) {
+                results.add(future.get());
+            }
+            return List.copyOf(results);
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 7: Migrating from newFixedThreadPool — drop-in replacement
+    // BEFORE:
+    //     private final ExecutorService executor =
+    //             Executors.newFixedThreadPool(
+    //                     Runtime.getRuntime().availableProcessors() * 2);
+    //     // Must manage lifecycle, tune pool size, risk thread exhaustion
+    // AFTER:
+    //     private final ExecutorService executor =
+    //             Executors.newVirtualThreadPerTaskExecutor();
+    //     // No tuning needed, no thread exhaustion for I/O-bound work
+    // =========================================================================
+
+    /**
+     * Demonstrates the drop-in replacement pattern. Any code that accepts
+     * an {@link ExecutorService} can switch to virtual threads by changing
+     * a single line.
+     *
+     * @return a new virtual-thread-per-task executor
+     */
+    public static ExecutorService createExecutor() {
+        return Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    /**
+     * Example: a service class that uses an injected executor.
+     * Switch to virtual threads by providing {@link #createExecutor()}.
+     *
+     * @param <T>       the input type
+     * @param <R>       the result type
+     * @param executor  the executor to use (virtual-thread or platform)
+     * @param items     the items to process
+     * @param processor the processing function
+     * @return futures for each submitted task
+     */
+    public static <T, R> List<Future<R>> submitWith(
+            ExecutorService executor,
+            List<T> items,
+            Function<T, R> processor) {
+
+        return items.stream()
+                .map(item -> executor.submit(() -> processor.apply(item)))
+                .toList();
+    }
+}

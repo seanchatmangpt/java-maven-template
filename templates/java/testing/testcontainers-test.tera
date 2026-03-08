@@ -1,0 +1,89 @@
+{# Testcontainers — Integration testing with Docker containers #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "TestcontainersExample"
+  package: "org.acme.test"
+  output_dir: "src/test/java"
+  container_type: "PostgreSQLContainer"
+  container_image: "postgres:16"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+/**
+ * Testcontainers integration test patterns.
+ *
+ * <p>Uses Docker to spin up real service instances for integration testing.
+ * Tests run with actual databases, message brokers, and other services.
+ *
+ * <h2>Requirements:</h2>
+ * <ul>
+ *     <li>Docker must be running on the test machine</li>
+ *     <li>Add to pom.xml: {@code org.testcontainers:testcontainers} and
+ *         {@code org.testcontainers:junit-jupiter} as test dependencies</li>
+ * </ul>
+ */
+@Tag("integration")
+@Testcontainers
+class {{ name }} implements WithAssertions {
+
+    // =========================================================================
+    // PATTERN 1: Shared container (reused across all tests in this class)
+    // @Container on static field = started once, shared by all tests
+    // =========================================================================
+    @Container
+    static final GenericContainer<?> container = new GenericContainer<>("{{ container_image }}")
+            .withExposedPorts(5432)
+            .withEnv("POSTGRES_DB", "testdb")
+            .withEnv("POSTGRES_USER", "test")
+            .withEnv("POSTGRES_PASSWORD", "test");
+
+    @Test
+    void containerIsRunning() {
+        assertThat(container.isRunning()).isTrue();
+        assertThat(container.getMappedPort(5432)).isPositive();
+    }
+
+    @Test
+    void canConnectToContainer() {
+        var host = container.getHost();
+        var port = container.getMappedPort(5432);
+        var jdbcUrl = "jdbc:postgresql://%s:%d/testdb".formatted(host, port);
+
+        assertThat(jdbcUrl).isNotBlank();
+        // In a real test: use jdbcUrl to create DataSource and run queries
+    }
+
+    // =========================================================================
+    // PATTERN 2: Per-test container (fresh instance per test method)
+    // @Container on instance field = started/stopped per test
+    // =========================================================================
+    // @Container
+    // GenericContainer<?> redisContainer = new GenericContainer<>("redis:7")
+    //         .withExposedPorts(6379);
+
+    // =========================================================================
+    // PATTERN 3: Custom wait strategy
+    // =========================================================================
+    // @Container
+    // static final GenericContainer<?> appContainer = new GenericContainer<>("my-app:latest")
+    //         .withExposedPorts(8080)
+    //         .waitingFor(Wait.forHttp("/health").forStatusCode(200));
+
+    // =========================================================================
+    // PATTERN 4: Container with init script
+    // =========================================================================
+    // @Container
+    // static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16")
+    //         .withInitScript("init.sql");
+}

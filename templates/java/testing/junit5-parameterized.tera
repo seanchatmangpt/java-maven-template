@@ -1,0 +1,142 @@
+{# JUnit 5 Parameterized Tests — Generates parameterized test class with @ValueSource, @CsvSource, @MethodSource, @EnumSource, and @NullAndEmptySource for Java 26 #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"
+vars:
+  name: "MyClass"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  subject_class: ""
+  enum_class: ""
+  method_source_methods: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.stream.Stream;
+
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+{% if enum_class %}
+import org.junit.jupiter.params.provider.EnumSource;
+{% endif %}
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@DisplayName("{{ name }} — parameterized tests")
+class {{ name }}Test implements WithAssertions {
+
+    // ── @ValueSource — single literal values ────────────────────────────
+
+    @ParameterizedTest(name = "input = {0}")
+    @ValueSource(strings = {"hello", "world", "java"})
+    @DisplayName("should accept valid string inputs")
+    void shouldAcceptValidStrings(String input) {
+        assertThat(input).isNotBlank();
+    }
+
+    @ParameterizedTest(name = "value = {0}")
+    @ValueSource(ints = {1, 5, 100, Integer.MAX_VALUE})
+    @DisplayName("should accept positive integers")
+    void shouldAcceptPositiveIntegers(int value) {
+        assertThat(value).isPositive();
+    }
+
+    // ── @NullAndEmptySource — null and empty edge cases ─────────────────
+
+    @ParameterizedTest(name = "input = \"{0}\"")
+    @NullAndEmptySource
+    @ValueSource(strings = {"  ", "\t", "\n"})
+    @DisplayName("should reject blank input")
+    void shouldRejectBlankInput(String input) {
+        assertThat(input == null || input.isBlank()).isTrue();
+    }
+
+    // ── @CsvSource — tabular input/output pairs ─────────────────────────
+
+    @ParameterizedTest(name = "{0} + {1} = {2}")
+    @CsvSource({
+        "1, 1, 2",
+        "2, 3, 5",
+        "10, -5, 5",
+        "0, 0, 0",
+        "-1, -1, -2"
+    })
+    @DisplayName("should compute expected results from CSV data")
+    void shouldComputeFromCsvData(int a, int b, int expectedSum) {
+        assertThat(a + b).isEqualTo(expectedSum);
+    }
+
+    @ParameterizedTest(name = "\"{0}\" has length {1}")
+    @CsvSource(
+            textBlock =
+                    """
+            hello, 5
+            world, 5
+            '', 0
+            java, 4
+            """)
+    @DisplayName("should measure string lengths")
+    void shouldMeasureStringLengths(String input, int expectedLength) {
+        assertThat(input.length()).isEqualTo(expectedLength);
+    }
+{% if enum_class %}
+
+    // ── @EnumSource — iterate over enum constants ───────────────────────
+
+    @ParameterizedTest(name = "enum value = {0}")
+    @EnumSource({{ enum_class }}.class)
+    @DisplayName("should handle all enum values")
+    void shouldHandleAllEnumValues({{ enum_class }} value) {
+        assertThat(value).isNotNull();
+        assertThat(value.name()).isNotBlank();
+    }
+
+    @ParameterizedTest(name = "excluded enum = {0}")
+    @EnumSource(value = {{ enum_class }}.class, mode = EnumSource.Mode.EXCLUDE, names = {"UNKNOWN"})
+    @DisplayName("should handle known enum values only")
+    void shouldHandleKnownEnumValues({{ enum_class }} value) {
+        assertThat(value.name()).isNotEqualTo("UNKNOWN");
+    }
+{% endif %}
+
+    // ── @MethodSource — complex or computed arguments ───────────────────
+
+    @ParameterizedTest(name = "input = {0}, expected = {1}")
+    @MethodSource("provideTestArguments")
+    @DisplayName("should process method-sourced arguments")
+    void shouldProcessMethodSourcedArguments(String input, boolean expected) {
+        assertThat(input != null && !input.isBlank()).isEqualTo(expected);
+    }
+
+    static Stream<org.junit.jupiter.params.provider.Arguments> provideTestArguments() {
+        return Stream.of(
+                org.junit.jupiter.params.provider.Arguments.of("valid", true),
+                org.junit.jupiter.params.provider.Arguments.of("", false),
+                org.junit.jupiter.params.provider.Arguments.of(null, false));
+    }
+{% for method in method_source_methods %}
+
+    @ParameterizedTest(name = "{{ method.display_name | default(value=method.name) }} [{index}]")
+    @MethodSource("{{ method.provider }}")
+    @DisplayName("{{ method.display_name | default(value=method.name) }}")
+    void {{ method.name }}({{ method.params }}) {
+        {{ method.body }}
+    }
+
+    static Stream<org.junit.jupiter.params.provider.Arguments> {{ method.provider }}() {
+        {{ method.provider_body }}
+    }
+{% endfor %}
+}

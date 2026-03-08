@@ -1,0 +1,142 @@
+{# AssertJ fluent assertions — Replacing JUnit assertEquals with fluent chains #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "AssertJExamples"
+  package: "org.acme.test"
+  output_dir: "src/test/java"
+  class_under_test: ""
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * AssertJ fluent assertion patterns — replacing JUnit assertions.
+ *
+ * <h2>Migration rules:</h2>
+ * <ul>
+ *     <li>{@code assertEquals(expected, actual)} → {@code assertThat(actual).isEqualTo(expected)}</li>
+ *     <li>{@code assertTrue(cond)} → {@code assertThat(cond).isTrue()}</li>
+ *     <li>{@code assertNotNull(obj)} → {@code assertThat(obj).isNotNull()}</li>
+ *     <li>{@code assertThrows(Ex.class, () -> ...)} → {@code assertThatThrownBy(() -> ...).isInstanceOf(Ex.class)}</li>
+ * </ul>
+ */
+class {{ name }} implements WithAssertions {
+
+    // =========================================================================
+    // PATTERN 1: Object assertions
+    // BEFORE: assertEquals("expected", actual);
+    // AFTER:
+    // =========================================================================
+    @Test
+    void objectAssertions() {
+        var result = "hello";
+        assertThat(result)
+                .isNotNull()
+                .isEqualTo("hello")
+                .isNotBlank()
+                .startsWith("hel")
+                .hasSize(5);
+    }
+
+    // =========================================================================
+    // PATTERN 2: Collection assertions
+    // BEFORE: assertEquals(3, list.size()); assertTrue(list.contains("a"));
+    // AFTER:
+    // =========================================================================
+    @Test
+    void collectionAssertions() {
+        var list = List.of("apple", "banana", "cherry");
+        assertThat(list)
+                .hasSize(3)
+                .contains("banana")
+                .doesNotContain("mango")
+                .containsExactly("apple", "banana", "cherry")
+                .allMatch(s -> !s.isBlank())
+                .first().isEqualTo("apple");
+    }
+
+    // =========================================================================
+    // PATTERN 3: Map assertions
+    // BEFORE: assertTrue(map.containsKey("key")); assertEquals("val", map.get("key"));
+    // AFTER:
+    // =========================================================================
+    @Test
+    void mapAssertions() {
+        var map = Map.of("name", "Alice", "age", "30");
+        assertThat(map)
+                .containsKey("name")
+                .containsEntry("name", "Alice")
+                .hasSize(2)
+                .doesNotContainKey("email");
+    }
+
+    // =========================================================================
+    // PATTERN 4: Exception assertions
+    // BEFORE: assertThrows(IllegalArgumentException.class, () -> ...);
+    // AFTER:
+    // =========================================================================
+    @Test
+    void exceptionAssertions() {
+        assertThatThrownBy(() -> Integer.parseInt("not_a_number"))
+                .isInstanceOf(NumberFormatException.class)
+                .hasMessageContaining("not_a_number");
+
+        assertThatCode(() -> Integer.parseInt("42"))
+                .doesNotThrowAnyException();
+    }
+
+    // =========================================================================
+    // PATTERN 5: Optional assertions
+    // BEFORE: assertTrue(opt.isPresent()); assertEquals("val", opt.get());
+    // AFTER:
+    // =========================================================================
+    @Test
+    void optionalAssertions() {
+        var present = Optional.of("value");
+        var empty = Optional.<String>empty();
+
+        assertThat(present).isPresent().hasValue("value");
+        assertThat(empty).isEmpty();
+    }
+
+    // =========================================================================
+    // PATTERN 6: Numeric assertions
+    // BEFORE: assertTrue(value > 0 && value < 100);
+    // AFTER:
+    // =========================================================================
+    @Test
+    void numericAssertions() {
+        var value = 42;
+        assertThat(value)
+                .isPositive()
+                .isGreaterThan(0)
+                .isLessThan(100)
+                .isBetween(1, 99);
+
+        var pi = 3.14159;
+        assertThat(pi).isCloseTo(3.14, withinPercentage(1));
+    }
+
+    // =========================================================================
+    // PATTERN 7: Soft assertions (collect all failures)
+    // =========================================================================
+    @Test
+    void softAssertions() {
+        var result = "hello";
+        assertSoftly(softly -> {
+            softly.assertThat(result).isNotNull();
+            softly.assertThat(result).hasSize(5);
+            softly.assertThat(result).startsWith("h");
+        });
+    }
+}

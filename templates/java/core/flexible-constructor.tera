@@ -1,0 +1,67 @@
+{# Flexible constructor bodies — Java 26 constructors with pre-super validation #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyClass"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  superclass: ""
+  super_args: []
+  fields: []
+  pre_super_validations: []
+  post_super_init: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Uses flexible constructor bodies (Java 26) to perform validation
+ * <em>before</em> the {@code super()} call.
+ */
+{% endif %}
+public class {{ name }}{% if superclass %} extends {{ superclass }}{% endif %} {
+{% for field in fields %}
+    private final {{ field.type }} {{ field.name }};
+{% endfor %}
+
+    /**
+     * Constructs a new {@code {{ name }}}.
+     *
+     * <p>Validation runs before super constructor — a Java 26 feature that allows
+     * argument checking, normalization, and early rejection before committing to
+     * object construction.
+     */
+    public {{ name }}({% for field in fields %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+{% for validation in pre_super_validations %}
+        // Pre-super validation: {{ validation.description | default(value="") }}
+        {{ validation.code }}
+{% endfor %}
+{% if superclass %}
+        super({% for arg in super_args %}{{ arg }}{% if not loop.last %}, {% endif %}{% endfor %});
+{% endif %}
+{% for field in fields %}
+{% if field.nullable is defined and field.nullable %}
+        this.{{ field.name }} = {{ field.name }};
+{% else %}
+        this.{{ field.name }} = Objects.requireNonNull({{ field.name }}, "{{ field.name }} must not be null");
+{% endif %}
+{% endfor %}
+{% for init in post_super_init %}
+        {{ init }}
+{% endfor %}
+    }
+{% for field in fields %}
+
+    public {{ field.type }} {{ field.name }}() {
+        return {{ field.name }};
+    }
+{% endfor %}
+}

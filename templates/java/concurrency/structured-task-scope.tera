@@ -1,0 +1,331 @@
+{# StructuredTaskScope — Structured concurrency with ShutdownOnFailure and ShutdownOnSuccess (Java 26) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "StructuredTaskScopePatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.StructuredTaskScope.Subtask;
+import java.util.function.Supplier;
+
+/**
+ * Structured concurrency patterns using {@link StructuredTaskScope} (Java 26).
+ *
+ * <p>Structured concurrency ensures that concurrent subtasks are treated as a
+ * single unit of work: they are all started within a scope, and the scope does
+ * not complete until every subtask has finished (successfully, with failure,
+ * or via cancellation). This eliminates thread leaks and dangling tasks.
+ *
+ * <h2>Two built-in policies:</h2>
+ * <ul>
+ *     <li>{@link StructuredTaskScope.ShutdownOnFailure} — all subtasks must
+ *         succeed; the first failure shuts down remaining subtasks</li>
+ *     <li>{@link StructuredTaskScope.ShutdownOnSuccess} — first successful
+ *         result wins; remaining subtasks are cancelled</li>
+ * </ul>
+ *
+ * <h2>Key rules:</h2>
+ * <ul>
+ *     <li>Always use try-with-resources for scopes</li>
+ *     <li>Always call {@code join()} (or {@code joinUntil()}) before reading results</li>
+ *     <li>Call {@code throwIfFailed()} after join when using ShutdownOnFailure</li>
+ *     <li>Access subtask results via {@link Subtask#get()} only after join succeeds</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: ShutdownOnFailure — all subtasks must succeed
+    // BEFORE (ExecutorService + Future):
+    //     ExecutorService executor = Executors.newFixedThreadPool(3);
+    //     Future<A> futureA = executor.submit(taskA);
+    //     Future<B> futureB = executor.submit(taskB);
+    //     Future<C> futureC = executor.submit(taskC);
+    //     try {
+    //         A a = futureA.get();   // blocks, but taskB/taskC keep running if this throws
+    //         B b = futureB.get();   // if taskA failed, we wasted work
+    //         C c = futureC.get();
+    //         return combine(a, b, c);
+    //     } finally {
+    //         executor.shutdownNow(); // easy to forget
+    //     }
+    // AFTER (StructuredTaskScope — automatic cleanup on failure):
+    // =========================================================================
+
+    /**
+     * Runs two independent tasks concurrently; both must succeed.
+     * If either fails, the other is cancelled immediately.
+     *
+     * @param <A>   result type of the first task
+     * @param <B>   result type of the second task
+     * @param taskA the first task
+     * @param taskB the second task
+     * @return a record containing both results
+     * @throws ExecutionException if any subtask fails
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public record Pair<A, B>(A first, B second) {}
+
+    public static <A, B> Pair<A, B> runBoth(
+            Callable<A> taskA,
+            Callable<B> taskB) throws ExecutionException, InterruptedException {
+
+        try (var scope = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+            Subtask<A> subtaskA = scope.fork(taskA);
+            Subtask<B> subtaskB = scope.fork(taskB);
+
+            scope.join();
+
+            return new Pair<>(subtaskA.get(), subtaskB.get());
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 2: ShutdownOnFailure with three tasks
+    // =========================================================================
+
+    /**
+     * Runs three independent tasks concurrently; all must succeed.
+     *
+     * @param <A>   result type of the first task
+     * @param <B>   result type of the second task
+     * @param <C>   result type of the third task
+     * @param taskA the first task
+     * @param taskB the second task
+     * @param taskC the third task
+     * @return a record containing all three results
+     * @throws ExecutionException if any subtask fails
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public record Triple<A, B, C>(A first, B second, C third) {}
+
+    public static <A, B, C> Triple<A, B, C> runAll(
+            Callable<A> taskA,
+            Callable<B> taskB,
+            Callable<C> taskC) throws ExecutionException, InterruptedException {
+
+        try (var scope = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+            Subtask<A> a = scope.fork(taskA);
+            Subtask<B> b = scope.fork(taskB);
+            Subtask<C> c = scope.fork(taskC);
+
+            scope.join();
+
+            return new Triple<>(a.get(), b.get(), c.get());
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 3: ShutdownOnSuccess — first result wins (racing)
+    // BEFORE:
+    //     ExecutorService executor = Executors.newFixedThreadPool(3);
+    //     T result = executor.invokeAny(List.of(taskA, taskB, taskC));
+    //     // invokeAny doesn't guarantee cleanup of losing tasks
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Races multiple competing tasks; returns the first successful result.
+     * All other subtasks are cancelled once a winner is determined.
+     *
+     * @param <T>   the result type
+     * @param tasks the competing tasks
+     * @return the first successful result
+     * @throws ExecutionException if all subtasks fail
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static <T> T raceForFirst(
+            List<Callable<T>> tasks) throws ExecutionException, InterruptedException {
+
+        try (var scope = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.<T>anySuccessfulResultOrThrow())) {
+
+            for (var task : tasks) {
+                scope.fork(task);
+            }
+
+            return scope.join();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 4: Timeout with joinUntil
+    // BEFORE:
+    //     Future<T> future = executor.submit(task);
+    //     try {
+    //         return future.get(5, TimeUnit.SECONDS);
+    //     } catch (TimeoutException e) {
+    //         future.cancel(true);
+    //         throw e;
+    //     }
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Runs a task with a deadline. If the task does not complete in time,
+     * it is cancelled and the scope throws.
+     *
+     * @param <T>     the result type
+     * @param task    the task to run
+     * @param timeout the maximum duration to wait
+     * @return the task result
+     * @throws ExecutionException if the task fails
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static <T> T runWithTimeout(
+            Callable<T> task,
+            Duration timeout) throws ExecutionException, InterruptedException {
+
+        try (var scope = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+            Subtask<T> subtask = scope.fork(task);
+
+            scope.joinUntil(Instant.now().plus(timeout));
+
+            return subtask.get();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 5: Fan-out / scatter-gather
+    // BEFORE:
+    //     ExecutorService pool = Executors.newCachedThreadPool();
+    //     List<Future<R>> futures = items.stream()
+    //             .map(item -> pool.submit(() -> process(item)))
+    //             .toList();
+    //     List<R> results = new ArrayList<>();
+    //     for (Future<R> f : futures) {
+    //         results.add(f.get()); // if one fails, others keep running
+    //     }
+    //     pool.shutdown();
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Fans out work across virtual threads, one per item.
+     * All must succeed; failure in any cancels the rest.
+     *
+     * @param <T>       the input type
+     * @param <R>       the result type
+     * @param items     the items to process
+     * @param processor processes a single item
+     * @return results in the same order as the input items
+     * @throws ExecutionException if any subtask fails
+     * @throws InterruptedException if interrupted while waiting
+     */
+    @SuppressWarnings("unchecked")
+    public static <T, R> List<R> fanOut(
+            List<T> items,
+            java.util.function.Function<T, R> processor)
+            throws ExecutionException, InterruptedException {
+
+        try (var scope = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+            List<Subtask<R>> subtasks = items.stream()
+                    .map(item -> scope.fork(() -> processor.apply(item)))
+                    .toList();
+
+            scope.join();
+
+            return subtasks.stream()
+                    .map(Subtask::get)
+                    .toList();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 6: Fan-out with timeout
+    // =========================================================================
+
+    /**
+     * Fans out work with a deadline. If the work is not complete in time,
+     * all remaining subtasks are cancelled.
+     *
+     * @param <T>       the input type
+     * @param <R>       the result type
+     * @param items     the items to process
+     * @param processor processes a single item
+     * @param timeout   the maximum duration to wait
+     * @return results in the same order as the input items
+     * @throws ExecutionException if any subtask fails
+     * @throws InterruptedException if interrupted or timed out
+     */
+    public static <T, R> List<R> fanOutWithTimeout(
+            List<T> items,
+            java.util.function.Function<T, R> processor,
+            Duration timeout) throws ExecutionException, InterruptedException {
+
+        try (var scope = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+            List<Subtask<R>> subtasks = items.stream()
+                    .map(item -> scope.fork(() -> processor.apply(item)))
+                    .toList();
+
+            scope.joinUntil(Instant.now().plus(timeout));
+
+            return subtasks.stream()
+                    .map(Subtask::get)
+                    .toList();
+        }
+    }
+
+    // =========================================================================
+    // PATTERN 7: Nested scopes — composing structured concurrency
+    // BEFORE: Deeply nested Future chains with complex error handling
+    // AFTER:  Each level of concurrency is its own scope
+    // =========================================================================
+
+    /**
+     * Demonstrates nested structured task scopes. The outer scope
+     * coordinates two independent groups of work, each of which
+     * uses its own inner scope for fan-out.
+     *
+     * @param <T>        the input type
+     * @param <R>        the result type
+     * @param groupA     first group of items
+     * @param groupB     second group of items
+     * @param processor  processes a single item
+     * @return a pair of result lists, one for each group
+     * @throws ExecutionException if any subtask fails
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static <T, R> Pair<List<R>, List<R>> nestedFanOut(
+            List<T> groupA,
+            List<T> groupB,
+            java.util.function.Function<T, R> processor)
+            throws ExecutionException, InterruptedException {
+
+        try (var outer = StructuredTaskScope.open(
+                StructuredTaskScope.Joiner.awaitAllSuccessfulOrThrow())) {
+
+            Subtask<List<R>> resultsA = outer.fork(() -> fanOut(groupA, processor));
+            Subtask<List<R>> resultsB = outer.fork(() -> fanOut(groupB, processor));
+
+            outer.join();
+
+            return new Pair<>(resultsA.get(), resultsB.get());
+        }
+    }
+}

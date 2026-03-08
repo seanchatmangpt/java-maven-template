@@ -35,11 +35,14 @@ python3 maven-proxy-v2.py &   # starts local proxy on 127.0.0.1:3128
 ## Commands
 
 ```bash
-mvnd test              # Run unit tests only
-mvnd verify            # Run all tests (unit + integration) and quality checks
-mvnd spotless:apply    # Format code (Google Java Format, AOSP style)
-mvnd spotless:check    # Check formatting without applying
-mvnd package -Dshade   # Build a fat/uber JAR (shade profile)
+./mvnw test              # Run unit tests only
+./mvnw verify            # Run all tests (unit + integration) and quality checks
+./mvnw spotless:apply    # Format code (Google Java Format, AOSP style)
+./mvnw spotless:check    # Check formatting without applying
+./mvnw jshell:run        # Start interactive JShell REPL
+./mvnw package -Dshade   # Build a fat/uber JAR (shade profile)
+./mvnw verify -Ddogfood  # Run dogfood: generate-check + compile + test + report
+bin/mvndw verify          # Same as ./mvnw but with Maven Daemon (faster)
 ```
 
 **Run a single test class:**
@@ -94,3 +97,69 @@ For long sessions, warm the build cache before starting:
 ```bash
 mvnd compile -q -T1C
 ```
+
+## Code Generation (ggen / jgen)
+
+This project wraps [seanchatmangpt/ggen](https://github.com/seanchatmangpt/ggen) as a code generation engine for Java 26 migration.
+
+**Install ggen:**
+```bash
+cargo install ggen-cli --features paas,ai
+```
+
+**jgen CLI wrapper:**
+```bash
+bin/jgen generate -t core/record -n Person -p com.example.model
+bin/jgen list                          # List all 72 templates
+bin/jgen list --category patterns      # List templates in a category
+bin/jgen migrate --source ./legacy     # Analyze codebase for migration
+bin/jgen verify                        # Compile + format + test check
+```
+
+**Template categories (72 templates, 108 patterns):**
+- `core/` — 14 templates: records, sealed types, pattern matching, streams, lambdas, var, gatherers
+- `concurrency/` — 5 templates: virtual threads, structured concurrency, scoped values
+- `patterns/` — 17 templates: all GoF patterns reimagined for modern Java (builder, factory, strategy, state machine, visitor, etc.)
+- `api/` — 6 templates: HttpClient, java.time, NIO.2, ProcessBuilder, collections, strings
+- `modules/` — 4 templates: JPMS module-info, SPI, qualified exports, multi-module
+- `testing/` — 12 templates: JUnit 5, AssertJ, jqwik, Instancio, ArchUnit, Awaitility, Mockito, BDD, Testcontainers
+- `error-handling/` — 3 templates: Result<T,E> railway, functional errors, Optional↔Result
+- `build/` — 7 templates: POM, Maven wrapper, Spotless, Surefire/Failsafe, build cache, CI/CD
+- `security/` — 4 templates: modern crypto, encapsulation, validation, Jakarta EE migration
+
+**Architecture:**
+- `schema/*.ttl` — RDF ontologies defining Java type system, patterns, concurrency, modules, migration rules
+- `queries/*.rq` — SPARQL queries extracting data from ontologies
+- `templates/java/**/*.tera` — Tera templates rendering Java 26 code
+- `ggen.toml` — ggen project configuration
+- `bin/jgen` — CLI wrapper for Java developers
+- `bin/dogfood` — validates templates produce compilable, testable Java code
+- `bin/mvndw` — Maven Daemon wrapper (faster builds with persistent JVM)
+
+## Dogfood (Eating Our Own Dog Food)
+
+The `org.acme.dogfood` package contains real Java code rendered from templates, proving they compile and pass tests.
+
+**Dogfood commands:**
+```bash
+bin/dogfood generate     # Check all dogfood source files exist
+bin/dogfood report       # Show template coverage report
+bin/dogfood verify       # Full pipeline: check + compile + test + report
+./mvnw verify -Ddogfood  # Same via Maven (includes dogfood in build lifecycle)
+bin/mvndw verify -Ddogfood  # Same via Maven Daemon (fastest)
+```
+
+**Dogfood coverage** (one example per template category):
+- `core/` → `Person.java` (record with validation + builder)
+- `concurrency/` → `VirtualThreadPatterns.java` (virtual thread utilities)
+- `patterns/` → `TextTransformStrategy.java` (functional strategy pattern)
+- `api/` → `StringMethodPatterns.java` (modern String API)
+- `error-handling/` → `ResultRailway.java` (sealed Result type)
+- `security/` → `InputValidation.java` (preconditions + error accumulation)
+- `testing/` → `PersonTest.java`, `PersonProperties.java` (JUnit 5 + jqwik)
+- `build/` → validated implicitly via pom.xml
+- `modules/` → validated implicitly via module-info.java
+
+## Maven Daemon (mvnd)
+
+`bin/mvndw` wraps [Apache Maven Daemon](https://github.com/apache/maven-mvnd) for faster builds. It auto-downloads mvnd on first use. Configuration in `.mvn/daemon.properties`.

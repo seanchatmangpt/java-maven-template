@@ -1,0 +1,200 @@
+{# Module with Service Provider Interface (SPI). Generates a module-info.java
+   with uses/provides directives and a companion ServiceLoader utility class
+   for discovering and loading service implementations. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "ServiceLoaderExample"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  module_name: "org.acme"
+  service_interface: "Plugin"
+  service_package: "org.acme.spi"
+  implementations:
+    - class_name: "DefaultPlugin"
+      package: "org.acme.internal"
+    - class_name: "CachingPlugin"
+      package: "org.acme.internal"
+---
+package {{ package }};
+
+import java.util.List;
+import java.util.Optional;
+import java.util.ServiceLoader;
+import java.util.stream.Stream;
+
+/**
+ * Module with Service Provider Interface (SPI) pattern.
+ *
+ * <p>This class provides a type-safe facade over {@link ServiceLoader} for
+ * discovering and loading service implementations at runtime.
+ *
+ * <h2>Module descriptor ({@code module-info.java})</h2>
+ *
+ * <p><b>API module</b> (declares the service interface):
+ * <pre>{@code
+ * module {{ module_name }}.api {
+ *     // Export the SPI package so providers can implement it
+ *     exports {{ service_package }};
+ *
+ *     // Declare that this module consumes the service
+ *     uses {{ service_package }}.{{ service_interface }};
+ * }
+ * }</pre>
+ *
+ * <p><b>Provider module</b> (supplies implementations):
+ * <pre>{@code
+ * module {{ module_name }}.provider {
+ *     requires {{ module_name }}.api;
+ *
+ *     // Register service implementations
+ * {% for impl in implementations %}
+ *     provides {{ service_package }}.{{ service_interface }}
+ *         with {{ impl.package }}.{{ impl.class_name }};
+ * {% endfor %}
+ * }
+ * }</pre>
+ *
+ * <h2>Usage</h2>
+ * <pre>{@code
+ * // Load all implementations
+ * List<Plugin> plugins = ServiceLoaderExample.loadAll();
+ *
+ * // Load the first available implementation
+ * Optional<Plugin> plugin = ServiceLoaderExample.loadFirst();
+ *
+ * // Stream for filtering/mapping
+ * ServiceLoaderExample.stream()
+ *     .filter(p -> p.name().startsWith("Caching"))
+ *     .forEach(p -> p.execute());
+ * }</pre>
+ *
+ * @see ServiceLoader
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // -------------------------------------------------------------------------
+    // Service interface
+    // -------------------------------------------------------------------------
+
+    /**
+     * The service interface that providers implement.
+     *
+     * <p>Implementations are discovered at runtime via {@link ServiceLoader}.
+     * Each implementation must be declared in its module's {@code module-info.java}
+     * with a {@code provides} directive.
+     */
+    public interface {{ service_interface }} {
+
+        /** Returns the human-readable name of this plugin. */
+        String name();
+
+        /** Returns the priority (higher = loaded first). */
+        default int priority() {
+            return 0;
+        }
+
+        /** Executes the plugin's main action. */
+        void execute();
+    }
+
+    // -------------------------------------------------------------------------
+    // ServiceLoader facade
+    // -------------------------------------------------------------------------
+
+    /**
+     * Loads all available {@link {{ service_interface }}} implementations.
+     *
+     * <p>Implementations are sorted by {@link {{ service_interface }}#priority()}
+     * in descending order (highest priority first).
+     *
+     * @return an unmodifiable list of all discovered implementations
+     */
+    public static List<{{ service_interface }}> loadAll() {
+        return ServiceLoader.load({{ service_interface }}.class).stream()
+                .map(ServiceLoader.Provider::get)
+                .sorted((a, b) -> Integer.compare(b.priority(), a.priority()))
+                .toList();
+    }
+
+    /**
+     * Loads the first (highest-priority) {@link {{ service_interface }}} implementation.
+     *
+     * @return the first implementation, or empty if none are available
+     */
+    public static Optional<{{ service_interface }}> loadFirst() {
+        return loadAll().stream().findFirst();
+    }
+
+    /**
+     * Returns a lazy stream of {@link {{ service_interface }}} providers.
+     *
+     * <p>Unlike {@link #loadAll()}, this defers instantiation until each
+     * element is consumed, which is useful when not all providers are needed.
+     *
+     * @return a stream of service providers
+     */
+    public static Stream<ServiceLoader.Provider<{{ service_interface }}>> providers() {
+        return ServiceLoader.load({{ service_interface }}.class).stream();
+    }
+
+    /**
+     * Returns a stream of instantiated {@link {{ service_interface }}} instances.
+     *
+     * @return a stream of plugin instances
+     */
+    public static Stream<{{ service_interface }}> stream() {
+        return providers().map(ServiceLoader.Provider::get);
+    }
+
+    /**
+     * Reloads the service loader, discovering any newly available implementations.
+     *
+     * <p>Useful in plugin-based architectures where new providers may be added
+     * to the module path at runtime.
+     *
+     * @return the refreshed list of implementations
+     */
+    public static List<{{ service_interface }}> reload() {
+        ServiceLoader<{{ service_interface }}> loader =
+                ServiceLoader.load({{ service_interface }}.class);
+        loader.reload();
+        return loader.stream()
+                .map(ServiceLoader.Provider::get)
+                .sorted((a, b) -> Integer.compare(b.priority(), a.priority()))
+                .toList();
+    }
+
+    // -------------------------------------------------------------------------
+    // Example implementations (would normally be in separate modules)
+    // -------------------------------------------------------------------------
+
+    {% for impl in implementations %}
+    /**
+     * Example provider: {@code {{ impl.class_name }}}.
+     *
+     * <p>In a real project this class would live in module
+     * {@code {{ module_name }}.provider} under package {@code {{ impl.package }}}.
+     */
+    public static final class {{ impl.class_name }} implements {{ service_interface }} {
+
+        @Override
+        public String name() {
+            return "{{ impl.class_name }}";
+        }
+
+        @Override
+        public int priority() {
+            return {{ loop.index }};
+        }
+
+        @Override
+        public void execute() {
+            System.out.println("[{{ impl.class_name }}] executing");
+        }
+    }
+
+    {% endfor %}
+}

@@ -1,0 +1,80 @@
+{# Domain Event (Record + Sealed) — Immutable domain events in a sealed hierarchy #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyEvent"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  aggregate_type: "String"
+  events: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Instant;
+import java.util.Objects;
+import java.util.UUID;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public sealed interface {{ name }}
+        permits {% for event in events %}{{ name }}.{{ event.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+
+    /** Unique event identifier. */
+    UUID eventId();
+
+    /** When this event occurred. */
+    Instant occurredAt();
+
+    /** The aggregate root this event belongs to. */
+    {{ aggregate_type }} aggregateId();
+{% for event in events %}
+
+    /**{% if event.javadoc is defined %}
+     * {{ event.javadoc }}{% else %}
+     * {{ event.name }} domain event.{% endif %}
+     */
+    record {{ event.name }}(
+            UUID eventId,
+            Instant occurredAt,
+            {{ aggregate_type }} aggregateId{% for field in event.fields | default(value=[]) %},
+            {{ field.type }} {{ field.name }}{% endfor %}
+
+    ) implements {{ name }} {
+
+        public {{ event.name }} {
+            Objects.requireNonNull(eventId);
+            Objects.requireNonNull(occurredAt);
+            Objects.requireNonNull(aggregateId);
+{% for field in event.fields | default(value=[]) %}
+{% if field.nullable is undefined or not field.nullable %}
+            Objects.requireNonNull({{ field.name }});
+{% endif %}
+{% endfor %}
+        }
+
+        /** Convenience factory with auto-generated eventId and timestamp. */
+        public static {{ event.name }} of({{ aggregate_type }} aggregateId{% for field in event.fields | default(value=[]) %}, {{ field.type }} {{ field.name }}{% endfor %}) {
+            return new {{ event.name }}(UUID.randomUUID(), Instant.now(), aggregateId{% for field in event.fields | default(value=[]) %}, {{ field.name }}{% endfor %});
+        }
+    }
+{% endfor %}
+
+    /**
+     * Pattern-match handler for all event types.
+     */
+    default <R> R match({% for event in events %}java.util.function.Function<{{ event.name }}, R> on{{ event.name }}{% if not loop.last %},
+            {% endif %}{% endfor %}) {
+        return switch (this) {
+{% for event in events %}
+            case {{ event.name }} e -> on{{ event.name }}.apply(e);
+{% endfor %}
+        };
+    }
+}

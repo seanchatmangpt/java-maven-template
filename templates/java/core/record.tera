@@ -1,0 +1,80 @@
+{# Record declaration — Generates a Java 26 record with components, compact constructor validation, and optional builder #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyRecord"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  components: []
+  imports: []
+  implements_interfaces: []
+  has_validation: false
+  has_builder: false
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+{% if has_builder %}
+import java.util.Objects;
+{% endif %}
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public record {{ name }}(
+{% for comp in components %}
+        {{ comp.type }} {{ comp.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+){% if implements_interfaces | length > 0 %} implements {% for iface in implements_interfaces %}{{ iface }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %} {
+{% if has_validation %}
+
+    /**
+     * Compact constructor — validates all components.
+     */
+    public {{ name }} {
+{% for comp in components %}
+{% if comp.validation is defined %}
+        {{ comp.validation }}
+{% elif comp.nullable is undefined or not comp.nullable %}
+        Objects.requireNonNull({{ comp.name }}, "{{ comp.name }} must not be null");
+{% endif %}
+{% endfor %}
+    }
+{% endif %}
+{% if has_builder %}
+
+    /**
+     * Creates a new builder for {@code {{ name }}}.
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /**
+     * Step builder for {@code {{ name }}}.
+     */
+    public static final class Builder {
+{% for comp in components %}
+        private {{ comp.type }} {{ comp.name }};
+{% endfor %}
+
+        private Builder() {}
+
+{% for comp in components %}
+        public Builder {{ comp.name }}({{ comp.type }} {{ comp.name }}) {
+            this.{{ comp.name }} = {{ comp.name }};
+            return this;
+        }
+
+{% endfor %}
+        public {{ name }} build() {
+            return new {{ name }}({% for comp in components %}{{ comp.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+        }
+    }
+{% endif %}
+}

@@ -1,0 +1,134 @@
+{# Method reference patterns — All four types of Java method references #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MethodReferences"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  custom_references: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+
+/**
+ * Comprehensive method reference patterns for Java 8+ migration.
+ *
+ * <h2>Four types of method references:</h2>
+ * <table>
+ *     <tr><td>{@code ClassName::staticMethod}</td><td>Static method</td></tr>
+ *     <tr><td>{@code instance::method}</td><td>Bound instance method</td></tr>
+ *     <tr><td>{@code ClassName::instanceMethod}</td><td>Unbound instance method</td></tr>
+ *     <tr><td>{@code ClassName::new}</td><td>Constructor</td></tr>
+ * </table>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // TYPE 1: Static method references — ClassName::staticMethod
+    // =========================================================================
+
+    /** {@code Integer::parseInt} — replaces {@code s -> Integer.parseInt(s)} */
+    public static List<Integer> parseInts(List<String> strings) {
+        return strings.stream().map(Integer::parseInt).toList();
+    }
+
+    /** {@code Objects::nonNull} — replaces {@code x -> x != null} */
+    public static <T> List<T> removeNulls(List<T> items) {
+        return items.stream().filter(Objects::nonNull).toList();
+    }
+
+    /** {@code Math::max} — replaces {@code (a, b) -> Math.max(a, b)} */
+    public static Optional<Integer> maxValue(List<Integer> values) {
+        return values.stream().reduce(Math::max);
+    }
+
+    // =========================================================================
+    // TYPE 2: Bound instance method references — instance::method
+    // =========================================================================
+
+    /** {@code str::startsWith} — replaces {@code s -> str.startsWith(s)} */
+    public static Predicate<String> startsWith(String prefix) {
+        return prefix::equals;
+    }
+
+    /** {@code System.out::println} — replaces {@code x -> System.out.println(x)} */
+    public static <T> Consumer<T> printer() {
+        return System.out::println;
+    }
+
+    /** {@code list::add} — replaces {@code item -> list.add(item)} */
+    public static <T> Consumer<T> addTo(Collection<T> target) {
+        return target::add;
+    }
+
+    // =========================================================================
+    // TYPE 3: Unbound instance method references — ClassName::instanceMethod
+    // =========================================================================
+
+    /** {@code String::length} — replaces {@code s -> s.length()} */
+    public static List<Integer> lengths(List<String> strings) {
+        return strings.stream().map(String::length).toList();
+    }
+
+    /** {@code String::toUpperCase} — replaces {@code s -> s.toUpperCase()} */
+    public static List<String> uppercased(List<String> strings) {
+        return strings.stream().map(String::toUpperCase).toList();
+    }
+
+    /** {@code String::compareTo} — replaces {@code (a, b) -> a.compareTo(b)} */
+    public static List<String> sorted(List<String> strings) {
+        return strings.stream().sorted(String::compareTo).toList();
+    }
+
+    /** {@code String::isBlank} — replaces {@code s -> s.isBlank()} */
+    public static List<String> removeBlank(List<String> strings) {
+        return strings.stream().filter(Predicate.not(String::isBlank)).toList();
+    }
+
+    // =========================================================================
+    // TYPE 4: Constructor references — ClassName::new
+    // =========================================================================
+
+    /** {@code StringBuilder::new} — replaces {@code s -> new StringBuilder(s)} */
+    public static List<StringBuilder> toBuilders(List<String> strings) {
+        return strings.stream().map(StringBuilder::new).toList();
+    }
+
+    /** {@code String[]::new} — replaces {@code n -> new String[n]} */
+    public static String[] toArray(List<String> strings) {
+        return strings.toArray(String[]::new);
+    }
+
+    // =========================================================================
+    // Composition helpers
+    // =========================================================================
+
+    /** Compose extractor + predicate for fluent filtering */
+    public static <T, R> Predicate<T> matching(Function<T, R> extractor, Predicate<R> predicate) {
+        return t -> predicate.test(extractor.apply(t));
+    }
+
+    /** Extract + transform for fluent mapping */
+    public static <T, R, U> Function<T, U> extractAndMap(Function<T, R> extractor, Function<R, U> mapper) {
+        return extractor.andThen(mapper);
+    }
+{% for ref in custom_references %}
+
+    {{ ref.body }}
+{% endfor %}
+}

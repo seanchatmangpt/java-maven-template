@@ -1,0 +1,86 @@
+{# Qualified exports module-info.java. Generates a module descriptor with
+   exports...to (friend modules) and opens...to (reflection frameworks) for
+   fine-grained access control. #}
+---
+to: "{{ output_dir }}/module-info.java"
+vars:
+  name: "org.acme.core"
+  output_dir: "src/main/java"
+  public_exports: []
+  qualified_exports: []
+  qualified_opens: []
+  requires: []
+  requires_transitive: []
+---
+/**
+ * Module descriptor for {@code {{ name }}} with qualified exports.
+ *
+ * <h2>Qualified exports ({@code exports ... to})</h2>
+ * <p>Qualified exports restrict package access to specific "friend" modules.
+ * This is useful for internal APIs that should only be used by trusted
+ * sibling modules within the same project, while remaining inaccessible
+ * to external consumers.
+ *
+ * <h2>Qualified opens ({@code opens ... to})</h2>
+ * <p>Qualified opens grant deep-reflection access only to specific frameworks
+ * (e.g., Jackson, Hibernate, Spring) without opening packages to the entire
+ * world. This preserves strong encapsulation while allowing framework
+ * integration.
+ *
+ * <h2>Example layout</h2>
+ * <pre>
+ *   org.acme.core/
+ *     org.acme.core.api        → exported to all (public API)
+ *     org.acme.core.internal   → exported only to org.acme.web, org.acme.cli
+ *     org.acme.core.model      → opened only to com.fasterxml.jackson.databind
+ * </pre>
+ */
+module {{ name }} {
+
+    // =========================================================================
+    // Dependencies
+    // =========================================================================
+
+    {% for req in requires %}
+    requires {{ req }};
+    {% endfor %}
+
+    {% for req in requires_transitive %}
+    requires transitive {{ req }};
+    {% endfor %}
+
+    // =========================================================================
+    // Public exports — accessible to ALL modules
+    // =========================================================================
+
+    {% for exp in public_exports %}
+    exports {{ exp }};
+    {% endfor %}
+
+    // =========================================================================
+    // Qualified exports — accessible only to named "friend" modules
+    //
+    // Use this for internal packages that sibling modules need but external
+    // consumers should not access. If a new friend module is added, update
+    // the 'to' clause here.
+    // =========================================================================
+
+    {% for qe in qualified_exports %}
+    exports {{ qe.package }}
+        to {% for target in qe.to %}{{ target }}{% if not loop.last %},
+           {% endif %}{% endfor %};
+    {% endfor %}
+
+    // =========================================================================
+    // Qualified opens — deep reflection only for named framework modules
+    //
+    // Opens are necessary for frameworks that use reflection (serialization,
+    // ORM, dependency injection). Qualifying them limits the blast radius.
+    // =========================================================================
+
+    {% for qo in qualified_opens %}
+    opens {{ qo.package }}
+        to {% for target in qo.to %}{{ target }}{% if not loop.last %},
+           {% endif %}{% endfor %};
+    {% endfor %}
+}

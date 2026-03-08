@@ -1,0 +1,74 @@
+{# Maven Wrapper Configuration — Generates .mvn/maven.config, .mvn/jvm.config, and .mvn/extensions.xml with build cache and OpenTelemetry #}
+---
+to: "{{ output_dir }}/.mvn/maven.config"
+vars:
+  name: "maven-wrapper"
+  package: "org.acme"
+  output_dir: "."
+  java_version: "26"
+  build_cache_version: "1.2.0"
+  otel_version: "1.0.0"
+  maven_version: "4.0.0"
+---
+# ── .mvn/maven.config ────────────────────────────────────────────────────
+# Maven flags applied to every invocation automatically.
+# These flags ensure reproducible, CI-friendly builds.
+
+-B
+--fail-at-end
+--no-transfer-progress
+-T1C
+
+# ── .mvn/jvm.config ──────────────────────────────────────────────────────
+# JVM flags for the Maven process itself (not the compiled code).
+#
+# File: .mvn/jvm.config
+# Contents:
+#
+# --enable-preview
+# --add-opens java.base/java.lang=ALL-UNNAMED
+# --add-opens java.base/java.util=ALL-UNNAMED
+# -Xmx1g
+# -XX:+UseZGC
+# -XX:+ZGenerational
+
+# ── .mvn/extensions.xml ──────────────────────────────────────────────────
+# Maven extensions loaded before the build starts.
+# Includes Build Cache for incremental builds and OpenTelemetry for tracing.
+#
+# File: .mvn/extensions.xml
+# Contents:
+#
+# <?xml version="1.0" encoding="UTF-8"?>
+# <extensions>
+#     <!-- Maven Build Cache Extension — skips unchanged modules -->
+#     <extension>
+#         <groupId>org.apache.maven.extensions</groupId>
+#         <artifactId>maven-build-cache-extension</artifactId>
+#         <version>{{ build_cache_version }}</version>
+#     </extension>
+#
+#     <!-- OpenTelemetry Maven Extension — build observability -->
+#     <extension>
+#         <groupId>io.opentelemetry.contrib</groupId>
+#         <artifactId>opentelemetry-maven-extension</artifactId>
+#         <version>{{ otel_version }}</version>
+#     </extension>
+# </extensions>
+
+# ═══════════════════════════════════════════════════════════════════════════
+# To install the Maven Wrapper (if not already present):
+#
+#   mvn wrapper:wrapper -Dmaven={{ maven_version }}
+#
+# This creates:
+#   .mvn/wrapper/maven-wrapper.properties
+#   mvnw       (Unix shell script)
+#   mvnw.cmd   (Windows batch script)
+#
+# Usage:
+#   ./mvnw test              # Run unit tests
+#   ./mvnw verify            # Run all tests + quality checks
+#   ./mvnw spotless:apply    # Format code
+#   ./mvnw package -Dshade   # Build fat JAR
+# ═══════════════════════════════════════════════════════════════════════════

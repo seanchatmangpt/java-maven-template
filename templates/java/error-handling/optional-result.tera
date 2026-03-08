@@ -1,0 +1,342 @@
+{# Optional and Result conversion patterns and combined pipelines #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "OptionalResult"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+
+/**
+ * Patterns for converting between Optional and Result, and combining them in pipelines.
+ *
+ * <p>Optional represents the absence of a value (no reason given). Result represents
+ * success or failure with an error value. These patterns bridge the two worlds.
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // ========================================================================
+    // Optional.ofNullable() → Result (null as failure)
+    // ========================================================================
+
+    /**
+     * BEFORE: Null check with manual error handling.
+     *
+     * <pre>{@code
+     * String value = map.get(key);
+     * if (value == null) {
+     *     throw new IllegalArgumentException("Key not found: " + key);
+     * }
+     * return value;
+     * }</pre>
+     *
+     * AFTER: Convert nullable to Result with a meaningful error.
+     */
+    public static <T> Result<T, String> fromNullable(T value, String errorIfNull) {
+        return Optional.ofNullable(value)
+                .map(v -> Result.<T, String>success(v))
+                .orElseGet(() -> Result.failure(errorIfNull));
+    }
+
+    /**
+     * With lazy error message computation.
+     */
+    public static <T> Result<T, String> fromNullable(
+            T value, Supplier<String> errorSupplier) {
+        return value != null
+                ? Result.success(value)
+                : Result.failure(errorSupplier.get());
+    }
+
+    /**
+     * Converting Optional directly to Result.
+     *
+     * <pre>{@code
+     * // BEFORE: Optional with no context on why it's empty
+     * Optional<User> user = repository.findById(id);
+     * // Caller has no idea WHY it's empty
+     *
+     * // AFTER: Result carries the error reason
+     * Result<User, String> user = toResult(repository.findById(id), "User not found: " + id);
+     * }</pre>
+     */
+    public static <T> Result<T, String> toResult(Optional<T> optional, String errorIfEmpty) {
+        return optional
+                .map(v -> Result.<T, String>success(v))
+                .orElseGet(() -> Result.failure(errorIfEmpty));
+    }
+
+    /**
+     * With a mapper function for the error.
+     */
+    public static <T, E> Result<T, E> toResult(
+            Optional<T> optional, Supplier<E> errorSupplier) {
+        return optional
+                .map(v -> Result.<T, E>success(v))
+                .orElseGet(() -> Result.failure(errorSupplier.get()));
+    }
+
+    // ========================================================================
+    // Result → Optional (dropping error info)
+    // ========================================================================
+
+    /**
+     * BEFORE: Pattern matching or fold to extract value.
+     *
+     * <pre>{@code
+     * Optional<T> opt;
+     * if (result instanceof Result.Success<T, E> s) {
+     *     opt = Optional.of(s.value());
+     * } else {
+     *     opt = Optional.empty();
+     * }
+     * }</pre>
+     *
+     * AFTER: Concise conversion using fold.
+     */
+    public static <T, E> Optional<T> toOptional(Result<T, E> result) {
+        return result.fold(Optional::of, error -> Optional.empty());
+    }
+
+    /**
+     * Logging the error before dropping it.
+     *
+     * <pre>{@code
+     * Optional<Config> config = toOptionalLogging(
+     *     loadConfig(path),
+     *     err -> log.warn("Config load failed: {}", err)
+     * );
+     * }</pre>
+     */
+    public static <T, E> Optional<T> toOptionalLogging(
+            Result<T, E> result, java.util.function.Consumer<E> errorLogger) {
+        return result
+                .peekError(errorLogger)
+                .fold(Optional::of, error -> Optional.empty());
+    }
+
+    // ========================================================================
+    // Optional.or() chains
+    // ========================================================================
+
+    /**
+     * BEFORE: Nested if-else for fallback lookups.
+     *
+     * <pre>{@code
+     * String value = primaryCache.get(key);
+     * if (value == null) {
+     *     value = secondaryCache.get(key);
+     *     if (value == null) {
+     *         value = database.get(key);
+     *     }
+     * }
+     * }</pre>
+     *
+     * AFTER: Optional.or() for lazy fallback chains (Java 9+).
+     */
+    public static <T> Optional<T> lookupChain(
+            Supplier<Optional<T>> primary,
+            Supplier<Optional<T>> secondary,
+            Supplier<Optional<T>> tertiary) {
+        return primary.get().or(secondary).or(tertiary);
+    }
+
+    /**
+     * Combining or() with Result conversion at the end.
+     *
+     * <pre>{@code
+     * Result<Config, String> config = toResult(
+     *     loadFromFile(path).or(() -> loadFromEnv()).or(() -> loadFromDefaults()),
+     *     "No configuration source available"
+     * );
+     * }</pre>
+     */
+    public static <T> Result<T, String> lookupChainAsResult(
+            Supplier<Optional<T>> primary,
+            Supplier<Optional<T>> fallback,
+            String errorMessage) {
+        return toResult(primary.get().or(fallback), errorMessage);
+    }
+
+    // ========================================================================
+    // Optional.stream() for flat mapping
+    // ========================================================================
+
+    /**
+     * BEFORE: Filtering empty Optionals manually.
+     *
+     * <pre>{@code
+     * List<String> results = new ArrayList<>();
+     * for (Optional<String> opt : optionals) {
+     *     if (opt.isPresent()) {
+     *         results.add(opt.get());
+     *     }
+     * }
+     * }</pre>
+     *
+     * AFTER: Optional.stream() + flatMap (Java 9+).
+     */
+    public static <T> List<T> flattenOptionals(List<Optional<T>> optionals) {
+        return optionals.stream()
+                .flatMap(Optional::stream) // Empty optionals produce empty streams
+                .toList();
+    }
+
+    /**
+     * Combining stream() with Result conversion.
+     *
+     * <pre>{@code
+     * // Convert a list of Results to a list of present values, dropping failures
+     * List<T> successes = results.stream()
+     *     .map(OptionalResult::toOptional)
+     *     .flatMap(Optional::stream)
+     *     .toList();
+     * }</pre>
+     */
+    public static <T, E> List<T> collectSuccesses(List<Result<T, E>> results) {
+        return results.stream()
+                .map(r -> toOptional(r))
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
+    /**
+     * Stream of Optional values in a processing pipeline.
+     */
+    public static <T, R> List<R> processOptionals(
+            List<Optional<T>> optionals, Function<T, R> mapper) {
+        return optionals.stream()
+                .flatMap(Optional::stream)
+                .map(mapper)
+                .toList();
+    }
+
+    // ========================================================================
+    // ifPresentOrElse() patterns (Java 9+)
+    // ========================================================================
+
+    /**
+     * BEFORE: if-else on isPresent().
+     *
+     * <pre>{@code
+     * Optional<User> user = findUser(id);
+     * if (user.isPresent()) {
+     *     greet(user.get());
+     * } else {
+     *     reportMissing(id);
+     * }
+     * }</pre>
+     *
+     * AFTER: ifPresentOrElse for side-effect-only branches.
+     */
+    public static <T> void handleOptional(
+            Optional<T> optional,
+            java.util.function.Consumer<T> onPresent,
+            Runnable onEmpty) {
+        optional.ifPresentOrElse(onPresent, onEmpty);
+    }
+
+    /**
+     * Combining ifPresentOrElse with logging.
+     *
+     * <pre>{@code
+     * findUser(id).ifPresentOrElse(
+     *     user -> log.info("Found: {}", user.name()),
+     *     () -> log.warn("User not found: {}", id)
+     * );
+     * }</pre>
+     */
+    public static <T> String describeOptional(Optional<T> optional) {
+        var result = new StringBuilder();
+        optional.ifPresentOrElse(
+                value -> result.append("Present: ").append(value),
+                () -> result.append("Empty"));
+        return result.toString();
+    }
+
+    // ========================================================================
+    // Combining Optional with Result pipelines
+    // ========================================================================
+
+    /**
+     * BEFORE: Mixed null checks and try-catch.
+     *
+     * <pre>{@code
+     * User user = repository.findById(id);
+     * if (user == null) {
+     *     return "User not found";
+     * }
+     * String email = user.email();
+     * if (email == null || email.isBlank()) {
+     *     return "No email for user";
+     * }
+     * try {
+     *     sendEmail(email, message);
+     *     return "Sent";
+     * } catch (Exception e) {
+     *     return "Send failed: " + e.getMessage();
+     * }
+     * }</pre>
+     *
+     * AFTER: Optional → Result pipeline.
+     */
+    public static Result<String, String> sendNotification(
+            Optional<String> userEmail, String message) {
+        return toResult(userEmail, "No email address provided")
+                .flatMap(
+                        email ->
+                                email.isBlank()
+                                        ? Result.failure("Email address is blank")
+                                        : Result.success(email))
+                .map(email -> "Notification sent to " + email + ": " + message);
+    }
+
+    /**
+     * Pattern: Optional lookup followed by Result validation.
+     */
+    public static <T> Result<T, String> lookupAndValidate(
+            Supplier<Optional<T>> lookup,
+            Function<T, Result<T, String>> validator,
+            String notFoundMessage) {
+        return toResult(lookup.get(), notFoundMessage).flatMap(validator);
+    }
+
+    /**
+     * Pattern: Converting a stream of Result values, partitioning successes and failures.
+     */
+    public static <T> PartitionedResults<T> partition(List<Result<T, String>> results) {
+        List<T> successes = results.stream()
+                .flatMap(r -> toOptional(r).stream())
+                .toList();
+        List<String> failures = results.stream()
+                .filter(Result::isFailure)
+                .map(r -> r.fold(v -> "", Function.identity()))
+                .toList();
+        return new PartitionedResults<>(successes, failures);
+    }
+
+    /**
+     * Holds partitioned results — successes and failure messages.
+     */
+    public record PartitionedResults<T>(List<T> successes, List<String> failures) {
+
+        public boolean hasFailures() {
+            return !failures.isEmpty();
+        }
+
+        public Result<List<T>, List<String>> toResult() {
+            return hasFailures()
+                    ? Result.failure(failures)
+                    : Result.success(successes);
+        }
+    }
+}

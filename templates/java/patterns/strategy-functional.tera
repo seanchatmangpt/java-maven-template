@@ -1,0 +1,111 @@
+{# Strategy (Functional) — Interchangeable algorithms via functional interfaces and lambdas #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyStrategy"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  strategy_name: "Strategy"
+  input_type: "String"
+  output_type: "String"
+  strategies: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.UnaryOperator;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    /**
+     * Strategy functional interface.
+     *
+     * <p>BEFORE (legacy): Abstract Strategy class with concrete subclasses.
+     * <p>AFTER (modern): {@code @FunctionalInterface} assignable from lambdas/method refs.
+     */
+    @FunctionalInterface
+    public interface {{ strategy_name }}<I, O> extends Function<I, O> {
+
+        O execute(I input);
+
+        @Override
+        default O apply(I input) {
+            return execute(input);
+        }
+
+        /**
+         * Chains this strategy with another, applying {@code after} to the result.
+         */
+        default <V> {{ strategy_name }}<I, V> andThen({{ strategy_name }}<O, V> after) {
+            Objects.requireNonNull(after);
+            return input -> after.execute(this.execute(input));
+        }
+
+        /**
+         * Returns a strategy that applies {@code before} first, then this strategy.
+         */
+        default <V> {{ strategy_name }}<V, O> compose({{ strategy_name }}<V, I> before) {
+            Objects.requireNonNull(before);
+            return input -> this.execute(before.execute(input));
+        }
+    }
+
+    // =========================================================================
+    // Built-in strategies — defined as static lambdas, not separate classes
+    // =========================================================================
+{% for s in strategies %}
+
+    {% if s.javadoc is defined %}/**
+     * {{ s.javadoc }}
+     */
+    {% endif %}public static final {{ strategy_name }}<{{ input_type }}, {{ output_type }}> {{ s.name }} =
+            {{ s.implementation }};
+{% endfor %}
+
+    // =========================================================================
+    // Strategy registry — lookup by name at runtime
+    // =========================================================================
+
+    private static final Map<String, {{ strategy_name }}<{{ input_type }}, {{ output_type }}>> REGISTRY = Map.ofEntries(
+{% for s in strategies %}
+            Map.entry("{{ s.name | lower }}", {{ s.name }}){% if not loop.last %},{% endif %}
+
+{% endfor %}
+    );
+
+    /**
+     * Looks up a strategy by name.
+     *
+     * @param name the strategy identifier (case-insensitive)
+     * @return the strategy, or empty if not found
+     */
+    public static Optional<{{ strategy_name }}<{{ input_type }}, {{ output_type }}>> lookup(String name) {
+        return Optional.ofNullable(REGISTRY.get(name.toLowerCase()));
+    }
+
+    /**
+     * Executes the named strategy on the given input.
+     *
+     * @throws IllegalArgumentException if no strategy matches the name
+     */
+    public static {{ output_type }} execute(String strategyName, {{ input_type }} input) {
+        return lookup(strategyName)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unknown strategy: " + strategyName + ". Available: " + REGISTRY.keySet()))
+                .execute(input);
+    }
+}
