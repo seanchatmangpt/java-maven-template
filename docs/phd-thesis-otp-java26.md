@@ -8,7 +8,7 @@
 **Author:** Independent Research Contribution
 **Repository:** [seanchatmangpt/java-maven-template](https://github.com/seanchatmangpt/java-maven-template)
 **Date:** March 2026
-**Keywords:** Erlang/OTP, Java 26, Virtual Threads, Supervision Trees, Actor Model, Fault Tolerance, Blue Ocean Strategy, Language Migration
+**Keywords:** Erlang/OTP, Java 26, Virtual Threads, Supervision Trees, Process-based Concurrency, `gen_server`, Fault Tolerance, Blue Ocean Strategy, Language Migration
 
 ---
 
@@ -16,7 +16,7 @@
 
 This thesis establishes a formal equivalence between the seven architectural primitives of Erlang/OTP 28 and their counterparts in Java 26, demonstrates that all meaningful OTP patterns can be expressed idiomatically in modern Java without a runtime dependency on the BEAM virtual machine, and presents a toolchain — `jgen` / `ggen` — that automates the migration of existing codebases to this paradigm. We argue that this constitutes a *blue ocean strategy* for the Java ecosystem: rather than competing with Erlang, Elixir, Go, or Rust on their own terms, Java 26 absorbs the most valuable 20% of each language's concurrency model — the 20% responsible for 80% of production reliability — and delivers it to the world's largest developer community. The result is a migration path *toward* Java rather than away from it, positioning Java 26 as the synthesis language for the post-cloud-native era.
 
-The seven OTP primitives mapped in this work are: (1) lightweight processes, (2) message passing, (3) the GenServer behavior, (4) supervision trees, (5) "let it crash" philosophy, (6) pattern matching and algebraic types, and (7) structured concurrency. For each primitive, we provide formal definitions, Java 26 implementations with benchmarks, and bidirectional translation rules codified as machine-readable SPARQL queries over an OWL ontology. A suite of 72 code generation templates and an automated `RefactorEngine` complete the toolchain, enabling zero-boilerplate migration of arbitrary Java codebases.
+The seven OTP primitives mapped in this work are: (1) lightweight processes, (2) message passing, (3) the `gen_server` behavior, (4) supervision trees, (5) "let it crash" philosophy, (6) pattern matching and algebraic types, and (7) structured concurrency. For each primitive, we provide formal definitions, Java 26 implementations with benchmarks, and bidirectional translation rules codified as machine-readable SPARQL queries over an OWL ontology. A suite of 72 code generation templates and an automated `RefactorEngine` complete the toolchain, enabling zero-boilerplate migration of arbitrary Java codebases.
 
 ---
 
@@ -27,7 +27,7 @@ The seven OTP primitives mapped in this work are: (1) lightweight processes, (2)
 3. The Seven-Pillar Equivalence Proof
    - 3.1 Lightweight Processes → Virtual Threads
    - 3.2 Message Passing → LinkedTransferQueue Mailbox
-   - 3.3 GenServer → `Actor<S,M>`
+   - 3.3 `gen_server` → `Actor<S,M>`
    - 3.4 Supervision Trees → `Supervisor` + `CrashRecovery`
    - 3.5 Let It Crash → `Result<T,E>` Railway
    - 3.6 Pattern Matching → Sealed Types + Exhaustive Switches
@@ -123,6 +123,8 @@ The remaining 20% — `gen_event`, OTP releases, Mnesia, distributed Erlang, hot
 
 ## 3. The Seven-Pillar Equivalence Proof
 
+> **Terminology note:** OTP uses **process** as the fundamental unit of concurrency — not "actor." The actor model (Hewitt, 1973) inspired Erlang, but Joe Armstrong and the Erlang team deliberately chose "process" to align with OS process isolation semantics: each process has its own heap, its own mailbox, and no shared mutable state. The Java class in this repository is named `Actor<S,M>` for familiarity with JVM frameworks (Akka, Vert.x); the underlying OTP concept it models is a *process*. Similarly, the Erlang behavior is `gen_server` (lowercase, underscore-separated) — `GenServer` is Elixir's wrapper. All OTP names in §3 use Erlang's canonical spelling.
+
 ### 3.1 Lightweight Processes → Virtual Threads
 
 **Erlang Primitive:**
@@ -135,7 +137,7 @@ A spawned process costs ~300 bytes initial heap. BEAM runs millions per node.
 **Java 26 Equivalent:**
 ```java
 var thread = Thread.ofVirtual()
-    .name("actor-" + name)
+    .name("proc-" + name)   // "process" in OTP terminology
     .start(() -> loop(initialState));
 ```
 
@@ -157,15 +159,15 @@ var thread = Thread.ofVirtual()
 
 **Key difference:** BEAM uses preemptive scheduling with reduction counting; JVM virtual threads use cooperative scheduling (park/unpark). For CPU-bound workloads, BEAM guarantees fairness at finer granularity. For IO-bound workloads (the vast majority of OTP use cases), Java virtual threads are equivalent.
 
-**Implementation (`Actor.java`):**
+**Implementation (`Actor.java`):** Java names this class `Actor` for framework familiarity, but it models an OTP *process* — a virtual thread with a private mailbox and pure state transition function.
 ```java
 public final class Actor<S, M> {
     private final TransferQueue<Envelope<M>> mailbox = new LinkedTransferQueue<>();
-    private final Thread thread;
+    private final Thread thread;  // one virtual thread per OTP process
 
     public Actor(S initial, BiFunction<S, M, S> handler) {
         thread = Thread.ofVirtual()
-            .name("actor")
+            .name("proc")     // process in OTP terms
             .start(() -> {
                 S state = initial;
                 while (!stopped || !mailbox.isEmpty()) {
@@ -231,7 +233,7 @@ This is a meaningful improvement over Erlang: exhaustiveness is verified at comp
 
 ---
 
-### 3.3 GenServer → `Actor<S,M>`
+### 3.3 `gen_server` → `Actor<S,M>`
 
 The `gen_server` behavior is the most widely used OTP primitive. It provides:
 - Synchronous `call/2` (request-reply with timeout)
@@ -349,7 +351,7 @@ if (entry.crashTimes.size() > maxRestarts) {
 }
 ```
 
-**ActorRef opacity:** `ActorRef<S,M>` mirrors Erlang's `Pid` in a critical way: it is an *opaque stable handle* that survives restarts. When `Supervisor` restarts a child, it atomically swaps the underlying `Actor` via `ActorRef.swap()`. Existing callers holding the same `ActorRef` transparently redirect to the new actor — no caller changes required.
+**`ActorRef` as stable `Pid`:** In OTP, a `Pid` (process identifier) is the handle used to send messages to a process. `ActorRef<S,M>` mirrors this in a critical way: it is an *opaque stable handle* that survives restarts. When `Supervisor` restarts a child process, it atomically swaps the underlying `Actor` via `ActorRef.swap()`. Existing callers holding the same `ActorRef` transparently redirect to the new process — no caller changes required.
 
 ```java
 // ActorRef.java — transparent restart indirection
@@ -360,19 +362,20 @@ void swap(Actor<S, M> next) {
 
 This is Erlang's *location transparency* implemented in Java.
 
-**Hierarchical supervision trees:** Because `Supervisor` is itself a virtual-thread actor processing `ChildCrashed` events, supervisors can supervise other supervisors, building arbitrarily deep trees:
+**Hierarchical supervision trees:** Because `Supervisor` is itself a virtual-thread process handling `ChildCrashed` events, supervisors can supervise other supervisors, building arbitrarily deep trees identical in structure to OTP supervision trees:
 
 ```
-RootSupervisor (one_for_one)
-├── DatabaseSupervisor (one_for_all)
-│   ├── ConnectionPoolActor
-│   └── QueryCacheActor
-├── ApiSupervisor (rest_for_one)
-│   ├── AuthActor
-│   ├── RateLimiterActor
-│   └── HandlerActor
-└── MetricsActor
+root_sup (one_for_one)           ← RootSupervisor in Java
+├── db_sup (one_for_all)         ← DatabaseSupervisor in Java
+│   ├── connection_pool           ← Actor<PoolState, PoolMsg>
+│   └── query_cache               ← Actor<CacheState, CacheMsg>
+├── api_sup (rest_for_one)       ← ApiSupervisor in Java
+│   ├── auth_server               ← Actor<AuthState, AuthMsg>
+│   ├── rate_limiter              ← Actor<LimitState, LimitMsg>
+│   └── request_handler           ← Actor<HandlerState, HandlerMsg>
+└── metrics                       ← Actor<MetricsState, MetricsMsg>
 ```
+*Left column shows OTP process names (`atom` convention); right column shows the Java `Actor<S,M>` instance.*
 
 In Erlang, this tree would be expressed across multiple supervisor modules. In Java, each `Supervisor` instance is a node in the tree. The design is identical; the syntax is different.
 
@@ -602,7 +605,7 @@ Java's `Supervisor` is approximately 2x slower for crash recovery than BEAM's OT
 
 ### 4.4 Throughput Under Load
 
-JMH benchmark: 1M concurrent actors, each processing 100 messages.
+JMH benchmark: 1M concurrent processes (virtual threads / `Actor<S,M>` instances), each processing 100 messages.
 
 | Platform | Throughput | Max Latency (p99.9) |
 |---|---|---|
@@ -621,7 +624,7 @@ The JVM outperforms BEAM on throughput for CPU-bound message processing because 
 
 Elixir adopted Erlang/OTP wholesale. The migration path from Elixir is therefore the highest-fidelity: every Elixir OTP concept has a direct Java 26 equivalent.
 
-**Elixir `GenServer` → Java `Actor<S,M>`:**
+**Elixir `GenServer` (wrapping Erlang's `gen_server`) → Java `Actor<S,M>`:**
 ```elixir
 # Elixir
 defmodule Cache do
@@ -657,7 +660,7 @@ var cache = new Actor<Map<String, Object>, CacheMsg>(
 ```
 
 **Phoenix LiveView → Java WebSockets + Actor:**
-Phoenix LiveView's stateful websocket connections are GenServer processes. The Java equivalent is a virtual-thread actor per connection, with the same isolation properties.
+Phoenix LiveView's stateful websocket connections are `gen_server` processes. The Java equivalent is a virtual-thread process (`Actor<S,M>`) per connection, with the same isolation properties.
 
 **`jgen` migration command:**
 ```bash
@@ -832,7 +835,7 @@ The template library provides one template per OTP→Java migration pattern:
 templates/java/
 ├── core/           (14) records, sealed types, pattern matching
 ├── concurrency/    (5)  virtual threads, structured concurrency
-├── patterns/       (17) GenServer, Supervisor, State Machine, etc.
+├── patterns/       (17) gen_server, Supervisor, State Machine, etc.
 ├── api/            (6)  modern Java API migrations
 ├── error-handling/ (3)  Result<T,E>, railway, Optional
 ├── modules/        (4)  JPMS, SPI, qualified exports
@@ -898,7 +901,7 @@ The blue ocean reframe is: *Java 26 doesn't compete with those languages — it 
 | "Cool Language" | Key Innovation | Java 26 Equivalent |
 |---|---|---|
 | Elixir | OTP supervision trees | `Supervisor` + `CrashRecovery` |
-| Elixir | GenServer behavior | `Actor<S,M>` |
+| Elixir | `gen_server` process behavior | `Actor<S,M>` |
 | Go | Goroutines | Virtual Threads |
 | Go | Channels | `LinkedTransferQueue` |
 | Rust | `?` error propagation | `Result.flatMap` chain |
@@ -919,8 +922,8 @@ Virtual threads: 10M+ concurrent connections on a single JVM. Go's goroutines: s
 **2. "Java 26 has supervision trees."**
 The `Supervisor` class implementing `ONE_FOR_ONE`, `ONE_FOR_ALL`, `REST_FOR_ONE` — the exact OTP restart strategies — is a first-class Java idiom. This is not a library; it's 200 lines of idiomatic Java 26 using virtual threads and sealed types.
 
-**3. "Java 26 has typed actors."**
-`Actor<S,M>` where `M` is a `sealed interface` is *better* than Elixir's GenServer, because exhaustiveness is compile-time verified, not runtime. Java is stricter, not weaker.
+**3. "Java 26 has typed processes."**
+`Actor<S,M>` where `M` is a `sealed interface` models an OTP *process* — but with stronger guarantees than Elixir's `GenServer` (which wraps Erlang's `gen_server`): exhaustiveness of message handling is compile-time verified, not runtime. Java is stricter, not weaker.
 
 **4. "Java 26 has railway-oriented programming."**
 `Result<T,E>` as a `sealed interface` with `map`/`flatMap`/`fold` is Erlang's `{:ok, v} | {:error, e}` with compile-time exhaustiveness. Rust's `?` operator becomes `.flatMap`.
@@ -982,7 +985,7 @@ This is a compelling area for JEP proposals to the OpenJDK community.
 
 ## 9. Conclusion
 
-This thesis has demonstrated that the seven fundamental primitives of Erlang/OTP 28 — lightweight processes, message passing, the GenServer behavior, supervision trees, "let it crash" philosophy, pattern matching, and structured concurrency — are all expressible idiomatically in Java 26. The implementations are not approximations; they are formally equivalent in the sense that programs written against either API exhibit identical reliability properties under fault conditions.
+This thesis has demonstrated that the seven fundamental primitives of Erlang/OTP 28 — lightweight processes, message passing, the `gen_server` behavior, supervision trees, "let it crash" philosophy, pattern matching, and structured concurrency — are all expressible idiomatically in Java 26. The implementations are not approximations; they are formally equivalent in the sense that programs written against either API exhibit identical reliability properties under fault conditions.
 
 The practical contribution is a complete toolchain: 72 code generation templates, an OWL ontology encoding migration rules, SPARQL queries for codebase analysis, a `RefactorEngine` that chains these components into a single pipeline, and a `jgen refactor` CLI that turns any Java codebase into a scored, ranked, script-assisted migration plan.
 
