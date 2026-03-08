@@ -2,16 +2,14 @@ package org.acme.dogfood.core;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.function.BiFunction;
-import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Gatherer;
 import java.util.stream.Gatherers;
 
 /**
- * Gatherer patterns — custom intermediate stream operations (Java 25+).
+ * Gatherer patterns — custom intermediate stream operations (Java 26).
  *
  * <p>Generated from {@code templates/java/core/gatherer.tera}.
  *
@@ -35,8 +33,6 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 1: Fixed-size batching / chunking
-    // BEFORE: Manual partition logic with subList or counter
-    // AFTER:
     // =========================================================================
     public static <T> List<List<T>> batch(List<T> items, int batchSize) {
         return items.stream().gather(Gatherers.windowFixed(batchSize)).toList();
@@ -44,8 +40,6 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 2: Sliding window for rolling calculations
-    // BEFORE: for (int i = 0; i <= list.size() - windowSize; i++) { ... }
-    // AFTER:
     // =========================================================================
     public static <T> List<List<T>> slidingWindow(List<T> items, int windowSize) {
         return items.stream().gather(Gatherers.windowSliding(windowSize)).toList();
@@ -65,8 +59,6 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 3: Running scan (cumulative sum, running total)
-    // BEFORE: Manual accumulator variable in loop
-    // AFTER:
     // =========================================================================
     public static List<Integer> runningSum(List<Integer> values) {
         return values.stream().gather(Gatherers.scan(() -> 0, Integer::sum)).toList();
@@ -79,10 +71,9 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 4: Fold as intermediate operation
-    // BEFORE: stream.reduce() only as terminal
-    // AFTER: Gatherers.fold() emits the final accumulated result downstream
     // =========================================================================
-    public static <T> T foldToSingle(List<T> items, T identity, BinaryOperator<T> op) {
+    public static <T> T foldToSingle(
+            List<T> items, T identity, java.util.function.BinaryOperator<T> op) {
         return items.stream()
                 .gather(Gatherers.fold(() -> identity, op))
                 .findFirst()
@@ -91,8 +82,6 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 5: Concurrent mapping with bounded virtual threads
-    // BEFORE: parallelStream().map(fn) — unbounded, shared ForkJoinPool
-    // AFTER: stream().gather(mapConcurrent(n, fn)) — bounded, virtual threads
     // =========================================================================
     public static <T, R> List<R> mapConcurrent(
             List<T> items, int maxConcurrency, Function<T, R> mapper) {
@@ -101,8 +90,6 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 6: Custom gatherer — deduplicate consecutive duplicates
-    // BEFORE: Manual loop tracking previous element
-    // AFTER:
     // =========================================================================
     public static <T> Gatherer<T, ?, T> deduplicateConsecutive() {
         return Gatherer.ofSequential(
@@ -112,7 +99,7 @@ public final class GathererPatterns {
                             boolean hasLast = false;
                         },
                 (state, element, downstream) -> {
-                    if (!state.hasLast || !Objects.equals(state.last, element)) {
+                    if (!state.hasLast || !java.util.Objects.equals(state.last, element)) {
                         state.last = element;
                         state.hasLast = true;
                         return downstream.push(element);
@@ -132,7 +119,7 @@ public final class GathererPatterns {
                         },
                 (state, element, downstream) -> {
                     if (state.count >= maxCount || !predicate.test(element)) {
-                        return false; // short-circuit
+                        return false;
                     }
                     state.count++;
                     return downstream.push(element);
@@ -152,7 +139,7 @@ public final class GathererPatterns {
                 (state, element, downstream) -> {
                     var key = classifier.apply(element);
                     if (state.currentGroup.isEmpty()
-                            || Objects.equals(key, state.currentKey)) {
+                            || java.util.Objects.equals(key, state.currentKey)) {
                         state.currentKey = key;
                         state.currentGroup.add(element);
                     } else {
@@ -176,7 +163,7 @@ public final class GathererPatterns {
     // =========================================================================
     public static <T> List<List<T>> batchAndDeduplicate(List<T> items, int batchSize) {
         Gatherer<T, ?, T> dedup = deduplicateConsecutive();
-        Gatherer<T, ?, List<T>> windowed = Gatherers.windowFixed(batchSize);
-        return items.stream().gather(dedup.andThen(windowed)).toList();
+        Gatherer<T, ?, List<T>> batched = dedup.andThen(Gatherers.windowFixed(batchSize));
+        return items.stream().gather(batched).toList();
     }
 }

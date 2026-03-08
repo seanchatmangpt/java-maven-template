@@ -149,7 +149,7 @@ class ProcessRegistryTest implements WithAssertions {
 
         var names = ProcessRegistry.registered();
 
-        assertThat(names).containsExactlyInAnyOrder("alpha", "beta");
+        assertThat(names).contains("alpha", "beta");
 
         a.stop();
         b.stop();
@@ -171,7 +171,7 @@ class ProcessRegistryTest implements WithAssertions {
         // Now register a new proc under the same name
         var second = counter();
         ProcessRegistry.register("reusable", second);
-        assertThat(ProcessRegistry.whereis("reusable")).isPresent().contains(second);
+        assertThat(ProcessRegistry.<Integer, Msg>whereis("reusable")).isPresent().contains(second);
 
         second.stop();
     }

@@ -190,10 +190,15 @@ class SupervisorStormStressTest implements WithAssertions {
 
         var ref = supervisor.supervise("child", 0, SupervisorStormStressTest::handler);
 
-        // Fire maxRestarts+1 crashes as fast as possible
-        // The supervisor should die when the N+1th crash arrives within the window
+        // Fire maxRestarts+1 crashes, each to a live process.
+        // Each crash must reach a live process; wait for restart between crashes
+        // so messages don't pile up in a dead process's mailbox.
         for (int i = 0; i <= maxRestarts; i++) {
             ref.tell(new Msg.Boom("rapid-" + i));
+            if (i < maxRestarts) {
+                // Wait for supervisor to restart before sending next crash
+                await().atMost(Duration.ofSeconds(2)).until(() -> tryGet(ref) >= 0);
+            }
         }
 
         // Supervisor must die (crash count exceeded)

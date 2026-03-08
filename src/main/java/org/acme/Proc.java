@@ -71,7 +71,7 @@ public final class Proc<S, M> {
     final LongAdder messagesOut = new LongAdder();
 
     /** The last unhandled exception; set before crash callbacks fire. */
-    volatile Throwable lastError = null;
+    public volatile Throwable lastError = null;
 
     /** Callbacks fired on abnormal termination (exception, not graceful {@link #stop()}). */
     private final List<Runnable> crashCallbacks = new CopyOnWriteArrayList<>();
@@ -150,13 +150,15 @@ public final class Proc<S, M> {
                                                 new IllegalStateException("process terminated"));
                                     }
 
-                                    if (crashedAbnormally) {
+                                    // Also treat interrupted-with-lastError as abnormal
+                                    // (deliverExitSignal sets lastError then interrupts)
+                                    if (crashedAbnormally || lastError != null) {
                                         for (Runnable cb : crashCallbacks) {
                                             cb.run();
                                         }
                                     }
                                     // Fire termination callbacks (monitor semantics — always)
-                                    Throwable exitReason = crashedAbnormally ? lastError : null;
+                                    Throwable exitReason = (crashedAbnormally || lastError != null) ? lastError : null;
                                     for (Consumer<Throwable> cb : terminationCallbacks) {
                                         cb.accept(exitReason);
                                     }
@@ -228,7 +230,7 @@ public final class Proc<S, M> {
      * Register a callback to be invoked when this process terminates abnormally (unhandled
      * exception). Called by {@link Supervisor} and {@link ProcessLink}.
      */
-    void addCrashCallback(Runnable cb) {
+    public void addCrashCallback(Runnable cb) {
         crashCallbacks.add(cb);
     }
 
@@ -252,7 +254,7 @@ public final class Proc<S, M> {
      * process is interrupted immediately — OTP default behaviour.
      */
     @SuppressWarnings("unchecked")
-    void deliverExitSignal(Throwable reason) {
+    public void deliverExitSignal(Throwable reason) {
         if (trappingExits) {
             mailbox.add(new Envelope<>((M) new ExitSignal(reason), null));
         } else {
@@ -269,8 +271,8 @@ public final class Proc<S, M> {
         thread.interrupt();
     }
 
-    /** Package-private: exposes the underlying virtual thread (for joining, etc.). */
-    Thread thread() {
+    /** Public: exposes the underlying virtual thread (for joining, etc.). */
+    public Thread thread() {
         return thread;
     }
 

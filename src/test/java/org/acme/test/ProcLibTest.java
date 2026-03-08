@@ -47,7 +47,7 @@ class ProcLibTest implements WithAssertions {
                             ProcLib.initAck(); // signal readiness
                             return state;
                         },
-                        (state, msg) ->
+                        (Integer state, Msg msg) ->
                                 switch (msg) {
                                     case Msg.Inc(var by) -> state + by;
                                     case Msg.Ping() -> state;
@@ -116,7 +116,7 @@ class ProcLibTest implements WithAssertions {
                             ProcLib.initAck();
                             return 100; // init sets state to 100
                         },
-                        (state, msg) ->
+                        (Integer state, Msg msg) ->
                                 switch (msg) {
                                     case Msg.Inc(var by) -> state + by;
                                     case Msg.Ping() -> state;

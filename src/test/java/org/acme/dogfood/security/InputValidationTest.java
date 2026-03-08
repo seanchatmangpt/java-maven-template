@@ -204,8 +204,7 @@ class InputValidationTest implements WithAssertions {
 
     @Test
     void validationResult_map_transformsValidValue() {
-        var result = InputValidation.ValidationResult.<String>Valid
-                .<String>of()
+        var result = InputValidation.Validator.<String>of()
                 .check("x", true, "ok")
                 .validate(() -> "42");
         var mapped = result.map(Integer::parseInt);

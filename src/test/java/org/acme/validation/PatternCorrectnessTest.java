@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
-import org.acme.Actor;
+import org.acme.Proc;
 import org.acme.CrashRecovery;
 import org.acme.Parallel;
 import org.acme.Result;
@@ -142,7 +142,7 @@ class PatternCorrectnessTest implements WithAssertions {
         void fifoOrdering() throws Exception {
             var received = new ArrayList<Integer>();
             var latch = new CountDownLatch(1000);
-            var actor = new Actor<List<Integer>, Integer>(
+            var actor = new Proc<List<Integer>, Integer>(
                     received,
                     (state, msg) -> {
                         state.add(msg);
@@ -161,7 +161,7 @@ class PatternCorrectnessTest implements WithAssertions {
         void noMessageLoss() throws Exception {
             var counter = new AtomicInteger(0);
             var latch = new CountDownLatch(500);
-            var actor = new Actor<Integer, Void>(
+            var actor = new Proc<Integer, Void>(
                     0,
                     (state, _) -> {
                         counter.incrementAndGet();
@@ -177,7 +177,7 @@ class PatternCorrectnessTest implements WithAssertions {
         @Test
         @DisplayName("ask() returns exact reply for exact message")
         void askReplyIntegrity() throws Exception {
-            var actor = new Actor<Integer, Integer>(0, (state, msg) -> msg);
+            var actor = new Proc<Integer, Integer>(0, (state, msg) -> msg);
             for (int i = 0; i < 50; i++) {
                 int reply = actor.ask(i).get();
                 assertThat(reply).isEqualTo(i);

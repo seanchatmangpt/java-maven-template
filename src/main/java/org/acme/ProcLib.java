@@ -127,7 +127,10 @@ public final class ProcLib {
                             INIT_LATCH.set(ready);
                             try {
                                 S next = initHandler.apply(state);
-                                ready.countDown(); // in case initAck() wasn't called explicitly
+                                // Do NOT call ready.countDown() here — the init handler MUST
+                                // call initAck() explicitly to unblock the parent, mirroring
+                                // OTP proc_lib:init_ack({ok, self()}). If initAck() is never
+                                // called, the parent times out and returns Err.
                                 return next;
                             } catch (RuntimeException e) {
                                 initError.set(e);

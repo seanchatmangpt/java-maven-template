@@ -74,7 +74,7 @@ class StringMethodPatternsTest implements WithAssertions {
     @Test
     void horizontalRule_producesCorrectWidth() {
         var rule = StringMethodPatterns.horizontalRule(10);
-        assertThat(rule).hasSize(10).containsOnly('-');
+        assertThat(rule).hasSize(10).isEqualTo("-".repeat(10));
     }
 
     @Test
@@ -93,7 +93,7 @@ class StringMethodPatternsTest implements WithAssertions {
 
     @Test
     void stripIndentExample_removesCommonLeadingWhitespace() {
-        var input = "    hello\n    world\n";
+        var input = "    hello\n    world";
         var result = StringMethodPatterns.stripIndentExample(input);
         assertThat(result).doesNotContain("    hello"); // leading stripped
     }

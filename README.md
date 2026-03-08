@@ -1,8 +1,8 @@
-# Java 25 Maven Template
+# Java 26 Maven Template
 
 [![Maven Build](https://github.com/cchacin/java-maven-template/workflows/Maven%20Build/badge.svg)](https://github.com/cchacin/java-maven-template/actions)
 
-Modern Java 25 Maven template with best practices, testing excellence, and CI/CD ready to use.
+Modern Java 26 Maven template with best practices, testing excellence, and CI/CD ready to use.
 
 **🌐 [View Full Documentation](https://cchacin.github.io/java-maven-template/)**
 
@@ -18,7 +18,7 @@ Modern Java 25 Maven template with best practices, testing excellence, and CI/CD
 - Maven Build Cache Extension 1.2.0 for faster incremental builds
 - OpenTelemetry Maven Extension 1.50.0-alpha for build tracing
 - Spotless code formatting with Google Java Format (AOSP style)
-- GitHub Actions CI/CD with Oracle JDK 25
+- GitHub Actions CI/CD with Oracle JDK 26
 
 **🔧 Developer Tools**
 - JShell integration for REPL development
@@ -41,7 +41,7 @@ Modern Java 25 Maven template with best practices, testing excellence, and CI/CD
 
 ## Requirements
 
-- Java 21+ (Java 25 recommended)
+- Java 26 (with preview features enabled)
 - No local Maven installation needed (wrapper included)
 
 ---

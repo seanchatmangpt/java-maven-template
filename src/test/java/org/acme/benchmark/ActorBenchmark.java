@@ -1,6 +1,6 @@
 package org.acme.benchmark;
 
-import org.acme.Actor;
+import org.acme.Proc;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -41,14 +41,14 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 public class ActorBenchmark {
 
-    private Actor<Integer, Integer> countingActor;
-    private Actor<Integer, Integer> echoActor;
+    private Proc<Integer, Integer> countingActor;
+    private Proc<Integer, Integer> echoActor;
     private LinkedTransferQueue<Integer> rawQueue;
 
     @Setup(Level.Iteration)
     public void setup() throws Exception {
-        countingActor = new Actor<>(0, (state, msg) -> state + msg);
-        echoActor = new Actor<>(0, (_, msg) -> msg);
+        countingActor = new Proc<>(0, (state, msg) -> state + msg);
+        echoActor = new Proc<>(0, (_, msg) -> msg);
         rawQueue = new LinkedTransferQueue<>();
         // Consumer thread for raw queue baseline
         Thread.ofVirtual().start(() -> {

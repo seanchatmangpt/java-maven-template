@@ -54,7 +54,13 @@ public final class ProcessRegistry {
      */
     @SuppressWarnings("unchecked")
     public static <S, M> Optional<Proc<S, M>> whereis(String name) {
-        return Optional.ofNullable((Proc<S, M>) REGISTRY.get(name));
+        Proc<S, M> proc = (Proc<S, M>) REGISTRY.get(name);
+        if (proc != null && !proc.thread().isAlive()) {
+            // OTP: dead process is invisible — eagerly remove the stale entry
+            REGISTRY.remove(name, proc);
+            return Optional.empty();
+        }
+        return Optional.ofNullable(proc);
     }
 
     /**
@@ -77,7 +83,7 @@ public final class ProcessRegistry {
     }
 
     /** Clear all registrations — for use in tests only. */
-    static void reset() {
+    public static void reset() {
         REGISTRY.clear();
     }
 }

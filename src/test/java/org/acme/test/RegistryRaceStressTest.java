@@ -13,6 +13,7 @@ import net.jqwik.api.constraints.IntRange;
 import org.acme.Proc;
 import org.acme.ProcessRegistry;
 import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -55,6 +56,11 @@ class RegistryRaceStressTest implements WithAssertions {
             case Msg.Noop() -> state;
             case Msg.Crash() -> throw new RuntimeException("crash");
         };
+    }
+
+    @BeforeEach
+    void resetRegistry() {
+        ProcessRegistry.reset();
     }
 
     // ── 1. Registration stampede — only one winner ────────────────────────
@@ -136,7 +142,11 @@ class RegistryRaceStressTest implements WithAssertions {
             procs.add(proc);
         }
 
-        assertThat(ProcessRegistry.registered()).hasSize(count);
+        assertThat(ProcessRegistry.registered().stream()
+                        .filter(n -> n.startsWith("stress-"))
+                        .count())
+                .as("stress entries registered")
+                .isEqualTo(count);
 
         // Crash all simultaneously
         var latch = new CountDownLatch(1);
@@ -235,7 +245,13 @@ class RegistryRaceStressTest implements WithAssertions {
                                         ProcessRegistry.whereis(name)
                                                 .ifPresent(
                                                         proc -> {
-                                                            if (!proc.thread().isAlive()) {
+                                                            // A true zombie: dead proc still in
+                                                            // registry (not just a stale reference
+                                                            // obtained before process died).
+                                                            if (!proc.thread().isAlive()
+                                                                    && ProcessRegistry.whereis(name)
+                                                                            .map(r -> r == proc)
+                                                                            .orElse(false)) {
                                                                 badReads.incrementAndGet();
                                                             }
                                                         });

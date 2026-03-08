@@ -132,13 +132,11 @@ public final class ScopedValuePatterns {
                             try (var scope =
                                     StructuredTaskScope.open(
                                             StructuredTaskScope.Joiner
-                                                    .<T>allSuccessfulOrThrow())) {
+                                                    .<Object>awaitAllSuccessfulOrThrow())) {
                                 var a = scope.fork(taskA);
                                 var b = scope.fork(taskB);
-                                var results = scope.join();
-                                return results
-                                        .map(java.util.concurrent.StructuredTaskScope.Subtask::get)
-                                        .toList();
+                                scope.join();
+                                return java.util.List.of(a.get(), b.get());
                             }
                         });
     }
