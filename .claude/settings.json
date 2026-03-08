@@ -2,8 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(./mvnw *)",
+      "Bash(mvnd *)",
       "Bash(git *)"
     ]
+  },
+  "env": {
+    "JAVA_HOME": "/usr/lib/jvm/graalvm-community-openjdk-25.0.2+10.1",
+    "PATH": "/usr/lib/jvm/graalvm-community-openjdk-25.0.2+10.1/bin:/root/.mvnd/mvnd-1.0.2/bin:${PATH}"
   },
   "hooks": {
     "SessionStart": [
@@ -11,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '=== Git Status ===' && git status --short && echo '' && echo '=== Current Branch ===' && git branch --show-current && echo '' && echo '=== Recent Commits ===' && git log --oneline -5 && echo '' && echo '=== mvnd Setup ===' && GRAALVM_HOME=/usr/lib/jvm/graalvm-community-openjdk-25.0.2+10.1 && if [ -d \"$GRAALVM_HOME\" ]; then export JAVA_HOME=\"$GRAALVM_HOME\" && export PATH=\"$JAVA_HOME/bin:$PATH\" && echo \"GraalVM CE 25.0.2 found at $GRAALVM_HOME\" && java -version 2>&1; else echo \"WARNING: GraalVM CE 25.0.2 not found at $GRAALVM_HOME\"; java -version 2>&1; fi && echo '' && echo '=== mvnd Check ===' && if command -v mvnd &>/dev/null; then echo \"mvnd: $(mvnd --version 2>&1 | head -1)\"; elif [ -x bin/mvndw ]; then echo 'mvnd not in PATH — use bin/mvndw for builds'; else echo 'WARNING: mvnd and bin/mvndw not available'; fi"
+            "command": "echo '=== Git Status ===' && git status --short && echo '' && echo '=== Current Branch ===' && git branch --show-current && echo '' && echo '=== Recent Commits ===' && git log --oneline -5 && echo '' && echo '=== Java ===' && java -version 2>&1 && echo '' && echo '=== mvnd ===' && (command -v mvnd && mvnd --version 2>&1 | head -1 || echo 'mvnd not in PATH — use bin/mvndw')"
           }
         ]
       }
