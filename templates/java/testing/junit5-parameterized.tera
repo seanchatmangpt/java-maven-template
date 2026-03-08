@@ -1,4 +1,4 @@
-{# JUnit 5 Parameterized Tests — Generates parameterized test class with @ValueSource, @CsvSource, @MethodSource, @EnumSource, and @NullAndEmptySource #}
+{# JUnit 5 Parameterized Tests — Generates parameterized test class with @ValueSource, @CsvSource, @MethodSource, @EnumSource, and @NullAndEmptySource for Java 26 #}
 ---
 to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"
 vars:

@@ -1,4 +1,4 @@
-{# JUnit 5 Basic Test — Generates a JUnit 5 test class with AssertJ fluent assertions, lifecycle hooks, and @DisplayName annotations #}
+{# JUnit 5 Basic Test — Generates a JUnit 5 test class with AssertJ fluent assertions, lifecycle hooks, and @DisplayName annotations for Java 26 #}
 {# Before: JUnit 4 @Test (org.junit.Test) with Assert.assertEquals → After: JUnit 5 @Test (org.junit.jupiter.api.Test) with AssertJ fluent assertions #}
 ---
 to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"

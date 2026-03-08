@@ -1,4 +1,4 @@
-{# Property-Based Testing (jqwik) — Generates property-based tests with @Property, @ForAll, arbitrary providers, and statistical testing #}
+{# Property-Based Testing (jqwik) — Generates property-based tests with @Property, @ForAll, arbitrary providers, and statistical testing for Java 26 #}
 ---
 to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Properties.java"
 vars:

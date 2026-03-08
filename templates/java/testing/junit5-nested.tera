@@ -1,4 +1,4 @@
-{# JUnit 5 Nested Tests — BDD-style test organization with @Nested inner classes and shared enclosing-class state #}
+{# JUnit 5 Nested Tests — BDD-style test organization with @Nested inner classes and shared enclosing-class state for Java 26 #}
 ---
 to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"
 vars:
