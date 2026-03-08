@@ -1,44 +1,86 @@
-{# Qualified Exports — Module with friend-only exports and reflection opens #}
+{# Qualified exports module-info.java. Generates a module descriptor with
+   exports...to (friend modules) and opens...to (reflection frameworks) for
+   fine-grained access control. #}
 ---
 to: "{{ output_dir }}/module-info.java"
 vars:
-  module_name: "org.acme"
+  name: "org.acme.core"
   output_dir: "src/main/java"
-  public_packages: []
-  friend_exports: []
-  reflection_opens: []
+  public_exports: []
+  qualified_exports: []
+  qualified_opens: []
   requires: []
+  requires_transitive: []
 ---
 /**
- * Module with qualified exports — packages are only visible to named friend modules.
+ * Module descriptor for {@code {{ name }}} with qualified exports.
  *
- * <p>This pattern is used when internal APIs should be shared with specific
- * collaborating modules but hidden from all others.
+ * <h2>Qualified exports ({@code exports ... to})</h2>
+ * <p>Qualified exports restrict package access to specific "friend" modules.
+ * This is useful for internal APIs that should only be used by trusted
+ * sibling modules within the same project, while remaining inaccessible
+ * to external consumers.
  *
- * <p>BEFORE (classpath): Everything in public packages is visible to everyone.
- * <p>AFTER (JPMS): Fine-grained control over which modules can access which packages.
+ * <h2>Qualified opens ({@code opens ... to})</h2>
+ * <p>Qualified opens grant deep-reflection access only to specific frameworks
+ * (e.g., Jackson, Hibernate, Spring) without opening packages to the entire
+ * world. This preserves strong encapsulation while allowing framework
+ * integration.
+ *
+ * <h2>Example layout</h2>
+ * <pre>
+ *   org.acme.core/
+ *     org.acme.core.api        → exported to all (public API)
+ *     org.acme.core.internal   → exported only to org.acme.web, org.acme.cli
+ *     org.acme.core.model      → opened only to com.fasterxml.jackson.databind
+ * </pre>
  */
-module {{ module_name }} {
+module {{ name }} {
 
-    // Standard dependencies
-{% for req in requires %}
-    requires {{ req.transitive | default(value=false) | ternary(true_val="transitive ", false_val="") }}{{ req.name }};
-{% endfor %}
+    // =========================================================================
+    // Dependencies
+    // =========================================================================
 
-    // Public API — accessible by any module
-{% for pkg in public_packages %}
-    exports {{ pkg }};
-{% endfor %}
+    {% for req in requires %}
+    requires {{ req }};
+    {% endfor %}
 
-    // Friend-only exports — visible only to named modules
-{% for exp in friend_exports %}
-    exports {{ exp.package }} to {% for friend in exp.friends %}{{ friend }}{% if not loop.last %},
-            {% endif %}{% endfor %};
-{% endfor %}
+    {% for req in requires_transitive %}
+    requires transitive {{ req }};
+    {% endfor %}
 
-    // Reflection opens — for frameworks that need deep reflection
-{% for opn in reflection_opens %}
-    opens {{ opn.package }} to {% for framework in opn.frameworks %}{{ framework }}{% if not loop.last %},
-            {% endif %}{% endfor %};
-{% endfor %}
+    // =========================================================================
+    // Public exports — accessible to ALL modules
+    // =========================================================================
+
+    {% for exp in public_exports %}
+    exports {{ exp }};
+    {% endfor %}
+
+    // =========================================================================
+    // Qualified exports — accessible only to named "friend" modules
+    //
+    // Use this for internal packages that sibling modules need but external
+    // consumers should not access. If a new friend module is added, update
+    // the 'to' clause here.
+    // =========================================================================
+
+    {% for qe in qualified_exports %}
+    exports {{ qe.package }}
+        to {% for target in qe.to %}{{ target }}{% if not loop.last %},
+           {% endif %}{% endfor %};
+    {% endfor %}
+
+    // =========================================================================
+    // Qualified opens — deep reflection only for named framework modules
+    //
+    // Opens are necessary for frameworks that use reflection (serialization,
+    // ORM, dependency injection). Qualifying them limits the blast radius.
+    // =========================================================================
+
+    {% for qo in qualified_opens %}
+    opens {{ qo.package }}
+        to {% for target in qo.to %}{{ target }}{% if not loop.last %},
+           {% endif %}{% endfor %};
+    {% endfor %}
 }
