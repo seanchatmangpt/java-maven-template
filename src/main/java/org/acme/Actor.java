@@ -16,14 +16,15 @@ import java.util.function.BiFunction;
  * <ul>
  *   <li>Erlang lightweight process → virtual thread (one per actor, ~1 KB heap)
  *   <li>Erlang mailbox → {@link LinkedTransferQueue} (lock-free MPMC, 50–150 ns/message)
- *   <li>Erlang message → {@code M extends Record} (immutable by construction)
+ *   <li>Erlang message → {@code M} (use a {@code Record} or sealed-Record hierarchy for
+ *       immutability by construction)
  *   <li>Shared-nothing state → {@code S} held privately, never returned by reference
  * </ul>
  *
  * @param <S> actor state (immutable value type recommended)
- * @param <M> message type — must be a {@code Record} to enforce immutability
+ * @param <M> message type — use a {@code Record} or sealed interface of Records
  */
-public final class Actor<S, M extends Record> {
+public final class Actor<S, M> {
 
     /** Internal envelope carrying both the message and an optional reply handle. */
     private record Envelope<M>(M msg, CompletableFuture<Object> reply) {}
@@ -89,5 +90,10 @@ public final class Actor<S, M extends Record> {
         stopped = true;
         thread.interrupt();
         thread.join();
+    }
+
+    /** Package-private: allows {@link Supervisor} to install an uncaught exception handler. */
+    Thread thread() {
+        return thread;
     }
 }
