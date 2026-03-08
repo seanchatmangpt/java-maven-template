@@ -1,0 +1,154 @@
+{# Stress Test: Concurrency — N-thread lock contention, atomicity, deadlock detection #}
+---
+to: "{{ output_dir | default(value='src/test/java') }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyServiceConcurrencyStressTest"
+  package: "org.acme.test"
+  subject_class: "MyService"
+  lock_type: "ReentrantLock"
+  thread_count: 50
+  iterations_per_thread: 1_000
+  deadlock_timeout_ms: 5_000
+---
+package {{ package }};
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.constraints.IntRange;
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+/**
+ * Armstrong Concurrency Stress Test — {{ subject_class }}.
+ *
+ * <h2>Breaking points under investigation</h2>
+ * <ol>
+ *   <li><b>Exact final count</b> — {{ thread_count }} threads × {{ iterations_per_thread }} ops; final state must be exact.
+ *   <li><b>No deadlock</b> — concurrent access must complete within {{ deadlock_timeout_ms }} ms.
+ *   <li><b>No lost updates</b> — monotonically non-decreasing counter under concurrent writes.
+ *   <li><b>Property: concurrent register/unregister — no phantom entries</b>.
+ * </ol>
+ *
+ * <p>TODO: Replace the shared counter below with the actual {{ subject_class }} shared state.
+ */
+@Timeout(30)
+class {{ name }} implements WithAssertions {
+
+    private static final int THREADS = {{ thread_count }};
+    private static final int ITERS = {{ iterations_per_thread }};
+
+    // ── Test 1: exact final count under N concurrent writers ──────────────────
+
+    @Test
+    void concurrentWriters_exactFinalCount() throws Exception {
+        // TODO: replace with actual {{ subject_class }} shared state
+        var counter = new AtomicLong(0);
+        var latch = new CountDownLatch(THREADS);
+        var errors = new AtomicReference<Throwable>();
+
+        for (int t = 0; t < THREADS; t++) {
+            Thread.ofVirtual().start(() -> {
+                try {
+                    for (int i = 0; i < ITERS; i++) {
+                        counter.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    errors.compareAndSet(null, e);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        assertThat(latch.await(20, TimeUnit.SECONDS))
+                .as("All %d threads should complete within 20s", THREADS)
+                .isTrue();
+
+        if (errors.get() != null) fail("Worker threw: " + errors.get().getMessage());
+
+        long expected = (long) THREADS * ITERS;
+        assertThat(counter.get())
+                .as("Final count must be exactly %d", expected)
+                .isEqualTo(expected);
+    }
+
+    // ── Test 2: no deadlock under concurrent access ────────────────────────────
+
+    @Test
+    void noDeadlock_underConcurrentAccess() throws Exception {
+        var counter = new AtomicInteger(0);
+        var ready = new CountDownLatch(THREADS);
+        var done = new CountDownLatch(THREADS);
+
+        for (int t = 0; t < THREADS; t++) {
+            Thread.ofVirtual().start(() -> {
+                ready.countDown();
+                try {
+                    ready.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                // TODO: replace with actual {{ subject_class }} critical-section call
+                for (int i = 0; i < 100; i++) counter.incrementAndGet();
+                done.countDown();
+            });
+        }
+
+        assertThat(done.await({{ deadlock_timeout_ms }}, TimeUnit.MILLISECONDS))
+                .as("No deadlock: all threads must finish within {{ deadlock_timeout_ms }} ms")
+                .isTrue();
+    }
+
+    // ── Test 3: monotonically non-decreasing counter ───────────────────────────
+
+    @Test
+    void counter_isMonotonicallyNonDecreasing() throws Exception {
+        var counter = new AtomicLong(0);
+        var violations = new AtomicInteger(0);
+        var done = new CountDownLatch(THREADS);
+
+        for (int t = 0; t < THREADS; t++) {
+            Thread.ofVirtual().start(() -> {
+                long prev = 0;
+                for (int i = 0; i < ITERS; i++) {
+                    long current = counter.incrementAndGet();
+                    // Each thread's own increments must not go backwards
+                    if (current < prev) violations.incrementAndGet();
+                    prev = current;
+                }
+                done.countDown();
+            });
+        }
+
+        done.await(20, TimeUnit.SECONDS);
+        assertThat(violations.get())
+                .as("Counter must never decrease within a single thread's view")
+                .isZero();
+    }
+
+    // ── Property: any N threads produce exact total ────────────────────────────
+
+    @Property(tries = 20)
+    void property_nThreads_exactTotal(@ForAll @IntRange(min = 2, max = 20) int n) throws Exception {
+        var counter = new AtomicLong(0);
+        var done = new CountDownLatch(n);
+
+        for (int t = 0; t < n; t++) {
+            Thread.ofVirtual().start(() -> {
+                for (int i = 0; i < 500; i++) counter.incrementAndGet();
+                done.countDown();
+            });
+        }
+
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(counter.get())
+                .as("With %d threads × 500 iters, expected %d", n, (long) n * 500)
+                .isEqualTo((long) n * 500);
+    }
+}

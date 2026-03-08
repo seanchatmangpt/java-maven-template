@@ -15,15 +15,15 @@ import java.util.function.Supplier;
  * processes into supervision trees, where supervisors can automatically restart failed
  * children."</em>
  *
- * <p>A {@code Supervisor} owns a set of child actors. When a child crashes (its handler throws),
+ * <p>A {@code Supervisor} owns a set of child processes. When a child crashes (its handler throws),
  * the supervisor receives a {@code ChildCrashed} event and restarts it according to the configured
- * {@link Strategy}. Callers hold {@link ActorRef} handles that transparently redirect to the new
- * actor after restart — no caller changes needed.
+ * {@link Strategy}. Callers hold {@link ProcRef} handles that transparently redirect to the new
+ * process after restart — no caller changes needed.
  *
  * <p>If a child exceeds {@code maxRestarts} within {@code window}, the supervisor terminates itself
  * (Armstrong: the supervisor crashes too, propagating failure up the tree to its own supervisor).
  *
- * <p>The supervisor is itself a virtual-thread actor: its internal event loop runs on a single
+ * <p>The supervisor is itself a virtual-thread process: its internal event loop runs on a single
  * virtual thread, processing {@link ChildCrashed} and {@link SvShutdown} events from a {@link
  * LinkedTransferQueue}.
  */
@@ -52,7 +52,7 @@ public final class Supervisor {
         final String id;
         final Supplier<Object> stateFactory;
         final BiFunction handler; // BiFunction<Object, Object, Object>
-        volatile ActorRef ref; // ActorRef<Object, Record>
+        volatile ProcRef ref; // ProcRef<Object, Record>
         final List<Instant> crashTimes = new ArrayList<>();
         volatile boolean stopping = false;
 
@@ -90,22 +90,22 @@ public final class Supervisor {
     }
 
     /**
-     * Register and start a supervised child actor.
+     * Register and start a supervised child process.
      *
      * @param id unique child identifier (used for logging and {@link Strategy#REST_FOR_ONE})
      * @param initialState initial (and reset) state — used on every restart
      * @param handler {@code (state, message) -> nextState}; may throw to signal a crash
-     * @return stable {@link ActorRef} that survives restarts
+     * @return stable {@link ProcRef} that survives restarts
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public synchronized <S, M> ActorRef<S, M> supervise(
+    public synchronized <S, M> ProcRef<S, M> supervise(
             String id, S initialState, BiFunction<S, M, S> handler) {
         var entry = new ChildEntry(id, () -> initialState, handler);
-        Actor actor = spawnActor(entry, initialState);
-        ActorRef ref = new ActorRef<>(actor);
+        Proc proc = spawnProc(entry, initialState);
+        ProcRef ref = new ProcRef<>(proc);
         entry.ref = ref;
         children.add(entry);
-        return (ActorRef<S, M>) ref;
+        return (ProcRef<S, M>) ref;
     }
 
     /** Gracefully stop the supervisor and all supervised children. */
@@ -130,23 +130,17 @@ public final class Supervisor {
     // ── Private implementation ─────────────────────────────────────────────
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private Actor spawnActor(ChildEntry entry, Object initialState) {
-        BiFunction<Object, Object, Object> wrapped =
-                (state, msg) -> {
-                    try {
-                        return entry.handler.apply(state, msg);
-                    } catch (RuntimeException e) {
-                        if (!entry.stopping) {
-                            events.add(new ChildCrashed(entry.id, e));
-                        }
-                        throw e;
+    private Proc spawnProc(ChildEntry entry, Object initialState) {
+        Proc proc = new Proc(initialState, entry.handler);
+        // Register a crash callback instead of hijacking setUncaughtExceptionHandler.
+        // This is composable: ProcessLink can also register callbacks on the same process.
+        proc.addCrashCallback(
+                () -> {
+                    if (!entry.stopping) {
+                        events.add(new ChildCrashed(entry.id, proc.lastError));
                     }
-                };
-        Actor actor = new Actor(initialState, wrapped);
-        // Swallow uncaught exceptions: crashes are handled by the supervisor's event loop,
-        // not by the JVM's default uncaught-exception handler (which would pollute test output).
-        actor.thread().setUncaughtExceptionHandler((t, e) -> {});
-        return actor;
+                });
+        return proc;
     }
 
     private void eventLoop() {
@@ -213,9 +207,9 @@ public final class Supervisor {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void restartOne(ChildEntry entry) {
         Object freshState = entry.stateFactory.get();
-        Actor newActor = spawnActor(entry, freshState);
+        Proc newProc = spawnProc(entry, freshState);
         entry.stopping = false; // re-enable crash detection before swap
-        entry.ref.swap(newActor);
+        entry.ref.swap(newProc);
     }
 
     private void stopChild(ChildEntry entry) {

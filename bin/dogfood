@@ -21,16 +21,35 @@ NC='\033[0m'
 # Template-to-dogfood mapping
 # Each entry: category|template|dogfood_class|type(main|test)
 DOGFOOD_MAP=(
+    # ── Core dogfood sources ─────────────────────────────────────────────────
     "core|core/record.tera|core/Person.java|main"
     "concurrency|concurrency/virtual-thread.tera|concurrency/VirtualThreadPatterns.java|main"
     "patterns|patterns/strategy-functional.tera|patterns/TextTransformStrategy.java|main"
     "api|api/string-methods.tera|api/StringMethodPatterns.java|main"
     "error-handling|error-handling/result-railway.tera|errorhandling/ResultRailway.java|main"
     "security|security/input-validation.tera|security/InputValidation.java|main"
+    # ── Core dogfood tests ───────────────────────────────────────────────────
     "testing|testing/junit5-test.tera|core/PersonTest.java|test"
     "testing|testing/property-based-jqwik.tera|core/PersonProperties.java|test"
     "testing|testing/junit5-test.tera|concurrency/VirtualThreadPatternsTest.java|test"
     "testing|testing/junit5-test.tera|patterns/TextTransformStrategyTest.java|test"
+    "testing|testing/junit5-test.tera|api/StringMethodPatternsTest.java|test"
+    "testing|testing/junit5-test.tera|errorhandling/ResultRailwayTest.java|test"
+    "testing|testing/junit5-test.tera|security/InputValidationTest.java|test"
+    # ── Innovation engine sources ────────────────────────────────────────────
+    "patterns|patterns/builder-record.tera|innovation/OntologyMigrationEngine.java|main"
+    "patterns|patterns/state-machine-sealed.tera|innovation/ModernizationScorer.java|main"
+    "patterns|patterns/visitor-exhaustive-switch.tera|innovation/TemplateCompositionEngine.java|main"
+    "patterns|patterns/chain-of-responsibility-sealed.tera|innovation/BuildDiagnosticEngine.java|main"
+    "patterns|patterns/observer-flow.tera|innovation/LivingDocGenerator.java|main"
+    "patterns|patterns/strategy-functional.tera|innovation/RefactorEngine.java|main"
+    # ── Innovation engine tests ──────────────────────────────────────────────
+    "testing|testing/junit5-test.tera|innovation/OntologyMigrationEngineTest.java|test"
+    "testing|testing/junit5-test.tera|innovation/ModernizationScorerTest.java|test"
+    "testing|testing/junit5-test.tera|innovation/TemplateCompositionEngineTest.java|test"
+    "testing|testing/junit5-test.tera|innovation/BuildDiagnosticEngineTest.java|test"
+    "testing|testing/junit5-test.tera|innovation/LivingDocGeneratorTest.java|test"
+    "testing|testing/junit5-test.tera|innovation/RefactorEngineTest.java|test"
 )
 
 cmd_generate() {
