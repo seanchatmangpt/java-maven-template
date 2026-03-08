@@ -7,4 +7,5 @@ open module org.acme.test {
     requires transitive org.assertj.core;
     requires transitive org.junit.jupiter.api;
     requires transitive org.junit.jupiter.engine;
+    requires awaitility;
 }
