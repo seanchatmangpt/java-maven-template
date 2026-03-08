@@ -1,12 +1,12 @@
 package org.acme.dogfood.concurrency;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Subtask;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 /**
@@ -102,13 +102,21 @@ public final class StructuredTaskScopePatterns {
      * scope throws.
      */
     public static <T> T runWithTimeout(Callable<T> task, Duration timeout)
-            throws ExecutionException, InterruptedException {
+            throws ExecutionException, InterruptedException, TimeoutException {
         try (var scope =
                 StructuredTaskScope.open(
-                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
+                        StructuredTaskScope.Joiner.<T>awaitAll(),
+                        cfg -> cfg.withTimeout(timeout))) {
             Subtask<T> subtask = scope.fork(task);
-            scope.joinUntil(Instant.now().plus(timeout));
-            return subtask.get();
+            scope.join();
+            if (scope.isCancelled()) {
+                throw new TimeoutException("Task timed out after " + timeout);
+            }
+            return switch (subtask.state()) {
+                case SUCCESS -> subtask.get();
+                case FAILED -> throw new ExecutionException(subtask.exception());
+                default -> throw new TimeoutException("Task timed out after " + timeout);
+            };
         }
     }
 
@@ -142,13 +150,22 @@ public final class StructuredTaskScopePatterns {
      */
     public static <T, R> List<R> fanOutWithTimeout(
             List<T> items, Function<T, R> processor, Duration timeout)
-            throws ExecutionException, InterruptedException {
+            throws ExecutionException, InterruptedException, TimeoutException {
         try (var scope =
                 StructuredTaskScope.open(
-                        StructuredTaskScope.Joiner.<Object>awaitAllSuccessfulOrThrow())) {
+                        StructuredTaskScope.Joiner.<R>awaitAll(),
+                        cfg -> cfg.withTimeout(timeout))) {
             List<Subtask<R>> subtasks =
                     items.stream().map(item -> scope.fork(() -> processor.apply(item))).toList();
-            scope.joinUntil(Instant.now().plus(timeout));
+            scope.join();
+            if (scope.isCancelled()) {
+                throw new TimeoutException("Fan-out timed out after " + timeout);
+            }
+            for (var subtask : subtasks) {
+                if (subtask.state() == Subtask.State.FAILED) {
+                    throw new ExecutionException(subtask.exception());
+                }
+            }
             return subtasks.stream().map(Subtask::get).toList();
         }
     }
