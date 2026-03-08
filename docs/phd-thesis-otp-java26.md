@@ -27,11 +27,13 @@ The seven OTP primitives mapped in this work are: (1) lightweight processes, (2)
 3. The Seven-Pillar Equivalence Proof
    - 3.1 Lightweight Processes → Virtual Threads
    - 3.2 Message Passing → LinkedTransferQueue Mailbox
-   - 3.3 `gen_server` → `Actor<S,M>`
+   - 3.3 `gen_server` → `Proc<S,M>`
    - 3.4 Supervision Trees → `Supervisor` + `CrashRecovery`
    - 3.5 Let It Crash → `Result<T,E>` Railway
    - 3.6 Pattern Matching → Sealed Types + Exhaustive Switches
    - 3.7 Structured Concurrency → `StructuredTaskScope`
+   - 3.8 `gen_statem` → `StateMachine<S,E,D>`
+   - 3.9 Process Links → `ProcessLink`
 4. Performance Analysis: BEAM vs. JVM Under Fault Conditions
 5. The Migration Path: From Cool Languages to Java 26
    - 5.1 From Elixir/Phoenix
@@ -101,10 +103,11 @@ OTP defines *behaviors* — formally specified protocols that separate the gener
 
 | Behavior | Purpose | Java Equivalent |
 |---|---|---|
-| `gen_server` | Request-reply server with state | `Actor<S,M>` |
-| `gen_statem` | State machine with events | `sealed` state + `switch` |
+| `gen_server` | Request-reply server with state | `Proc<S,M>` |
+| `gen_statem` | State machine with events | `StateMachine<S,E,D>` |
 | `gen_event` | Event manager | `Flow.Publisher<E>` |
 | `supervisor` | Restart strategies for children | `Supervisor` |
+| `link/1`, `spawn_link/3` | Bilateral crash propagation | `ProcessLink` |
 | `application` | Application lifecycle | JPMS module + `ServiceLoader` |
 
 ### 2.3 The 80/20 of OTP
@@ -123,7 +126,7 @@ The remaining 20% — `gen_event`, OTP releases, Mnesia, distributed Erlang, hot
 
 ## 3. The Seven-Pillar Equivalence Proof
 
-> **Terminology note:** OTP uses **process** as the fundamental unit of concurrency — not "actor." The actor model (Hewitt, 1973) inspired Erlang, but Joe Armstrong and the Erlang team deliberately chose "process" to align with OS process isolation semantics: each process has its own heap, its own mailbox, and no shared mutable state. The Java class in this repository is named `Actor<S,M>` for familiarity with JVM frameworks (Akka, Vert.x); the underlying OTP concept it models is a *process*. Similarly, the Erlang behavior is `gen_server` (lowercase, underscore-separated) — `GenServer` is Elixir's wrapper. All OTP names in §3 use Erlang's canonical spelling.
+> **Terminology note:** OTP uses **process** as the fundamental unit of concurrency — not "actor." The actor model (Hewitt, 1973) inspired Erlang, but Joe Armstrong and the Erlang team deliberately chose "process" to align with OS process isolation semantics: each process has its own heap, its own mailbox, and no shared mutable state. The Java class in this repository is named `Proc<S,M>` to align with OTP's own terminology — "process" — rather than the Akka/Vert.x "actor" naming. The underlying OTP concept it models is a *process*. Similarly, the Erlang behavior is `gen_server` (lowercase, underscore-separated) — `GenServer` is Elixir's wrapper. All OTP names in §3 use Erlang's canonical spelling.
 
 ### 3.1 Lightweight Processes → Virtual Threads
 
@@ -159,13 +162,13 @@ var thread = Thread.ofVirtual()
 
 **Key difference:** BEAM uses preemptive scheduling with reduction counting; JVM virtual threads use cooperative scheduling (park/unpark). For CPU-bound workloads, BEAM guarantees fairness at finer granularity. For IO-bound workloads (the vast majority of OTP use cases), Java virtual threads are equivalent.
 
-**Implementation (`Actor.java`):** Java names this class `Actor` for framework familiarity, but it models an OTP *process* — a virtual thread with a private mailbox and pure state transition function.
+**Implementation (`Proc.java`):** `Proc<S,M>` models an OTP *process* using Java 26 terminology — a virtual thread with a private mailbox and pure state transition function.
 ```java
-public final class Actor<S, M> {
+public final class Proc<S, M> {
     private final TransferQueue<Envelope<M>> mailbox = new LinkedTransferQueue<>();
     private final Thread thread;  // one virtual thread per OTP process
 
-    public Actor(S initial, BiFunction<S, M, S> handler) {
+    public Proc(S initial, BiFunction<S, M, S> handler) {
         thread = Thread.ofVirtual()
             .name("proc")     // process in OTP terms
             .start(() -> {
@@ -233,7 +236,7 @@ This is a meaningful improvement over Erlang: exhaustiveness is verified at comp
 
 ---
 
-### 3.3 `gen_server` → `Actor<S,M>`
+### 3.3 `gen_server` → `Proc<S,M>`
 
 The `gen_server` behavior is the most widely used OTP primitive. It provides:
 - Synchronous `call/2` (request-reply with timeout)
@@ -257,14 +260,14 @@ handle_cast({withdraw, Amount}, Balance) ->
     {noreply, Balance - Amount}.
 ```
 
-**Java 26 `Actor<S,M>` equivalent:**
+**Java 26 `Proc<S,M>` equivalent:**
 ```java
 sealed interface BankMsg permits Deposit, Withdraw, GetBalance {}
 record Deposit(long amount) implements BankMsg {}
 record Withdraw(long amount) implements BankMsg {}
 record GetBalance() implements BankMsg {}
 
-var account = new Actor<Long, BankMsg>(
+var account = new Proc<Long, BankMsg>(
     0L,                              // initial state
     (balance, msg) -> switch (msg) { // pure state transition
         case Deposit(var a)  -> balance + a;
@@ -317,7 +320,7 @@ var supervisor = new Supervisor(
     window: Duration.ofSeconds(10)
 );
 
-ActorRef<Long, BankMsg> account = supervisor.supervise(
+ProcRef<Long, BankMsg> account = supervisor.supervise(
     "bank-account",
     0L,
     (balance, msg) -> switch (msg) {
@@ -327,7 +330,7 @@ ActorRef<Long, BankMsg> account = supervisor.supervise(
     }
 );
 
-// The ActorRef is stable across restarts — callers need not change
+// The ProcRef is stable across restarts — callers need not change
 account.tell(new Deposit(500L));
 ```
 
@@ -351,11 +354,11 @@ if (entry.crashTimes.size() > maxRestarts) {
 }
 ```
 
-**`ActorRef` as stable `Pid`:** In OTP, a `Pid` (process identifier) is the handle used to send messages to a process. `ActorRef<S,M>` mirrors this in a critical way: it is an *opaque stable handle* that survives restarts. When `Supervisor` restarts a child process, it atomically swaps the underlying `Actor` via `ActorRef.swap()`. Existing callers holding the same `ActorRef` transparently redirect to the new process — no caller changes required.
+**`ProcRef` as stable `Pid`:** In OTP, a `Pid` (process identifier) is the handle used to send messages to a process. `ProcRef<S,M>` mirrors this in a critical way: it is an *opaque stable handle* that survives restarts. When `Supervisor` restarts a child process, it atomically swaps the underlying `Proc` via `ProcRef.swap()`. Existing callers holding the same `ProcRef` transparently redirect to the new process — no caller changes required.
 
 ```java
-// ActorRef.java — transparent restart indirection
-void swap(Actor<S, M> next) {
+// ProcRef.java — transparent restart indirection
+void swap(Proc<S, M> next) {
     this.delegate = next;  // volatile write, atomic for callers
 }
 ```
@@ -367,15 +370,15 @@ This is Erlang's *location transparency* implemented in Java.
 ```
 root_sup (one_for_one)           ← RootSupervisor in Java
 ├── db_sup (one_for_all)         ← DatabaseSupervisor in Java
-│   ├── connection_pool           ← Actor<PoolState, PoolMsg>
-│   └── query_cache               ← Actor<CacheState, CacheMsg>
+│   ├── connection_pool           ← Proc<PoolState, PoolMsg>
+│   └── query_cache               ← Proc<CacheState, CacheMsg>
 ├── api_sup (rest_for_one)       ← ApiSupervisor in Java
-│   ├── auth_server               ← Actor<AuthState, AuthMsg>
-│   ├── rate_limiter              ← Actor<LimitState, LimitMsg>
-│   └── request_handler           ← Actor<HandlerState, HandlerMsg>
-└── metrics                       ← Actor<MetricsState, MetricsMsg>
+│   ├── auth_server               ← Proc<AuthState, AuthMsg>
+│   ├── rate_limiter              ← Proc<LimitState, LimitMsg>
+│   └── request_handler           ← Proc<HandlerState, HandlerMsg>
+└── metrics                       ← Proc<MetricsState, MetricsMsg>
 ```
-*Left column shows OTP process names (`atom` convention); right column shows the Java `Actor<S,M>` instance.*
+*Left column shows OTP process names (`atom` convention); right column shows the Java `Proc<S,M>` instance.*
 
 In Erlang, this tree would be expressed across multiple supervisor modules. In Java, each `Supervisor` instance is a node in the tree. The design is identical; the syntax is different.
 
@@ -568,6 +571,101 @@ public static <T> Result<List<T>, Exception> all(List<Supplier<T>> tasks) {
 
 **Fail-fast semantics:** When `allSuccessfulOrThrow()` detects the first subtask failure, it immediately cancels all remaining subtasks via thread interruption. This is OTP's `one_for_all` strategy expressed as a lexically scoped API. The structure is enforced by the compiler: subtasks *cannot* outlive the `try` block.
 
+### 3.8 `gen_statem` → `StateMachine<S,E,D>`
+
+**Erlang Primitive:**
+```erlang
+-module(code_lock).
+-behaviour(gen_statem).
+
+init(_) -> {ok, locked, #{entered => ""}}.
+
+locked(cast, {button, Digit}, #{entered := E, code := Code} = Data) ->
+    Entered = E ++ [Digit],
+    case Entered of
+        Code -> {next_state, open, Data#{entered := ""}};
+        _    -> {keep_state, Data#{entered := Entered}}
+    end.
+
+open(cast, lock, Data) ->
+    {next_state, locked, Data#{entered := ""}}.
+```
+
+`gen_statem` separates three concerns that `gen_server` conflates: **state** (which mode the machine is in), **event** (the stimulus), and **data** (context carried across states). The transition function is pure: `(State, Event, Data) → Transition`.
+
+**Java 26 Equivalent:**
+```java
+var lock = new StateMachine<LockState, LockEvent, LockData>(
+    new Locked(), new LockData("", "1234"),
+    (state, event, data) -> switch (state) {
+        case Locked() -> switch (event) {
+            case PushButton(var d) -> {
+                var entered = data.entered() + d;
+                yield entered.equals(data.code())
+                    ? Transition.nextState(new Open(), data.withEntered(""))
+                    : Transition.keepState(data.withEntered(entered));
+            }
+            default -> Transition.keepState(data);
+        };
+        case Open() -> switch (event) {
+            case Lock() -> Transition.nextState(new Locked(), data.withEntered(""));
+            default     -> Transition.keepState(data);
+        };
+    }
+);
+```
+
+**Formal Equivalence:**
+
+| OTP `gen_statem` return | Java `Transition` |
+|---|---|
+| `{next_state, S2, Data2}` | `Transition.nextState(s2, data2)` |
+| `{keep_state, Data2}` | `Transition.keepState(data2)` |
+| `keep_state_and_data` | `Transition.keepState(data)` (same ref) |
+| `{stop, Reason}` | `Transition.stop(reason)` |
+| `gen_statem:cast/2` | `sm.send(event)` |
+| `gen_statem:call/2` | `sm.call(event)` → `CompletableFuture<D>` |
+
+The sealed `Transition<S,D>` hierarchy — `NextState`, `KeepState`, `Stop` — makes the return type **exhaustive at compile time**. In OTP, a missing clause causes a runtime `function_clause` exception; in Java 26 with sealed interfaces and switch expressions, it is a compile error.
+
+---
+
+### 3.9 Process Links → `ProcessLink`
+
+**Erlang Primitive:**
+```erlang
+% Bilateral link: if either process dies abnormally, the other receives EXIT signal
+link(Pid).
+
+% Atomic spawn + link (no window between spawn and link)
+Pid = spawn_link(fun() -> worker_loop(State) end).
+```
+
+Process links are the foundational primitive for **bilateral crash propagation**. When linked process A terminates with a non-`normal` reason, B receives an `EXIT` signal and is also terminated (unless it traps exits). This is how supervisors detect child crashes in real OTP: `supervisor:start_link` uses `spawn_link` internally.
+
+**Java 26 Equivalent:**
+```java
+// Bilateral link — crash A kills B, crash B kills A
+ProcessLink.link(procA, procB);
+
+// Atomic spawn_link — no window for a missed crash
+Proc<S, M> child = ProcessLink.spawnLink(parent, initialState, handler);
+```
+
+**Implementation:** `ProcessLink` installs mutual crash callbacks on each `Proc`. When a `Proc` terminates abnormally (unhandled `RuntimeException`), it fires all registered callbacks before the virtual thread exits. Each callback interrupts the linked peer via `Proc.interruptAbnormally(reason)`. Normal `stop()` does **not** fire callbacks — matching OTP's `normal` exit reason semantics.
+
+**Formal Equivalence:**
+
+| OTP | Java 26 | Semantics |
+|---|---|---|
+| `link(Pid)` | `ProcessLink.link(a, b)` | Bilateral, abnormal exit propagates |
+| `spawn_link(F)` | `ProcessLink.spawnLink(parent, s, h)` | Atomic — no missed-crash window |
+| `exit(normal)` | `proc.stop()` | Does NOT propagate to linked processes |
+| `exit(Reason)` (non-normal) | uncaught `RuntimeException` | Propagates to all linked processes |
+| `process_flag(trap_exit, true)` | *(future work)* | Convert EXIT signal to message |
+
+**Composability:** Unlike the previous `setUncaughtExceptionHandler` approach, `ProcessLink` uses `addCrashCallback()` — a composable list. A supervised child can be simultaneously monitored by its `Supervisor` (via `Supervisor`'s crash callback) AND linked to a peer process (via `ProcessLink`). Both callbacks fire independently on crash. This is the real OTP model: supervision and links are orthogonal.
+
 ---
 
 ## 4. Performance Analysis: BEAM vs. JVM Under Fault Conditions
@@ -599,18 +697,18 @@ Java's `LinkedTransferQueue` outperforms Erlang message passing significantly fo
 |---|---|---|
 | Crash detected | ~10 µs (monitor signal) | ~50 µs (uncaught exception handler) |
 | Child restarted | ~100 µs | ~200 µs (new VT spawn + mailbox init) |
-| Caller redirected | Transparent (same Pid) | Transparent (same ActorRef) |
+| Caller redirected | Transparent (same Pid) | Transparent (same ProcRef) |
 
 Java's `Supervisor` is approximately 2x slower for crash recovery than BEAM's OTP supervisor. For any realistic fault scenario (network failures, database connection drops, transient errors), this 100µs difference is negligible. OTP's performance advantage in crash recovery is real but inconsequential in practice.
 
 ### 4.4 Throughput Under Load
 
-JMH benchmark: 1M concurrent processes (virtual threads / `Actor<S,M>` instances), each processing 100 messages.
+JMH benchmark: 1M concurrent processes (virtual threads / `Proc<S,M>` instances), each processing 100 messages.
 
 | Platform | Throughput | Max Latency (p99.9) |
 |---|---|---|
 | OTP 28 (gen_server) | ~45M msg/sec | 8 ms |
-| Java 26 (Actor<S,M>) | ~120M msg/sec | 3 ms |
+| Java 26 (Proc<S,M>) | ~120M msg/sec | 3 ms |
 
 The JVM outperforms BEAM on throughput for CPU-bound message processing because JIT compilation optimizes the dispatch code. BEAM's preemptive scheduler provides better tail latency guarantees for CPU-intensive workloads; the JVM relies on the OS scheduler for virtual thread fairness.
 
@@ -624,7 +722,7 @@ The JVM outperforms BEAM on throughput for CPU-bound message processing because 
 
 Elixir adopted Erlang/OTP wholesale. The migration path from Elixir is therefore the highest-fidelity: every Elixir OTP concept has a direct Java 26 equivalent.
 
-**Elixir `GenServer` (wrapping Erlang's `gen_server`) → Java `Actor<S,M>`:**
+**Elixir `GenServer` (wrapping Erlang's `gen_server`) → Java `Proc<S,M>`:**
 ```elixir
 # Elixir
 defmodule Cache do
@@ -646,7 +744,7 @@ sealed interface CacheMsg permits Get, Put {}
 record Get(String key) implements CacheMsg {}
 record Put(String key, Object value) implements CacheMsg {}
 
-var cache = new Actor<Map<String, Object>, CacheMsg>(
+var cache = new Proc<Map<String, Object>, CacheMsg>(
     new HashMap<>(),
     (state, msg) -> switch (msg) {
         case Get(var k)       -> state;  // reply via ask()
@@ -659,8 +757,8 @@ var cache = new Actor<Map<String, Object>, CacheMsg>(
 );
 ```
 
-**Phoenix LiveView → Java WebSockets + Actor:**
-Phoenix LiveView's stateful websocket connections are `gen_server` processes. The Java equivalent is a virtual-thread process (`Actor<S,M>`) per connection, with the same isolation properties.
+**Phoenix LiveView → Java WebSockets + Process:**
+Phoenix LiveView's stateful websocket connections are `gen_server` processes. The Java equivalent is a virtual-thread process (`Proc<S,M>`) per connection, with the same isolation properties.
 
 **`jgen` migration command:**
 ```bash
@@ -718,7 +816,7 @@ Rust's ownership system prevents data races at compile time. Tokio provides asyn
 | Rust/Tokio | Java 26 |
 |---|---|
 | `tokio::spawn(async { ... })` | `Thread.ofVirtual().start(...)` |
-| `Arc<Mutex<T>>` | Actor<S,M> (shared state via message) |
+| `Arc<Mutex<T>>` | Proc<S,M> (shared state via message) |
 | `mpsc::channel` | `LinkedTransferQueue` |
 | `tokio::select!` | `StructuredTaskScope.Joiner` |
 | `?` operator | `.flatMap()` on `Result<T,E>` |
@@ -758,7 +856,7 @@ Java 26's built-in virtual threads and `StructuredTaskScope` make Akka's value p
 | Akka | Java 26 |
 |---|---|
 | `ActorSystem` | `Supervisor` (root) |
-| `ActorRef` | `ActorRef<S,M>` |
+| `ActorRef` | `ProcRef<S,M>` |
 | `Behavior<M>` | `BiFunction<S, M, S>` |
 | `ask(actor, msg, timeout)` | `actorRef.ask(msg).orTimeout(...)` |
 | `Routers.pool(5)` | `Parallel.all(tasks)` |
@@ -769,7 +867,7 @@ Java 26's built-in virtual threads and `StructuredTaskScope` make Akka's value p
 # Detect Akka usage
 bin/jgen refactor --source ./akka-service/src
 
-# Output: found akka.actor.ActorRef → use org.acme.ActorRef
+# Output: found akka.actor.ActorRef → use org.acme.ProcRef
 #          found akka.actor.ActorSystem → use org.acme.Supervisor
 #          Avg modernization score: 23/100 (heavy legacy)
 #          Generated: migrate.sh (45 jgen generate commands)
@@ -901,11 +999,11 @@ The blue ocean reframe is: *Java 26 doesn't compete with those languages — it 
 | "Cool Language" | Key Innovation | Java 26 Equivalent |
 |---|---|---|
 | Elixir | OTP supervision trees | `Supervisor` + `CrashRecovery` |
-| Elixir | `gen_server` process behavior | `Actor<S,M>` |
+| Elixir | `gen_server` process behavior | `Proc<S,M>` |
 | Go | Goroutines | Virtual Threads |
 | Go | Channels | `LinkedTransferQueue` |
 | Rust | `?` error propagation | `Result.flatMap` chain |
-| Scala/Akka | Typed actors | `Actor<S,M>` with sealed `M` |
+| Scala/Akka | Typed actors | `Proc<S,M>` with sealed `M` |
 | Haskell | Algebraic types | Sealed interfaces + records |
 
 The pitch to the developer who chose Elixir for OTP: *you can have OTP's fault-tolerance model on the JVM, with Java's ecosystem (Spring Boot, Kafka, JDBC, Hibernate, 15 years of library investment), compile-time type safety, and the GraalVM native image compiler.*
@@ -923,7 +1021,7 @@ Virtual threads: 10M+ concurrent connections on a single JVM. Go's goroutines: s
 The `Supervisor` class implementing `ONE_FOR_ONE`, `ONE_FOR_ALL`, `REST_FOR_ONE` — the exact OTP restart strategies — is a first-class Java idiom. This is not a library; it's 200 lines of idiomatic Java 26 using virtual threads and sealed types.
 
 **3. "Java 26 has typed processes."**
-`Actor<S,M>` where `M` is a `sealed interface` models an OTP *process* — but with stronger guarantees than Elixir's `GenServer` (which wraps Erlang's `gen_server`): exhaustiveness of message handling is compile-time verified, not runtime. Java is stricter, not weaker.
+`Proc<S,M>` where `M` is a `sealed interface` models an OTP *process* — but with stronger guarantees than Elixir's `GenServer` (which wraps Erlang's `gen_server`): exhaustiveness of message handling is compile-time verified, not runtime. Java is stricter, not weaker.
 
 **4. "Java 26 has railway-oriented programming."**
 `Result<T,E>` as a `sealed interface` with `map`/`flatMap`/`fold` is Erlang's `{:ok, v} | {:error, e}` with compile-time exhaustiveness. Rust's `?` operator becomes `.flatMap`.
@@ -968,15 +1066,15 @@ value class Money(long cents, Currency currency) {
 ```
 
 This enables:
-- **Message types as value objects:** Actor messages (`M`) declared as value classes gain stack allocation, reducing GC pressure.
-- **State as value types:** Actor state (`S`) as value records enables escape analysis optimization.
+- **Message types as value objects:** Process messages (`M`) declared as value classes gain stack allocation, reducing GC pressure.
+- **State as value types:** Process state (`S`) as value records enables escape analysis optimization.
 - **Null-restricted types (JEP 450 preview):** `Money!` — a non-nullable money value. Eliminates `NullPointerException` from the message-passing path entirely.
 
 These features, expected to finalize in Java 27-28, complete the equivalence to Erlang's term model: immutable, identity-free, structurally comparable data.
 
 **Distributed actors (future work):** Erlang's killer feature — transparent distribution — remains outside Java's standard library. Project Loom (virtual threads) is complete. A distributed actor layer over virtual threads would require:
 1. A serialization protocol for actor messages (Project Panama's foreign function memory, or traditional Java serialization)
-2. Location-transparent `ActorRef` that works across JVM processes (Project Helidon, Quarkus, or custom)
+2. Location-transparent `ProcRef` that works across JVM processes (Project Helidon, Quarkus, or custom)
 3. Distributed supervision trees with network partition handling
 
 This is a compelling area for JEP proposals to the OpenJDK community.
@@ -991,7 +1089,7 @@ The practical contribution is a complete toolchain: 72 code generation templates
 
 The strategic contribution is the blue ocean framing: Java 26 should not be positioned as "catching up" to Elixir, Go, or Rust. It should be positioned as *synthesizing* the best ideas from all of them, delivering them to the world's largest developer community, with the world's deepest ecosystem, the strongest type system, and the most mature tooling. Migration paths lead *toward* Java, not away from it.
 
-Joe Armstrong wrote that "the problem with object-oriented languages is they've got all this implicit environment that they carry around with them." Java 26 records, sealed types, and virtual threads eliminate that environment. The actor model (`Actor<S,M>`) enforces explicit, typed, immutable state. The supervisor enforces lifecycle. The `Result<T,E>` type enforces error handling.
+Joe Armstrong wrote that "the problem with object-oriented languages is they've got all this implicit environment that they carry around with them." Java 26 records, sealed types, and virtual threads eliminate that environment. The actor model (`Proc<S,M>`) enforces explicit, typed, immutable state. The supervisor enforces lifecycle. The `Result<T,E>` type enforces error handling.
 
 Armstrong's vision — reliable distributed systems built from crash-tolerant processes communicating by message passing — is now fully realizable in Java 26. The language caught up. The ecosystem was never in question.
 
