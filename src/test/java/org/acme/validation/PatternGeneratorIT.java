@@ -65,7 +65,8 @@ class PatternGeneratorIT {
         entries.add(verify(
                 "concurrency", "virtual-thread", "VirtualThreadPatterns",
                 () -> {
-                    var result = VirtualThreadPatterns.startNamed("test", () -> "ok");
+                    var result = VirtualThreadPatterns.startNamed("test", () -> {});
+                    try { result.join(java.time.Duration.ofSeconds(2)); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                     assertThat(result.getName()).startsWith("test");
                 },
                 failures));
@@ -83,9 +84,13 @@ class PatternGeneratorIT {
         entries.add(verify(
                 "concurrency", "structured-task-scope", "StructuredTaskScopePatterns",
                 () -> {
-                    var pair = StructuredTaskScopePatterns.runBoth(() -> "hello", () -> 42);
-                    assertThat(pair.first()).isEqualTo("hello");
-                    assertThat(pair.second()).isEqualTo(42);
+                    try {
+                        var pair = StructuredTaskScopePatterns.runBoth(() -> "hello", () -> 42);
+                        assertThat(pair.first()).isEqualTo("hello");
+                        assertThat(pair.second()).isEqualTo(42);
+                    } catch (java.util.concurrent.ExecutionException | InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
                 },
                 failures));
 
@@ -133,8 +138,8 @@ class PatternGeneratorIT {
         entries.add(verify(
                 "api", "string-methods", "StringMethodPatterns",
                 () -> {
-                    assertThat(StringMethodPatterns.isBlankOrEmpty("  ")).isTrue();
-                    assertThat(StringMethodPatterns.isBlankOrEmpty("a")).isFalse();
+                    assertThat(StringMethodPatterns.isBlankExample("  ")).isTrue();
+                    assertThat(StringMethodPatterns.isBlankExample("a")).isFalse();
                 },
                 failures));
 
@@ -148,7 +153,7 @@ class PatternGeneratorIT {
                     // Result railway monad laws
                     Result<Integer, Exception> r = Result.success(5);
                     assertThat(r.map(x -> x).equals(r)).isTrue(); // right identity
-                    assertThat(r.flatMap(x -> Result.success(x + 1)).fold(x -> x, _ -> -1)).isEqualTo(6);
+                    assertThat(r.flatMap(x -> Result.success(x + 1)).<Integer>fold(x -> x, _ -> -1)).isEqualTo(6);
                 },
                 failures));
 
@@ -159,15 +164,15 @@ class PatternGeneratorIT {
         entries.add(verify(
                 "security", "input-validation", "InputValidation",
                 () -> {
-                    var validation = new InputValidation.Validator<String>()
-                            .check(s -> !s.isBlank(), "must not be blank")
-                            .check(s -> s.length() >= 3, "min length 3")
-                            .validate("hello");
+                    var validation = InputValidation.Validator.<String>of()
+                            .check("value", "hello", s -> !s.isBlank(), "must not be blank")
+                            .check("value", "hello", s -> s.length() >= 3, "min length 3")
+                            .validate(() -> "hello");
                     assertThat(validation).isInstanceOf(InputValidation.ValidationResult.Valid.class);
 
-                    var invalid = new InputValidation.Validator<String>()
-                            .check(s -> !s.isBlank(), "must not be blank")
-                            .validate("");
+                    var invalid = InputValidation.Validator.<String>of()
+                            .check("value", "", s -> !s.isBlank(), "must not be blank")
+                            .validate(() -> "");
                     assertThat(invalid).isInstanceOf(InputValidation.ValidationResult.Invalid.class);
                 },
                 failures));

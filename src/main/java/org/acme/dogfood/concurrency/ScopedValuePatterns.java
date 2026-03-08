@@ -56,7 +56,7 @@ public final class ScopedValuePatterns {
 
     /** Executes a callable within a tracing scope and returns the result. */
     public static <T> T withTrace(String traceId, Callable<T> task) throws Exception {
-        return ScopedValue.where(TRACE_ID, traceId).call(task);
+        return ScopedValue.where(TRACE_ID, traceId).call(task::call);
     }
 
     // =========================================================================
@@ -85,7 +85,7 @@ public final class ScopedValuePatterns {
         return ScopedValue.where(CURRENT_USER, ctx.userId())
                 .where(TRACE_ID, ctx.traceId())
                 .where(TENANT_ID, ctx.tenantId())
-                .call(task);
+                .call(task::call);
     }
 
     // =========================================================================

@@ -1,5 +1,7 @@
 package org.acme.dogfood.innovation;
 
+import java.util.List;
+
 import org.acme.dogfood.innovation.BuildDiagnosticEngine.DiagnosticFix;
 import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.DisplayName;
@@ -395,7 +397,7 @@ class BuildDiagnosticEngineTest implements WithAssertions {
         @Test
         @DisplayName("formats fix list with categories")
         void formatsFixList() {
-            var fixes = java.util.List.of(
+            List<DiagnosticFix> fixes = List.of(
                     new DiagnosticFix.AddImport("App.java", "java.util.List"),
                     new DiagnosticFix.EnablePreview("App.java"));
 

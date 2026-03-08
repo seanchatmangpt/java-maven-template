@@ -264,7 +264,7 @@ public final class BuildDiagnosticEngine {
         patterns.add(new DiagnosticPattern(
                 Pattern.compile(
                         "(?m)^(.+\\.java):\\d+: error: package (\\S+) is not visible\\s*\\n"
-                                + ".*\\n.*package (\\S+) is declared in module (\\S+),"
+                                + ".*\\n.*\\n.*package (\\S+) is declared in module (\\S+),"
                                 + " which does not export it"),
                 m -> {
                     String pkg = m.group(3);

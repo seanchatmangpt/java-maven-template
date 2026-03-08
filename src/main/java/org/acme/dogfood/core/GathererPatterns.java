@@ -175,8 +175,8 @@ public final class GathererPatterns {
     // PATTERN 9: Chaining gatherers with andThen
     // =========================================================================
     public static <T> List<List<T>> batchAndDeduplicate(List<T> items, int batchSize) {
-        return items.stream()
-                .gather(deduplicateConsecutive().andThen(Gatherers.windowFixed(batchSize)))
-                .toList();
+        Gatherer<T, ?, T> dedup = deduplicateConsecutive();
+        Gatherer<T, ?, List<T>> windowed = Gatherers.windowFixed(batchSize);
+        return items.stream().gather(dedup.andThen(windowed)).toList();
     }
 }

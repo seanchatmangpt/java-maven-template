@@ -1,7 +1,6 @@
 package org.acme.dogfood.concurrency;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -102,9 +101,11 @@ public final class StructuredTaskScopePatterns {
     public static <T> T runWithTimeout(Callable<T> task, Duration timeout)
             throws ExecutionException, InterruptedException {
         try (var scope =
-                StructuredTaskScope.open(StructuredTaskScope.Joiner.allSuccessfulOrThrow())) {
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.allSuccessfulOrThrow(),
+                        cf -> cf.withTimeout(timeout))) {
             Subtask<T> subtask = scope.fork(task);
-            scope.joinUntil(Instant.now().plus(timeout));
+            scope.join();
             return subtask.get();
         }
     }
@@ -140,10 +141,12 @@ public final class StructuredTaskScopePatterns {
             List<T> items, Function<T, R> processor, Duration timeout)
             throws ExecutionException, InterruptedException {
         try (var scope =
-                StructuredTaskScope.open(StructuredTaskScope.Joiner.allSuccessfulOrThrow())) {
+                StructuredTaskScope.open(
+                        StructuredTaskScope.Joiner.allSuccessfulOrThrow(),
+                        cf -> cf.withTimeout(timeout))) {
             List<Subtask<R>> subtasks =
                     items.stream().map(item -> scope.fork(() -> processor.apply(item))).toList();
-            scope.joinUntil(Instant.now().plus(timeout));
+            scope.join();
             return subtasks.stream().map(Subtask::get).toList();
         }
     }

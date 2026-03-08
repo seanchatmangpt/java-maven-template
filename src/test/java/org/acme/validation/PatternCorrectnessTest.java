@@ -112,7 +112,7 @@ class PatternCorrectnessTest implements WithAssertions {
                     .map(x -> x + 1)
                     .map(x -> x * 3)
                     .map(x -> x - 1);
-            assertThat(result.fold(x -> x, _ -> -1)).isEqualTo(5);
+            assertThat(result.<Integer>fold(x -> x, _ -> -1)).isEqualTo(5);
         }
 
         @Test
@@ -522,7 +522,7 @@ class PatternCorrectnessTest implements WithAssertions {
         void successOnFirstAttempt() {
             var result = CrashRecovery.retry(3, () -> "value");
             assertThat(result).isInstanceOf(Result.Success.class);
-            assertThat(result.fold(x -> x, _ -> null)).isEqualTo("value");
+            assertThat(result.<String>fold(x -> x, _ -> null)).isEqualTo("value");
         }
 
         @Test
