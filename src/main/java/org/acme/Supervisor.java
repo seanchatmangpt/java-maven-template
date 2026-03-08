@@ -89,6 +89,15 @@ public final class Supervisor {
         this.supervisorThread = Thread.ofVirtual().name("supervisor").start(this::eventLoop);
     }
 
+    /** Convenience constructor with a name (name is used for thread naming only). */
+    public Supervisor(String name, Strategy strategy, int maxRestarts, Duration window) {
+        this.strategy = strategy;
+        this.maxRestarts = maxRestarts;
+        this.window = window;
+        this.supervisorThread =
+                Thread.ofVirtual().name("supervisor-" + name).start(this::eventLoop);
+    }
+
     /**
      * Register and start a supervised child process.
      *

@@ -31,7 +31,7 @@ class ResultRailwayTest implements WithAssertions {
     void of_wrapsSuccessfulSupplier() {
         var r = ResultRailway.of(() -> 42);
         assertThat(r.isSuccess()).isTrue();
-        assertThat(((ResultRailway.Success<Integer, Exception>) r).value()).isEqualTo(42);
+        assertThat(((ResultRailway.Success<Integer, ?>) r).value()).isEqualTo(42);
     }
 
     @Test
@@ -40,7 +40,7 @@ class ResultRailwayTest implements WithAssertions {
             throw new IllegalStateException("boom");
         });
         assertThat(r.isFailure()).isTrue();
-        assertThat(((ResultRailway.Failure<Integer, ?>) r).error())
+        assertThat((Throwable) ((ResultRailway.Failure<Integer, ?>) r).error())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("boom");
     }

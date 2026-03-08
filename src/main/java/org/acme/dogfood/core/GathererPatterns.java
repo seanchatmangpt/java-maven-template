@@ -3,31 +3,23 @@ package org.acme.dogfood.core;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.Predicate;
-import java.util.stream.Gatherer;
-import java.util.stream.Gatherers;
 
 /**
- * Gatherer patterns — custom intermediate stream operations (Java 25+).
+ * Gatherer patterns — custom intermediate stream operations (Java 21-compatible).
  *
  * <p>Generated from {@code templates/java/core/gatherer.tera}.
  *
- * <p>{@link Gatherer} fills the gap between built-in intermediate operations ({@code map}, {@code
- * filter}, {@code flatMap}) and terminal collectors. Gatherers can maintain state, emit multiple
- * elements, and short-circuit.
- *
- * <h2>Built-in gatherers (java.util.stream.Gatherers):</h2>
- *
- * <ul>
- *   <li>{@code Gatherers.fold()} — stateful accumulation as intermediate op
- *   <li>{@code Gatherers.scan()} — running accumulation emitting each step
- *   <li>{@code Gatherers.windowFixed(n)} — fixed-size non-overlapping windows
- *   <li>{@code Gatherers.windowSliding(n)} — overlapping sliding windows
- *   <li>{@code Gatherers.mapConcurrent(n, fn)} — concurrent mapping with virtual threads
- * </ul>
+ * <p>Provides batching, windowing, scanning, folding, and concurrent mapping via list-based
+ * implementations that are compatible with Java 21. The equivalent Java 22+ Gatherers API
+ * ({@code java.util.stream.Gatherers}) offers a declarative stream-pipeline variant; these methods
+ * deliver the same semantics without requiring Java 22.
  */
 public final class GathererPatterns {
 
@@ -35,25 +27,28 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 1: Fixed-size batching / chunking
-    // BEFORE: Manual partition logic with subList or counter
-    // AFTER:
     // =========================================================================
     public static <T> List<List<T>> batch(List<T> items, int batchSize) {
-        return items.stream().gather(Gatherers.windowFixed(batchSize)).toList();
+        var result = new ArrayList<List<T>>();
+        for (int i = 0; i < items.size(); i += batchSize) {
+            result.add(List.copyOf(items.subList(i, Math.min(i + batchSize, items.size()))));
+        }
+        return List.copyOf(result);
     }
 
     // =========================================================================
     // PATTERN 2: Sliding window for rolling calculations
-    // BEFORE: for (int i = 0; i <= list.size() - windowSize; i++) { ... }
-    // AFTER:
     // =========================================================================
     public static <T> List<List<T>> slidingWindow(List<T> items, int windowSize) {
-        return items.stream().gather(Gatherers.windowSliding(windowSize)).toList();
+        var result = new ArrayList<List<T>>();
+        for (int i = 0; i <= items.size() - windowSize; i++) {
+            result.add(List.copyOf(items.subList(i, i + windowSize)));
+        }
+        return List.copyOf(result);
     }
 
     public static List<Double> movingAverage(List<Double> values, int windowSize) {
-        return values.stream()
-                .gather(Gatherers.windowSliding(windowSize))
+        return slidingWindow(values, windowSize).stream()
                 .map(
                         window ->
                                 window.stream()
@@ -65,118 +60,114 @@ public final class GathererPatterns {
 
     // =========================================================================
     // PATTERN 3: Running scan (cumulative sum, running total)
-    // BEFORE: Manual accumulator variable in loop
-    // AFTER:
     // =========================================================================
     public static List<Integer> runningSum(List<Integer> values) {
-        return values.stream().gather(Gatherers.scan(() -> 0, Integer::sum)).toList();
+        var result = new ArrayList<Integer>(values.size());
+        int sum = 0;
+        for (var v : values) {
+            sum += v;
+            result.add(sum);
+        }
+        return List.copyOf(result);
     }
 
     public static <T, R> List<R> runningAccumulate(
             List<T> items, R identity, BiFunction<R, T, R> accumulator) {
-        return items.stream().gather(Gatherers.scan(() -> identity, accumulator)).toList();
+        var result = new ArrayList<R>(items.size());
+        R acc = identity;
+        for (var item : items) {
+            acc = accumulator.apply(acc, item);
+            result.add(acc);
+        }
+        return List.copyOf(result);
     }
 
     // =========================================================================
     // PATTERN 4: Fold as intermediate operation
-    // BEFORE: stream.reduce() only as terminal
-    // AFTER: Gatherers.fold() emits the final accumulated result downstream
     // =========================================================================
     public static <T> T foldToSingle(List<T> items, T identity, BinaryOperator<T> op) {
-        return items.stream()
-                .gather(Gatherers.fold(() -> identity, op))
-                .findFirst()
-                .orElse(identity);
+        return items.stream().reduce(identity, op);
     }
 
     // =========================================================================
     // PATTERN 5: Concurrent mapping with bounded virtual threads
-    // BEFORE: parallelStream().map(fn) — unbounded, shared ForkJoinPool
-    // AFTER: stream().gather(mapConcurrent(n, fn)) — bounded, virtual threads
     // =========================================================================
     public static <T, R> List<R> mapConcurrent(
             List<T> items, int maxConcurrency, Function<T, R> mapper) {
-        return items.stream().gather(Gatherers.mapConcurrent(maxConcurrency, mapper)).toList();
+        try (var executor =
+                Executors.newFixedThreadPool(maxConcurrency, Thread.ofVirtual().factory())) {
+            List<Future<R>> futures =
+                    items.stream().map(item -> executor.submit(() -> mapper.apply(item))).toList();
+            return futures.stream()
+                    .map(
+                            f -> {
+                                try {
+                                    return f.get();
+                                } catch (InterruptedException | ExecutionException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            })
+                    .toList();
+        }
     }
 
     // =========================================================================
-    // PATTERN 6: Custom gatherer — deduplicate consecutive duplicates
-    // BEFORE: Manual loop tracking previous element
-    // AFTER:
+    // PATTERN 6: Deduplicate consecutive duplicates
     // =========================================================================
-    public static <T> Gatherer<T, ?, T> deduplicateConsecutive() {
-        return Gatherer.ofSequential(
-                () ->
-                        new Object() {
-                            T last = null;
-                            boolean hasLast = false;
-                        },
-                (state, element, downstream) -> {
-                    if (!state.hasLast || !Objects.equals(state.last, element)) {
-                        state.last = element;
-                        state.hasLast = true;
-                        return downstream.push(element);
-                    }
-                    return true;
-                });
+    public static <T> List<T> deduplicateConsecutive(List<T> items) {
+        var result = new ArrayList<T>();
+        T last = null;
+        boolean hasLast = false;
+        for (var item : items) {
+            if (!hasLast || !Objects.equals(last, item)) {
+                last = item;
+                hasLast = true;
+                result.add(item);
+            }
+        }
+        return List.copyOf(result);
     }
 
     // =========================================================================
-    // PATTERN 7: Custom gatherer — take while with count limit
+    // PATTERN 7: Take while with count limit
     // =========================================================================
-    public static <T> Gatherer<T, ?, T> takeWhileMax(Predicate<T> predicate, int maxCount) {
-        return Gatherer.ofSequential(
-                () ->
-                        new Object() {
-                            int count = 0;
-                        },
-                (state, element, downstream) -> {
-                    if (state.count >= maxCount || !predicate.test(element)) {
-                        return false; // short-circuit
-                    }
-                    state.count++;
-                    return downstream.push(element);
-                });
+    public static <T> List<T> takeWhileMax(List<T> items, Predicate<T> predicate, int maxCount) {
+        var result = new ArrayList<T>();
+        for (var item : items) {
+            if (result.size() >= maxCount || !predicate.test(item)) break;
+            result.add(item);
+        }
+        return List.copyOf(result);
     }
 
     // =========================================================================
-    // PATTERN 8: Custom gatherer — group consecutive elements by classifier
+    // PATTERN 8: Group consecutive elements by classifier
     // =========================================================================
-    public static <T, K> Gatherer<T, ?, List<T>> groupConsecutiveBy(Function<T, K> classifier) {
-        return Gatherer.ofSequential(
-                () ->
-                        new Object() {
-                            K currentKey = null;
-                            List<T> currentGroup = new ArrayList<>();
-                        },
-                (state, element, downstream) -> {
-                    var key = classifier.apply(element);
-                    if (state.currentGroup.isEmpty()
-                            || Objects.equals(key, state.currentKey)) {
-                        state.currentKey = key;
-                        state.currentGroup.add(element);
-                    } else {
-                        var group = List.copyOf(state.currentGroup);
-                        state.currentGroup.clear();
-                        state.currentKey = key;
-                        state.currentGroup.add(element);
-                        return downstream.push(group);
-                    }
-                    return true;
-                },
-                (state, downstream) -> {
-                    if (!state.currentGroup.isEmpty()) {
-                        downstream.push(List.copyOf(state.currentGroup));
-                    }
-                });
+    public static <T, K> List<List<T>> groupConsecutiveBy(
+            List<T> items, Function<T, K> classifier) {
+        var result = new ArrayList<List<T>>();
+        K currentKey = null;
+        var currentGroup = new ArrayList<T>();
+        for (var item : items) {
+            var key = classifier.apply(item);
+            if (currentGroup.isEmpty() || Objects.equals(key, currentKey)) {
+                currentKey = key;
+                currentGroup.add(item);
+            } else {
+                result.add(List.copyOf(currentGroup));
+                currentGroup.clear();
+                currentKey = key;
+                currentGroup.add(item);
+            }
+        }
+        if (!currentGroup.isEmpty()) result.add(List.copyOf(currentGroup));
+        return List.copyOf(result);
     }
 
     // =========================================================================
-    // PATTERN 9: Chaining gatherers with andThen
+    // PATTERN 9: Batch after deduplication
     // =========================================================================
     public static <T> List<List<T>> batchAndDeduplicate(List<T> items, int batchSize) {
-        Gatherer<T, ?, T> dedup = deduplicateConsecutive();
-        Gatherer<T, ?, List<T>> windowed = Gatherers.windowFixed(batchSize);
-        return items.stream().gather(dedup.andThen(windowed)).toList();
+        return batch(deduplicateConsecutive(items), batchSize);
     }
 }

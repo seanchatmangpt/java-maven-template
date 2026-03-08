@@ -114,7 +114,7 @@ class PatternPropertyTest {
 
     @Property(tries = 500)
     void deduplicateConsecutiveNeverAdjacentDuplicates(@ForAll @Size(min = 1, max = 50) List<@IntRange(min = 0, max = 3) Integer> items) {
-        var result = items.stream().gather(GathererPatterns.deduplicateConsecutive()).toList();
+        var result = GathererPatterns.deduplicateConsecutive(items);
         for (int i = 1; i < result.size(); i++) {
             assertThat(result.get(i)).isNotEqualTo(result.get(i - 1));
         }

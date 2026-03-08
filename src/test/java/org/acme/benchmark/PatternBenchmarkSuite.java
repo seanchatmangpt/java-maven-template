@@ -150,9 +150,7 @@ public class PatternBenchmarkSuite {
      */
     @Benchmark
     public List<Integer> gatherer_dedup_consecutive() {
-        return HUNDRED_ITEMS.stream()
-                .gather(GathererPatterns.deduplicateConsecutive())
-                .toList();
+        return GathererPatterns.deduplicateConsecutive(HUNDRED_ITEMS);
     }
 
     // =========================================================================

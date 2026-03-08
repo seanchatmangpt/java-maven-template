@@ -4,7 +4,8 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import org.acme.Actor;
+import org.acme.Proc;
+import org.acme.ProcRef;
 import org.acme.CrashRecovery;
 import org.acme.Parallel;
 import org.acme.Result;
@@ -54,7 +55,7 @@ class PatternStressTest {
         int messageCount = 10_000;
         var counter = new AtomicInteger(0);
         var latch = new CountDownLatch(messageCount);
-        var actor = new Actor<Integer, Void>(
+        var actor = new Proc<Integer, Void>(
                 0,
                 (state, _) -> {
                     counter.incrementAndGet();
@@ -88,7 +89,7 @@ class PatternStressTest {
         for (int i = 0; i < 5; i++) restartCounts[i] = new AtomicInteger(0);
 
         var supervisor = new Supervisor(Supervisor.Strategy.ONE_FOR_ONE, 30, Duration.ofSeconds(10));
-        var refs = new org.acme.ActorRef[5];
+        var refs = new ProcRef[5];
 
         for (int i = 0; i < 5; i++) {
             final int idx = i;

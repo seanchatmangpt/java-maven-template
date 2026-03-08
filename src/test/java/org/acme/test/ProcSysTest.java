@@ -126,11 +126,12 @@ class ProcSysTest implements WithAssertions {
         var proc =
                 new Proc<>(
                         0,
-                        (Integer state, BoomMsg msg) ->
-                                switch (msg) {
-                                    case BoomMsg.Crash() ->
-                                            throw new RuntimeException("boom");
-                                });
+                        (Integer state, BoomMsg msg) -> {
+                            if (msg instanceof BoomMsg.Crash) {
+                                throw new RuntimeException("boom");
+                            }
+                            return state;
+                        });
         proc.addCrashCallback(() -> crashed.set(true));
 
         // Suspend, then enqueue a crashing message, then resume
