@@ -360,6 +360,38 @@ public final class OntologyMigrationEngine {
                     2,
                     true);
 
+    // ── OTP-specific rules ────────────────────────────────────────────────────
+
+    private static final MigrationRule STATIC_STATE_TO_PROC =
+            new MigrationRule(
+                    "StaticStateToProc",
+                    "Static Shared State \u2192 Proc",
+                    "static Map/List/Set fields — shared mutable state across threads",
+                    "patterns/actor.tera",
+                    Category.CONCURRENCY,
+                    1,
+                    true);
+
+    private static final MigrationRule THREAD_LOCAL_TO_SCOPED_VALUE =
+            new MigrationRule(
+                    "ThreadLocalToScopedValue",
+                    "ThreadLocal \u2192 ScopedValue",
+                    "ThreadLocal<T> — implicit mutable context that leaks across virtual threads",
+                    "concurrency/scoped-values.tera",
+                    Category.CONCURRENCY,
+                    1,
+                    true);
+
+    private static final MigrationRule CATCH_TO_CRASH_RECOVERY =
+            new MigrationRule(
+                    "CatchToCrashRecovery",
+                    "Swallowed Catch \u2192 CrashRecovery",
+                    "catch block that logs, returns null/false, or is empty — silent failure",
+                    "error-handling/result-railway.tera",
+                    Category.ERROR_HANDLING,
+                    1,
+                    false);
+
     /** All ontology rules, available for inspection and custom filtering. */
     public static List<MigrationRule> allRules() {
         return List.of(
@@ -374,7 +406,10 @@ public final class OntologyMigrationEngine {
                 FILE_TO_NIO,
                 JUNIT4_TO_JUNIT5,
                 JAVAX_TO_JAKARTA,
-                NULL_CHECK_TO_OPTIONAL);
+                NULL_CHECK_TO_OPTIONAL,
+                STATIC_STATE_TO_PROC,
+                THREAD_LOCAL_TO_SCOPED_VALUE,
+                CATCH_TO_CRASH_RECOVERY);
     }
 
     // =========================================================================
@@ -432,6 +467,23 @@ public final class OntologyMigrationEngine {
     private static final Pattern NULL_CHECK =
             Pattern.compile("(!= null|== null)");
 
+    // OTP-rule patterns
+    private static final Pattern STATIC_MUTABLE_COLLECTION =
+            Pattern.compile(
+                    "static\\s+(?:final\\s+)?(?:Map|HashMap|LinkedHashMap|ConcurrentHashMap"
+                            + "|List|ArrayList|LinkedList|Set|HashSet)\\s*[<\\s]");
+
+    private static final Pattern THREAD_LOCAL =
+            Pattern.compile("\\bThreadLocal\\s*<");
+
+    private static final Pattern SWALLOWED_CATCH =
+            Pattern.compile(
+                    "catch\\s*\\([^)]+\\)\\s*\\{[^{}]*"
+                            + "(?:return\\s+(?:false|null|Optional\\.empty\\(\\))"
+                            + "|(?:log|logger|LOG|LOGGER)\\.[a-z]+\\()"
+                            + "|catch\\s*\\([^)]+\\)\\s*\\{\\s*\\}",
+                    Pattern.DOTALL);
+
     /**
      * Analyzes a Java source file (provided as a string) and returns all migration opportunities
      * found. This method models the behavior of an AI agent that reads source code, maps it onto
@@ -460,6 +512,9 @@ public final class OntologyMigrationEngine {
         detectJUnit4(source, lines).ifPresent(plans::add);
         detectJavaxImports(source, lines).ifPresent(plans::add);
         detectNullChecks(source, lines).ifPresent(plans::add);
+        detectStaticMutableState(source, lines).ifPresent(plans::add);
+        detectThreadLocal(source, lines).ifPresent(plans::add);
+        detectSwallowedCatch(source).ifPresent(plans::add);
 
         return new AnalysisResult(fileName, plans);
     }
@@ -648,6 +703,46 @@ public final class OntologyMigrationEngine {
                         NULL_CHECK_TO_OPTIONAL,
                         signals,
                         "Replace " + signals.size() + " null checks with Optional chains"));
+    }
+
+    private static java.util.Optional<MigrationPlan> detectStaticMutableState(
+            String source, String[] lines) {
+        var signals = findSignals(lines, STATIC_MUTABLE_COLLECTION);
+        if (signals.isEmpty()) return java.util.Optional.empty();
+        return java.util.Optional.of(
+                new MigrationPlan.GenericMigration(
+                        STATIC_STATE_TO_PROC,
+                        signals,
+                        "Replace "
+                                + signals.size()
+                                + " static mutable collection(s) with Proc<State, Message>"
+                                + " to isolate state behind message passing"));
+    }
+
+    private static java.util.Optional<MigrationPlan> detectThreadLocal(
+            String source, String[] lines) {
+        var signals = findSignals(lines, THREAD_LOCAL);
+        if (signals.isEmpty()) return java.util.Optional.empty();
+        return java.util.Optional.of(
+                new MigrationPlan.GenericMigration(
+                        THREAD_LOCAL_TO_SCOPED_VALUE,
+                        signals,
+                        "Replace ThreadLocal with ScopedValue.newInstance();"
+                                + " bind with ScopedValue.where(KEY, value).run(task)"));
+    }
+
+    private static java.util.Optional<MigrationPlan> detectSwallowedCatch(String source) {
+        var matcher = SWALLOWED_CATCH.matcher(source);
+        if (!matcher.find()) return java.util.Optional.empty();
+        var matchedText = matcher.group().strip().replaceAll("\\R\\s*", " ");
+        if (matchedText.length() > 60) matchedText = matchedText.substring(0, 57) + "...";
+        var signal = new SourceSignal(matchedText, 1);
+        return java.util.Optional.of(
+                new MigrationPlan.GenericMigration(
+                        CATCH_TO_CRASH_RECOVERY,
+                        List.of(signal),
+                        "Replace swallowed catch with Result.of(() -> ...) or"
+                                + " CrashRecovery.retry() and let the supervisor decide fate"));
     }
 
     // =========================================================================

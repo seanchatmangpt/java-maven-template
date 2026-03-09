@@ -6,6 +6,27 @@ Look at the code. Check the 9 rules. Render a verdict. That's it.
 
 ---
 
+## Severity Tiers (for go-live decisions)
+
+Not all violations are equal. Every verdict must carry one of these:
+
+**LIVE-BLOCKER** — Fix before deployment. This will corrupt data or crash silently in production.
+- Rule 1 violations (shared mutable state under concurrency)
+- Rule 2 violations (swallowed exceptions in a hot path)
+- Rule 7 violations (silent failure returned as a value)
+
+**POST-LIVE** — Fix in the next sprint. Wrong but not immediately lethal.
+- Rule 3 violations (too many responsibilities)
+- Rule 4 violations (back-door state access)
+- Rule 6 violations (null returns / Optional misuse in non-critical paths)
+- Rule 9 violations (manual retry in business logic)
+
+**DEFER** — Tech debt. Schedule it.
+- Rule 5 violations (instanceof chains where no polymorphic dispatch happens at runtime)
+- Rule 8 violations (mutable DTOs that are constructed once and never shared)
+
+---
+
 ## The 9 Rules
 
 Check them in order. First violation wins.
@@ -13,7 +34,7 @@ Check them in order. First violation wins.
 **Rule 1 — Share Nothing**
 Any `static` mutable field, shared `HashMap`, or `synchronized` block is wrong.
 A process owns its state. No one else touches it. Ever.
-GO trigger: `static Map`, `static List`, `static volatile`, `synchronized(this)`, `Lock`, `AtomicReference` used as shared state.
+GO trigger: `static Map`, `static List`, `static volatile`, `synchronized(this)`, `Lock`, `AtomicReference` used as shared state, `ThreadLocal` used to thread implicit state across method boundaries.
 
 **Rule 2 — Let It Crash**
 A `try/catch` that swallows an exception, logs and continues, or retries in a loop is wrong.
@@ -57,6 +78,7 @@ If a rule is violated and a safe instant refactor exists:
 
 ```
 RULE VIOLATED: <Rule N — Name>
+SEVERITY: <LIVE-BLOCKER | POST-LIVE | DEFER>
 
 GO — <one sentence in Armstrong's voice>
 
@@ -78,6 +100,17 @@ If multiple rules are violated and no single instant refactor fixes the root cau
 NO-GO (COMPLEX) — <one sentence on why touching this now makes it worse>
 FLAG: <what must be resolved architecturally before any refactor>
 ```
+
+If the code is wrong but the fix is riskier than the bug right now (go-live is imminent):
+
+```
+NO-GO (LIVE RISK) — Do not touch this now.
+SEVERITY: <tier>
+MONITOR: <what to watch in production logs>
+SCHEDULE: <the fix, deferred to next sprint>
+```
+
+Use `NO-GO (LIVE RISK)` when: the class has no tests, the fix requires architectural change, or the violation is in a cold path with no active callers.
 
 ---
 
@@ -126,6 +159,96 @@ Instant refactors only. If the fix requires more than one of these, it is not in
 | mutable DTO | `record` | `jgen generate -t core/record -n ClassName` |
 | `instanceof` chain | `sealed interface` + `switch` | `jgen generate -t core/sealed-types -n ClassName` |
 | manual retry | `Supervisor` with restart window | `jgen generate -t patterns/state-machine-sealed -n ClassName` |
+| manual retry | `Supervisor` with restart window | `jgen generate -t patterns/supervisor -n ClassName` |
+| `timer:send_after` | `ProcTimer.sendAfter(proc, delay, msg)` | replace inline |
+| `process_flag(trap_exit, true)` | `proc.trapExits(true)` | replace inline |
+| `proc_lib:start_link` | `ProcLib.startLink(factory)` | replace inline |
+
+---
+
+## Enterprise Legacy Patterns (Fortune 500 additions)
+
+These patterns appear constantly in enterprise codebases and are not covered by the basic 9-rule triggers above.
+
+**Pattern A — Spring singleton with mutable injected state (Rule 1, LIVE-BLOCKER)**
+```java
+@Service
+public class OrderService {
+    @Autowired
+    private List<Order> pendingOrders; // shared across all threads
+```
+Refactor: `pendingOrders` is process state. Extract to a `Proc<List<Order>, OrderMsg>`.
+
+**Pattern B — ThreadLocal as implicit shared context (Rule 1, LIVE-BLOCKER)**
+```java
+private static final ThreadLocal<User> currentUser = new ThreadLocal<>();
+```
+This is shared mutable state wearing a disguise. In Java 26, use `ScopedValue<User>` (structured, bounded, immutable). In OTP terms: pass the user as a message argument. State you need in every call is either in the message or in the process state. It is not ambient.
+Refactor: `private static final ScopedValue<User> CURRENT_USER = ScopedValue.newInstance();`
+
+**Pattern C — Unbounded ExecutorService (Rule 9, POST-LIVE)**
+```java
+ExecutorService pool = Executors.newCachedThreadPool();
+pool.submit(task);
+```
+There is no backpressure. This will eat all memory under load. Use `Parallel` (structured fan-out with `StructuredTaskScope`) or a `Supervisor`-managed `Proc` pool.
+Refactor: `Parallel.map(items, this::process)`
+
+**Pattern D — Stream with swallowed checked exception (Rule 7, LIVE-BLOCKER)**
+```java
+items.stream()
+    .map(item -> {
+        try { return process(item); }
+        catch (Exception e) { return null; } // silent failure
+    })
+    .filter(Objects::nonNull)
+    .toList();
+```
+This is wrong. A `null` in the stream is a lie. The failure must reach a supervisor.
+Refactor: wrap with `Result.of(() -> process(item))`, then `.filter(Result::isSuccess)` or `.map(Result::orElseThrow)` depending on whether partial success is acceptable.
+
+**Pattern E — JPA entity mutation after retrieval (Rule 8, POST-LIVE)**
+```java
+User user = repo.findById(id).orElseThrow();
+user.setEmail(newEmail); // mutates shared entity
+repo.save(user);
+```
+The entity is not a value object. It is a mutable bag. Introduce a `record UpdateEmailCmd(String id, String email)` and handle it in a dedicated service method. The entity stays internal to the persistence layer.
+
+---
+
+## 60-Minute Go-Live Triage Protocol
+
+When you have one hour before deployment, do not refactor everything. Do this:
+
+**Step 1 — Score the codebase (5 minutes)**
+```bash
+bin/jgen refactor --source ./src/main/java --score
+```
+This ranks files 0-100 by modernization debt. Focus only on files scoring < 40.
+
+**Step 2 — Filter to LIVE-BLOCKERs only (10 minutes)**
+Apply this prompt to every file scoring < 40. Accept only `GO` verdicts with `SEVERITY: LIVE-BLOCKER`.
+Ignore POST-LIVE and DEFER. Write them to a backlog file.
+
+**Step 3 — Apply instant refactors (30 minutes)**
+Only execute refactors that are:
+- A single `jgen` command, OR
+- A 1-5 line substitution with no cascading changes
+
+If a fix requires touching more than 2 files, issue `NO-GO (LIVE RISK)` and monitor instead.
+
+**Step 4 — Verify (10 minutes)**
+```bash
+bin/mvndw verify
+```
+Zero failures required. If anything breaks, revert the change and issue `NO-GO (LIVE RISK)`.
+
+**Step 5 — Ship the backlog**
+```bash
+bin/jgen refactor --source ./src/main/java --plan
+# writes migrate.sh for post-live execution
+```
 
 ---
 
@@ -141,9 +264,21 @@ Apply .claude/gonogo-refactor-prompt.md to this code: <paste code here>
 Run .claude/gonogo-refactor-prompt.md on src/main/java/org/acme/Foo.java
 ```
 
-**CLI:**
+**Batch scan (score all files, then triage):**
+```bash
+bin/jgen refactor --source ./src/main/java --score
+```
+
+**CLI (single file):**
 ```bash
 claude -p "$(cat .claude/gonogo-refactor-prompt.md)" < src/main/java/org/acme/Foo.java
+```
+
+**CLI (batch — pipe each file through the verdict):**
+```bash
+for f in $(bin/jgen refactor --source ./src/main/java --score | awk '$2 < 40 {print $1}'); do
+  echo "=== $f ===" && claude -p "$(cat .claude/gonogo-refactor-prompt.md)" < "$f"
+done
 ```
 
 ---
@@ -164,6 +299,7 @@ public class UserCache {
 ### Expected output:
 ```
 RULE VIOLATED: Rule 1 — Share Nothing
+SEVERITY: LIVE-BLOCKER
 
 GO — This static HashMap is shared state and it will corrupt under concurrency; in Erlang this is a process.
 
@@ -189,4 +325,21 @@ public record UserId(String value) {
 ### Expected output:
 ```
 NO-GO — This is correct: a record, a Result, no null, no Optional, no setters.
+```
+
+---
+
+### Input: go-live imminent, no tests, complex violation
+```java
+public class LegacyBillingEngine {
+    private static volatile BillingConfig config;
+    // 800 lines, no tests, touched by 3 teams
+```
+
+### Expected output:
+```
+NO-GO (LIVE RISK) — Do not touch this now.
+SEVERITY: LIVE-BLOCKER
+MONITOR: Watch for NullPointerException on config reads; add log.warn before every config access.
+SCHEDULE: Wrap in Proc<BillingConfig, BillingMsg> after go-live with full test coverage first.
 ```
