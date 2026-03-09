@@ -631,15 +631,14 @@ cmd_stress() {
         exit 1
     fi
 
-    local args="$source"
-    [[ "$plan_flag"     == "true" ]] && args="$args --plan"
-    [[ "$generate_flag" == "true" ]] && args="$args --generate"
-
     echo -e "${BLUE}Armstrong Stress Scan: $source${NC}"
-    ./mvnw exec:java -q \
-        -Dexec.mainClass="org.acme.dogfood.innovation.StressTestScanner" \
-        -Dexec.args="$args" \
-        -Dexec.classpathScope="test"
+    cd "$PROJECT_ROOT"
+
+    local ggen_args=(stress --source "$source")
+    [[ "$plan_flag"     == "true" ]] && ggen_args+=(--plan)
+    [[ "$generate_flag" == "true" ]] && ggen_args+=(--generate)
+
+    GGEN_CONFIG="$GGEN_CONFIG" ggen "${ggen_args[@]}"
 }
 
 # =============================================================================
@@ -650,6 +649,9 @@ if [[ $# -lt 1 ]]; then
     usage
     exit 0
 fi
+
+# ggen is the sole engine — nothing works without it
+check_ggen
 
 command="$1"
 shift
