@@ -3,9 +3,9 @@
 
 packer {
   required_plugins {
-    oci = {
+    oracle = {
       version = ">= 1.0.0"
-      source  = "github.com/oracle/oci"
+      source  = "github.com/hashicorp/oracle"
     }
   }
 }
