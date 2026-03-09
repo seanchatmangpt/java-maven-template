@@ -220,11 +220,11 @@ public ProcRef<AggregateState<S>, Msg<C,E>> getOrCreate(AggregateId id) {
 
 ## 3. The Event Store as an OTP Actor
 
-The event store is not a database client that lives outside the actor system. It is itself an
-`Actor<EventStore.State, EventStore.Msg<E>>`, supervised by the same `Supervisor` tree as the
+The event store is not a database client that lives outside the actor system. It is itself a
+`Proc<EventStore.State, EventStore.Msg<E>>`, supervised by the same `Supervisor` tree as the
 aggregates.
 
-### Why an Actor?
+### Why a Proc?
 
 An actor-based event store provides sequential, conflict-free writes for a given stream without
 locks. Because an actor processes one message at a time, two concurrent `Append` messages for the
@@ -344,7 +344,7 @@ framework support.
 
 ### Projection Actor Shape
 
-A projection actor is an ordinary `Actor<P, E>` where `P` is the projection's state (e.g., a
+A projection actor is an ordinary `Proc<P, E>` where `P` is the projection's state (e.g., a
 `Map<OrderId, OrderSummary>`) and `E` is the event type. The handler is a pure function
 `(P, E) -> P`. Projections have no concept of commands or command rejection. They are
 append-only event consumers:
