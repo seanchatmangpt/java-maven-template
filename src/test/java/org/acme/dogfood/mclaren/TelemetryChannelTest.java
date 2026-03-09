@@ -1,192 +1,232 @@
 package org.acme.dogfood.mclaren;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.time.Instant;
-import org.acme.Result;
 import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link TelemetryChannel} sealed hierarchy and {@link TelemetryProcessor}
- * validation logic — the core building block of the McLaren Atlas refactor.
+ * Domain model tests for the SQL Race parameter and channel types — replacing the old
+ * placeholder {@code TelemetryChannel} tests with real SQL Race API coverage.
  *
- * <p>Tests cover:
- *
- * <ul>
- *   <li>Sealed channel variant construction and accessors
- *   <li>Compact-constructor validation (negative sampleRateHz, inverted range)
- *   <li>Railway-oriented sample validation (happy path, below min, above max, boundary)
- *   <li>Pattern-matching exhaustiveness over all four variants
- * </ul>
+ * <p>Tests cover: identifier format, factory methods, conversion math, classification logic,
+ * and validation contracts.
  */
 class TelemetryChannelTest implements WithAssertions {
 
-    // ── Well-known channel constants ──────────────────────────────────────────
+    // ── SqlRaceParameter ─────────────────────────────────────────────────────
 
     @Test
-    void speedKphHasExpectedMetadata() {
-        var ch = TelemetryChannel.SPEED_KPH;
+    void parameterIdentifierUsesColonSeparatedFormat() {
+        var param = SqlRaceParameter.of("vCar", "Chassis", 1L, 0.0, 400.0, "kph");
 
-        assertThat(ch.name()).isEqualTo("speed_kph");
-        assertThat(ch.unit()).isEqualTo("kph");
-        assertThat(ch.sampleRateHz()).isEqualTo(100);
-        assertThat(ch.minValid()).isEqualTo(0.0);
-        assertThat(ch.maxValid()).isEqualTo(400.0);
-        assertThat(ch).isInstanceOf(TelemetryChannel.Kinematic.class);
+        assertThat(param.identifier()).isEqualTo("vCar:Chassis");
+        assertThat(param.shortName()).isEqualTo("vCar");
+        assertThat(param.applicationGroupName()).isEqualTo("Chassis");
     }
 
     @Test
-    void rpmIsCriticalPowertrain() {
-        var ch = (TelemetryChannel.Powertrain) TelemetryChannel.RPM;
-
-        assertThat(ch.critical()).isTrue();
-        assertThat(ch.maxValid()).isEqualTo(18_000.0);
-    }
-
-    @Test
-    void throttleIsNonCriticalPowertrain() {
-        var ch = (TelemetryChannel.Powertrain) TelemetryChannel.THROTTLE_PCT;
-
-        assertThat(ch.critical()).isFalse();
-    }
-
-    @Test
-    void brakeTempHasLocation() {
-        var ch = (TelemetryChannel.Thermal) TelemetryChannel.BRAKE_TEMP_FL;
-
-        assertThat(ch.location()).isEqualTo("front_left_brake");
-        assertThat(ch.unit()).isEqualTo("°C");
-    }
-
-    @Test
-    void drsIsAeroVariant() {
-        assertThat(TelemetryChannel.DRS).isInstanceOf(TelemetryChannel.Aero.class);
-        assertThat(TelemetryChannel.DRS.minValid()).isEqualTo(0.0);
-        assertThat(TelemetryChannel.DRS.maxValid()).isEqualTo(1.0);
-    }
-
-    // ── Compact-constructor validation ────────────────────────────────────────
-
-    @Test
-    void kinematicRejectsNegativeSampleRate() {
-        assertThatThrownBy(() -> new TelemetryChannel.Kinematic("x", "m/s", 0, 0, 100))
+    void parameterRejectsIdentifierWithoutColon() {
+        assertThatThrownBy(() -> new SqlRaceParameter(
+                "vCarChassis", "vCar", "desc", 400, 0,
+                "CONV_vCar:Chassis", "ChassisChannels", 1L, "Chassis"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("sampleRateHz");
+                .hasMessageContaining("name:AppGroup");
     }
 
     @Test
-    void thermalRejectsInvertedRange() {
+    void parameterRejectsInvertedRange() {
+        assertThatThrownBy(() -> SqlRaceParameter.of("pBrakeF", "Chassis", 3L, 200.0, 50.0, "bar"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("minValue");
+    }
+
+    @Test
+    void classifyGoodSample() {
+        var param = SqlRaceParameter.of("vCar", "Chassis", 1L, 0.0, 400.0, "kph");
+
+        assertThat(param.classify(235.5)).isEqualTo(DataStatusType.Good);
+    }
+
+    @Test
+    void classifyOutOfRangeSampleAboveMax() {
+        var param = SqlRaceParameter.of("vCar", "Chassis", 1L, 0.0, 400.0, "kph");
+
+        assertThat(param.classify(450.0)).isEqualTo(DataStatusType.OutOfRange);
+    }
+
+    @Test
+    void classifyOutOfRangeSampleBelowMin() {
+        var param = SqlRaceParameter.of("rThrottle", "Chassis", 2L, 0.0, 100.0, "%");
+
+        assertThat(param.classify(-5.0)).isEqualTo(DataStatusType.OutOfRange);
+    }
+
+    @Test
+    void classifyNaNasInvalidData() {
+        var param = SqlRaceParameter.of("nEngine", "Chassis", 5L, 0.0, 18_000.0, "rpm");
+
+        assertThat(param.classify(Double.NaN)).isEqualTo(DataStatusType.InvalidData);
+        assertThat(param.classify(Double.POSITIVE_INFINITY)).isEqualTo(DataStatusType.InvalidData);
+    }
+
+    @Test
+    void conversionFunctionNameFollowsConvention() {
+        var param = SqlRaceParameter.of("TBrakeDiscFL", "BrakesByWire", 10L, 0.0, 1200.0, "°C");
+
+        assertThat(param.conversionFunctionName()).isEqualTo("CONV_TBrakeDiscFL:BrakesByWire");
+    }
+
+    // ── SqlRaceChannel ────────────────────────────────────────────────────────
+
+    @Test
+    void periodicFactoryComputesIntervalFromHz() {
+        var channel = SqlRaceChannel.periodic(1L, "vCar", 200.0, FrequencyUnit.Hz,
+                DataType.Signed16Bit);
+
+        assertThat(channel.intervalNs()).isEqualTo(5_000_000L); // 1e9 / 200 = 5ms
+        assertThat(channel.dataSourceType()).isEqualTo(ChannelDataSourceType.Periodic);
+        assertThat(channel.frequencyHz()).isCloseTo(200.0, within(0.001));
+    }
+
+    @Test
+    void channelRejectsZeroInterval() {
+        assertThatThrownBy(() -> new SqlRaceChannel(1L, "x", 0L, DataType.Float64Bit,
+                ChannelDataSourceType.Periodic))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("intervalNs");
+    }
+
+    @Test
+    void kHzUnitComputesCorrectInterval() {
+        var channel = SqlRaceChannel.periodic(2L, "accel", 2.0, FrequencyUnit.KHz,
+                DataType.Float32Bit);
+
+        assertThat(channel.intervalNs()).isEqualTo(500_000L); // 1e6 / 2 = 500µs
+    }
+
+    // ── RationalConversion ────────────────────────────────────────────────────
+
+    @Test
+    void linearIdentityConversionPreservesValue() {
+        var conv = RationalConversion.identity("CONV_vCar:Chassis", "kph");
+
+        assertThat(conv.apply(235.5)).isCloseTo(235.5, within(1e-9));
+    }
+
+    @Test
+    void linearScaleConversion() {
+        // 16-bit raw 0–32767 maps to 0–400 kph
+        double scale = 400.0 / 32767.0;
+        var conv = RationalConversion.linear("CONV_vCar:Chassis", "kph", scale, 0.0);
+
+        assertThat(conv.apply(0)).isCloseTo(0.0, within(1e-9));
+        assertThat(conv.apply(32767)).isCloseTo(400.0, within(0.01));
+    }
+
+    @Test
+    void linearOffsetConversion() {
+        // Celsius to Fahrenheit: F = C × 1.8 + 32
+        var conv = RationalConversion.linear("CONV_TBrakeDiscFL:BrakesByWire", "°F", 1.8, 32.0);
+
+        assertThat(conv.apply(0.0)).isCloseTo(32.0, within(1e-9));
+        assertThat(conv.apply(100.0)).isCloseTo(212.0, within(1e-9));
+    }
+
+    // ── ParameterValues ───────────────────────────────────────────────────────
+
+    @Test
+    void emptyParameterValuesHasZeroCount() {
+        var pv = ParameterValues.empty();
+
+        assertThat(pv.count()).isZero();
+        assertThat(pv.goodSamples().count()).isZero();
+    }
+
+    @Test
+    void singleSampleIsGoodByDefault() {
+        var pv = ParameterValues.single(1_000_000L, 237.5);
+
+        assertThat(pv.count()).isEqualTo(1);
+        assertThat(pv.dataStatus()[0]).isEqualTo(DataStatusType.Good);
+        assertThat(pv.data()[0]).isEqualTo(237.5);
+        assertThat(pv.timestamps()[0]).isEqualTo(1_000_000L);
+    }
+
+    @Test
+    void goodSamplesFiltersOutNonGood() {
+        var pv = new ParameterValues(
+                new long[] {1L, 2L, 3L},
+                new double[] {100.0, 999.0, 200.0},
+                new DataStatusType[] {DataStatusType.Good, DataStatusType.OutOfRange,
+                        DataStatusType.Good});
+
+        var good = pv.goodSamples();
+        assertThat(good.count()).isEqualTo(2);
+        assertThat(good.data()).containsExactly(100.0, 200.0);
+    }
+
+    @Test
+    void parameterValuesRejectsArrayLengthMismatch() {
+        assertThatThrownBy(() -> new ParameterValues(
+                new long[] {1L, 2L},
+                new double[] {1.0},
+                new DataStatusType[] {DataStatusType.Good}))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mismatch");
+    }
+
+    @Test
+    void parameterValuesEqualsIsValueBased() {
+        var a = ParameterValues.single(100L, 42.0);
+        var b = ParameterValues.single(100L, 42.0);
+
+        assertThat(a).isEqualTo(b);
+        assertThat(a.hashCode()).isEqualTo(b.hashCode());
+    }
+
+    // ── SqlRaceLap ────────────────────────────────────────────────────────────
+
+    @Test
+    void outLapFactoryCreatesLapZero() {
+        var lap = SqlRaceLap.outLap(1_000_000_000L);
+
+        assertThat(lap.number()).isZero();
+        assertThat(lap.isOutLap()).isTrue();
+        assertThat(lap.countForFastestLap()).isFalse();
+        assertThat(lap.triggerSource()).isEqualTo(SqlRaceLap.TRIGGER_BEACON);
+    }
+
+    @Test
+    void flyingLapCounts() {
+        var lap = SqlRaceLap.flyingLap(2_000_000_000L, 3);
+
+        assertThat(lap.number()).isEqualTo(3);
+        assertThat(lap.countForFastestLap()).isTrue();
+        assertThat(lap.triggerSource()).isEqualTo(SqlRaceLap.TRIGGER_GPS);
+    }
+
+    @Test
+    void lapRejectsNegativeNumber() {
         assertThatThrownBy(
-                        () -> new TelemetryChannel.Thermal("t", "°C", 10, 500.0, 100.0, "wheel"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("minValid > maxValid");
+                () -> new SqlRaceLap(0L, -1, SqlRaceLap.TRIGGER_GPS, "bad", false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ── ApplicationGroup + ParameterGroup ────────────────────────────────────
+
+    @Test
+    void applicationGroupRdaFactory() {
+        var appGroup = ApplicationGroup.rda("Chassis", "ChassisKinematicChannels",
+                "PowertrainChannels");
+
+        assertThat(appGroup.identifier()).isEqualTo("Chassis");
+        assertThat(appGroup.supportsRda()).isTrue();
+        assertThat(appGroup.parameterGroupIdentifiers())
+                .containsExactly("ChassisKinematicChannels", "PowertrainChannels");
     }
 
     @Test
-    void powertrainRejectsNullName() {
-        assertThatThrownBy(() -> new TelemetryChannel.Powertrain(null, "rpm", 50, 0, 18000, true))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("name");
-    }
-
-    @Test
-    void aeroRejectsNullUnit() {
-        assertThatThrownBy(() -> new TelemetryChannel.Aero("drs", null, 50, 0, 1))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("unit");
-    }
-
-    // ── Sample validation — happy path ────────────────────────────────────────
-
-    @Test
-    void validSampleInRangeSucceeds() {
-        var now = Instant.now();
-        var result = TelemetryProcessor.validate(TelemetryChannel.SPEED_KPH, 235.4, now);
-
-        assertThat(result.isSuccess()).isTrue();
-        var sample = ((Result.Success<TelemetryProcessor.ValidSample, ?>) result).value();
-        assertThat(sample.channelName()).isEqualTo("speed_kph");
-        assertThat(sample.value()).isEqualTo(235.4);
-        assertThat(sample.timestamp()).isEqualTo(now);
-    }
-
-    @Test
-    void sampleAtMinBoundarySucceeds() {
-        var result =
-                TelemetryProcessor.validate(TelemetryChannel.SPEED_KPH, 0.0, Instant.now());
-
-        assertThat(result.isSuccess()).isTrue();
-    }
-
-    @Test
-    void sampleAtMaxBoundarySucceeds() {
-        var result =
-                TelemetryProcessor.validate(TelemetryChannel.SPEED_KPH, 400.0, Instant.now());
-
-        assertThat(result.isSuccess()).isTrue();
-    }
-
-    // ── Sample validation — error paths ──────────────────────────────────────
-
-    @Test
-    void sampleBelowMinFails() {
-        var result =
-                TelemetryProcessor.validate(TelemetryChannel.SPEED_KPH, -1.0, Instant.now());
-
-        assertThat(result.isFailure()).isTrue();
-        var error =
-                ((Result.Failure<?, TelemetryProcessor.ValidationError>) result).error();
-        assertThat(error)
-                .isInstanceOf(TelemetryProcessor.ValidationError.OutOfRange.class);
-        var oor = (TelemetryProcessor.ValidationError.OutOfRange) error;
-        assertThat(oor.channelName()).isEqualTo("speed_kph");
-        assertThat(oor.value()).isEqualTo(-1.0);
-    }
-
-    @Test
-    void sampleAboveMaxFails() {
-        var result =
-                TelemetryProcessor.validate(TelemetryChannel.SPEED_KPH, 401.0, Instant.now());
-
-        assertThat(result.isFailure()).isTrue();
-    }
-
-    @Test
-    void thermalSampleOutOfRangeProducesCorrectError() {
-        // Brake disc can't exceed 1200 °C
-        var result =
-                TelemetryProcessor.validate(
-                        TelemetryChannel.BRAKE_TEMP_FL, 1500.0, Instant.now());
-
-        assertThat(result.isFailure()).isTrue();
-        var error =
-                ((Result.Failure<?, TelemetryProcessor.ValidationError>) result).error();
-        var oor = (TelemetryProcessor.ValidationError.OutOfRange) error;
-        assertThat(oor.max()).isEqualTo(1_200.0);
-    }
-
-    // ── Pattern matching exhaustiveness ───────────────────────────────────────
-
-    @Test
-    void patternMatchOverAllVariantsIsExhaustive() {
-        // If a new variant is added to the sealed hierarchy without a matching arm,
-        // this switch becomes a compile error rather than a runtime surprise.
-        List<TelemetryChannel> channels = List.of(
-                TelemetryChannel.SPEED_KPH,
-                TelemetryChannel.BRAKE_TEMP_FL,
-                TelemetryChannel.RPM,
-                TelemetryChannel.DRS);
-
-        for (var ch : channels) {
-            String category = switch (ch) {
-                case TelemetryChannel.Kinematic k -> "kinematic";
-                case TelemetryChannel.Thermal t -> "thermal";
-                case TelemetryChannel.Powertrain p -> "powertrain";
-                case TelemetryChannel.Aero a -> "aero";
-            };
-            assertThat(category).isNotEmpty();
-        }
+    void parameterGroupRejectsBlankIdentifier() {
+        assertThatThrownBy(() -> new ParameterGroup("", "desc"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }
