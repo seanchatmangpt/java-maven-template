@@ -8,9 +8,9 @@
 
 ## Abstract
 
-This thesis argues that the combination of Joe Armstrong's Erlang/OTP primitives — share-nothing actors, message-passing mailboxes, and hierarchical supervision trees — implemented atop Java 25's virtual threads and structured concurrency, constitutes not an incremental improvement but a *phase change* in the Java ecosystem. A phase change, in the thermodynamic sense, is a discontinuous transition where the substance remains chemically identical but its macroscopic behavior becomes qualitatively different. Water does not gradually become ice; it crosses a threshold. We argue that Java has crossed such a threshold.
+This thesis argues that the combination of Joe Armstrong's Erlang/OTP primitives — share-nothing actors, message-passing mailboxes, and hierarchical supervision trees — implemented atop Java 26's virtual threads and structured concurrency, constitutes not an incremental improvement but a *phase change* in the Java ecosystem. A phase change, in the thermodynamic sense, is a discontinuous transition where the substance remains chemically identical but its macroscopic behavior becomes qualitatively different. Water does not gradually become ice; it crosses a threshold. We argue that Java has crossed such a threshold.
 
-The enabling conditions — JEP 444 (virtual threads, GA in Java 21), JEP 453 (structured concurrency, preview in Java 21, refined through Java 25), and the JPMS module system — converge to make Armstrong's 2003 doctoral axioms directly expressible in Java with no runtime penalty. When this happens to a mainstream language with 10 million developers, the implications extend beyond the language itself: every major framework, every architectural pattern, every production incident playbook must be reexamined.
+The enabling conditions — JEP 444 (virtual threads, GA in Java 21), JEP 453 (structured concurrency, preview in Java 21, refined through Java 26), and the JPMS module system — converge to make Armstrong's 2003 doctoral axioms directly expressible in Java with no runtime penalty. When this happens to a mainstream language with 10 million developers, the implications extend beyond the language itself: every major framework, every architectural pattern, every production incident playbook must be reexamined.
 
 We examine the structural incompatibilities between Armstrong's model and dominant Java frameworks (Spring, Quarkus, Netty, HikariCP, Akka), project a refactoring timeline for the ecosystem, and argue that the economic and operational advantages of supervision trees are large enough to overcome framework gravity — the tendency of incumbent frameworks to accumulate complexity and resist replacement. The thesis concludes that Armstrong was right in 1986, right in 2003, and that Java is finally arriving at the same destination 35 years later.
 
@@ -34,20 +34,29 @@ Meanwhile, Java was pursuing a different path. Java 1.0 (1995) introduced thread
 
 The Java ecosystem responded by building frameworks that *managed* this treachery: thread pools (Executor, ForkJoinPool), synchronization utilities (CountDownLatch, Semaphore, CyclicBarrier), reactive libraries (RxJava, Project Reactor), and higher-level frameworks (Spring, Akka) that hid the complexity behind abstractions. Each abstraction layer added configuration surface, debugging difficulty, and framework lock-in.
 
-This thesis argues that Java 25, for the first time, provides the substrate to implement Armstrong's axioms *directly* — without a specialized runtime, without a separate language, without a framework tax. And that this direct implementation, once it propagates through the ecosystem, will make most existing concurrency frameworks obsolete.
+This thesis argues that Java 26, for the first time, provides the substrate to implement Armstrong's axioms *directly* — without a specialized runtime, without a separate language, without a framework tax. And that this direct implementation, once it propagates through the ecosystem, will make most existing concurrency frameworks obsolete.
 
-The codebase that motivated this thesis implements four Armstrong primitives in approximately 300 lines of Java 25:
+The codebase that motivated this thesis implements fifteen Armstrong primitives in ~2,500 lines across 15 files of Java 26:
 
 ```
-org.acme.Actor<S,M>         — share-nothing process with virtual-thread mailbox
-org.acme.ActorRef<S,M>      — stable opaque Pid analogue (location transparency)
+org.acme.Proc<S,M>          — share-nothing process with virtual-thread mailbox
+org.acme.ProcRef<S,M>       — stable opaque Pid (location transparency, survives restarts)
 org.acme.Supervisor          — OTP supervision tree (ONE_FOR_ONE / ONE_FOR_ALL / REST_FOR_ONE)
-org.acme.CrashRecovery       — "let it crash" + supervised retry
-org.acme.Parallel            — structured fan-out (StructuredTaskScope)
-org.acme.Result<T,E>         — railway-oriented error propagation
+org.acme.CrashRecovery       — "let it crash" + supervised retry via isolated virtual threads
+org.acme.StateMachine<S,E,D> — gen_statem: state/event/data separation + sealed Transition hierarchy
+org.acme.ProcessLink         — bilateral crash propagation (link/1, spawn_link/3)
+org.acme.Parallel            — structured fan-out with fail-fast semantics (pmap)
+org.acme.ProcessMonitor      — unilateral DOWN notifications: monitor/demonitor
+org.acme.ProcessRegistry     — global name table: register/2, whereis/1, unregister/1
+org.acme.ProcTimer           — timed message delivery: send_after/3, send_interval/3
+org.acme.ExitSignal          — exit signal record delivered when trapping exits
+org.acme.ProcSys             — sys module: get_state, suspend, resume, statistics
+org.acme.ProcLib             — proc_lib startup handshake: start_link blocks until initAck()
+org.acme.EventManager<E>     — gen_event: typed event manager with handler isolation
+org.acme.Result<T,E>         — railway-oriented error propagation: Success | Failure
 ```
 
-Three hundred lines. Thirty-five years of Erlang distilled into three hundred lines of standard-library Java. This is the phase change.
+~2,500 lines across 15 files. Thirty-five years of Erlang distilled into ~2,500 lines of standard-library Java. This is the phase change.
 
 ---
 
@@ -61,7 +70,7 @@ Armstrong's model can be stated as a set of formal properties derivable from pro
 
 **Property 2: Asynchronous message passing.** `tell(M)` enqueues a message without blocking the caller. This is the π-calculus *output action*: `ā⟨v⟩.P` — send value `v` on channel `a` and continue with process `P`. The actor's `LinkedTransferQueue` is the channel. Lock-free MPMC (multiple-producer, multiple-consumer) semantics give 50–150 ns per message on modern hardware.
 
-**Property 3: Location transparency.** `ActorRef<S,M>` is an opaque handle. Callers cannot distinguish between a live actor and a restarted actor behind the same ref. This is Armstrong's *Pid* semantics: a process identifier that survives restarts. When `Supervisor.restartOne()` calls `ref.swap(newActor)`, the `volatile` write is immediately visible to all threads holding the ref. The caller's `tell()` and `ask()` transparently redirect to the new actor.
+**Property 3: Location transparency.** `ProcRef<S,M>` is an opaque handle. Callers cannot distinguish between a live actor and a restarted actor behind the same ref. This is Armstrong's *Pid* semantics: a process identifier that survives restarts. When `Supervisor.restartOne()` calls `ref.swap(newActor)`, the `volatile` write is immediately visible to all threads holding the ref. The caller's `tell()` and `ask()` transparently redirect to the new actor.
 
 **Property 4: Supervision as a structural invariant.** The supervisor tree is not a runtime monitoring system added to an existing process structure — it *is* the process structure. Every actor is either a root or has exactly one supervisor. This is the tree property of OTP, which Armstrong credits with Erlang's reliability: "A system built from a tree of supervisors has a well-defined failure and recovery semantics."
 
@@ -80,7 +89,7 @@ JEP 444 (virtual threads, GA in Java 21) breaks the compromise. Virtual threads 
 - Sequential, readable handler logic: ✓ (no callbacks required)
 - Debuggable stack traces: ✓ (virtual thread dumps show full sequential stack)
 
-The `Actor<S,M>` implementation reflects this directly:
+The `Proc<S,M>` implementation reflects this directly:
 
 ```java
 thread = Thread.ofVirtual()
@@ -137,11 +146,11 @@ Java has experienced exactly three previous phase changes by this definition:
 
 **Java 9 (2017): Module system (JPMS).** Explicit module boundaries replaced classpath chaos. Encapsulation became enforced, not conventional. This phase change is still incomplete — the ecosystem resistance was severe, and many libraries still publish non-modular JARs as of 2026.
 
-The Armstrong convergence of Java 25 has the properties of a phase change:
+The Armstrong convergence of Java 26 has the properties of a phase change:
 
-**Threshold crossing.** Virtual threads alone (Java 21) were insufficient — Akka and Reactor remained useful because the *actor lifecycle* and *supervision* primitives were missing. `Supervisor.java` and `ActorRef.java` complete the set. The combination of all six primitives (`Actor`, `ActorRef`, `Supervisor`, `CrashRecovery`, `Parallel`, `Result`) crosses the threshold where the entire OTP model is expressible without external frameworks.
+**Threshold crossing.** Virtual threads alone (Java 21) were insufficient — Akka and Reactor remained useful because the *actor lifecycle* and *supervision* primitives were missing. `Supervisor.java` and `ProcRef.java` complete the set. The combination of all fifteen primitives (`Proc`, `ProcRef`, `Supervisor`, `CrashRecovery`, `StateMachine`, `ProcessLink`, `Parallel`, `ProcessMonitor`, `ProcessRegistry`, `ProcTimer`, `ExitSignal`, `ProcSys`, `ProcLib`, `EventManager`, `Result`) crosses the threshold where the entire OTP model is expressible without external frameworks.
 
-**Architectural reach.** The change affects HTTP request handling (actor-per-request replaces ThreadLocal), database connection management (actor-per-connection replaces pool managers), distributed systems (ActorRef semantics extend to remote nodes), AI inference (GPU shards as supervised actors), and event sourcing (actor state as aggregate root).
+**Architectural reach.** The change affects HTTP request handling (proc-per-request replaces ThreadLocal), database connection management (proc-per-connection replaces pool managers), distributed systems (ProcRef semantics extend to remote nodes), AI inference (GPU shards as supervised processes), and event sourcing (proc state as aggregate root).
 
 **Framework obsolescence.** Spring's `@Transactional` propagation mechanism relies on `ThreadLocal<TransactionStatus>`. In an actor model, there are no threads shared across method calls — each actor runs on its own virtual thread. `ThreadLocal` becomes meaningless as a cross-cutting concern carrier. The mechanism must be redesigned, not adapted.
 
@@ -151,14 +160,14 @@ Consider the minimal set of Armstrong primitives and the frameworks each one ren
 
 | Primitive | What It Replaces |
 |-----------|-----------------|
-| `Actor<S,M>` | Stateful service beans, session state, actor-system frameworks (Akka) |
-| `ActorRef<S,M>` | Service locators, dependency injection for mutable singletons |
+| `Proc<S,M>` | Stateful service beans, session state, actor-system frameworks (Akka) |
+| `ProcRef<S,M>` | Service locators, dependency injection for mutable singletons |
 | `Supervisor` | Circuit breakers (Resilience4j), restart policies (Kubernetes restartPolicy), watchdog threads |
 | `CrashRecovery` | Retry libraries (Failsafe, Resilience4j Retry), manual try-catch-log-retry patterns |
 | `Parallel` | ExecutorService.invokeAll(), CompletableFuture.allOf(), reactive merge operators |
 | `Result<T,E>` | Exception-based error handling, Optional chaining, checked exception propagation |
 
-No single primitive renders a framework obsolete. `Actor` alone is just "another actor library" — the ecosystem already has Akka, Quasar (pre-Loom), and Vert.x. `Supervisor` alone is just a watchdog. The phase change occurs because *all six together* cover the full surface area of concurrent, fault-tolerant application development with standard-library Java.
+No single primitive renders a framework obsolete. `Proc` alone is just "another actor library" — the ecosystem already has Akka, Quasar (pre-Loom), and Vert.x. `Supervisor` alone is just a watchdog. The phase change occurs because *all fifteen together* cover the full surface area of concurrent, fault-tolerant application development with standard-library Java.
 
 ### 3.3 Historical Parallels
 
@@ -232,7 +241,7 @@ HikariCP is the dominant JDBC connection pool. Its design assumes that connectio
 
 This model has a structural weakness: *connection leaks*. If application code checks out a connection and throws an exception before returning it, the connection is leaked. HikariCP's leak detection (a scheduled thread that logs warnings about long-held connections) is a heuristic, not a structural guarantee.
 
-Armstrong's model offers a structural solution: **actor-per-connection**. Each database connection is wrapped in an `Actor<ConnectionState, SqlMsg>`. The actor's virtual thread owns the connection for its lifetime. SQL operations are messages:
+Armstrong's model offers a structural solution: **proc-per-connection**. Each database connection is wrapped in a `Proc<ConnectionState, SqlMsg>`. The proc's virtual thread owns the connection for its lifetime. SQL operations are messages:
 
 ```java
 sealed interface SqlMsg permits SqlMsg.Execute, SqlMsg.Query, SqlMsg.BeginTx, SqlMsg.Commit, SqlMsg.Rollback {}
@@ -250,19 +259,19 @@ Akka is the preeminent actor framework for the JVM, directly inspired by Erlang/
 
 Akka's value proposition before Java 21:
 - Actors as a concurrency primitive (JVM had no lightweight process alternative)
-- Location transparency via `ActorRef` and `ActorSystem` (remote actors look like local actors)
+- Location transparency via `ProcRef` and `ActorSystem` (remote actors look like local actors)
 - Supervision strategies (restart, stop, escalate)
 - Cluster sharding, distributed pub-sub, persistence
 
-After Java 21-25:
-- Actors: `Thread.ofVirtual()` + `LinkedTransferQueue` = `Actor<S,M>` in 60 lines
-- Location transparency: `ActorRef<S,M>` with `volatile` swap = 30 lines
+After Java 21-26:
+- Processes: `Thread.ofVirtual()` + `LinkedTransferQueue` = `Proc<S,M>` in 60 lines
+- Location transparency: `ProcRef<S,M>` with `volatile` swap = 30 lines
 - Supervision: `Supervisor` with three strategies + sliding-window throttle = 150 lines
-- Cluster sharding: still requires distributed coordination infrastructure (this remains Akka's advantage post-Java-25)
+- Cluster sharding: still requires distributed coordination infrastructure (this remains Akka's advantage post-Java-26)
 
 The residual Akka use cases are distributed: remote actor references, cluster formation, distributed data. For purely local concurrent systems, the Armstrong primitives are simpler, faster to start (no ActorSystem initialization), and have no framework dependency.
 
-**The Akka retirement trajectory:** The Java community has already begun this conversation. Akka Typed (the modern Akka API, introduced in Akka 2.6) was itself an acknowledgment that the original untyped Akka API was too stringly-typed. Akka Typed with Java 21 virtual threads is a good system. Akka Typed with Java 25 native Armstrong primitives is *unnecessary indirection* for most use cases.
+**The Akka retirement trajectory:** The Java community has already begun this conversation. Akka Typed (the modern Akka API, introduced in Akka 2.6) was itself an acknowledgment that the original untyped Akka API was too stringly-typed. Akka Typed with Java 21 virtual threads is a good system. Akka Typed with Java 26 native Armstrong primitives is *unnecessary indirection* for most use cases.
 
 ---
 
@@ -289,7 +298,7 @@ In the Armstrong model:
 3. Zombie threads → supervisor detects actor crash (virtual thread exit) and restarts
 4. Cascading failure → `Parallel.all()` fails fast; actor mailboxes buffer without blocking callers
 
-**Developer productivity.** Reasoning about a system built from `Actor<S,M>` requires reading one function: the handler. The entire state of an actor is `S`; the entire behavior is the switch over `M`. This is the "let it crash" epistemic advantage: instead of defensive programming (null checks, exception handling, retry logic scattered throughout the handler), the handler is written to succeed. Failures are the supervisor's problem.
+**Developer productivity.** Reasoning about a system built from `Proc<S,M>` requires reading one function: the handler. The entire state of a proc is `S`; the entire behavior is the switch over `M`. This is the "let it crash" epistemic advantage: instead of defensive programming (null checks, exception handling, retry logic scattered throughout the handler), the handler is written to succeed. Failures are the supervisor's problem.
 
 Compare this to a typical Spring service method: null checks on autowired dependencies (possible in proxied beans), transaction management (what if the connection is unavailable?), exception handling (log or rethrow? which exception types to catch?), retry logic (should this method be retried or is it idempotent?). Each concern requires a decision and a line of code. In the Armstrong model, the handler is the happy path; everything else is supervision policy.
 
@@ -348,7 +357,7 @@ sealed interface CounterMsg permits CounterMsg.Increment, CounterMsg.Get {
 }
 
 // State is an immutable integer — no ORM, no session, no transaction
-Actor<Integer, CounterMsg> counterActor = new Actor<>(0,
+Proc<Integer, CounterMsg> counterActor = new Proc<>(0,
     (state, msg) -> switch (msg) {
         case CounterMsg.Increment(var by) -> state + by;
         case CounterMsg.Get() -> state;
@@ -422,7 +431,7 @@ As AI coding assistants become more capable, they will preferentially generate a
 
 ### 7.1 2024–2026: The Pioneer Phase
 
-The Armstrong convergence is currently in its pioneer phase. Virtual threads are GA (Java 21, September 2023). Structured concurrency is in preview (Java 25, September 2025). The implementations demonstrated in this codebase (`Actor`, `ActorRef`, `Supervisor`) total approximately 300 lines of standard-library Java.
+The Armstrong convergence is currently in its pioneer phase. Virtual threads are GA (Java 21, September 2023). Structured concurrency is in preview (Java 26, September 2025). The implementations demonstrated in this codebase (`Proc`, `ProcRef`, `Supervisor`, and 12 additional primitives) total ~2,500 lines across 15 files of standard-library Java.
 
 The characteristics of the pioneer phase:
 - Implementations are hand-rolled (as in this codebase) or from small libraries
@@ -436,11 +445,11 @@ Key indicator: when a major conference (JavaOne, Devoxx) features more than 3 ta
 
 As virtual threads stabilize and structured concurrency exits preview, framework authors will build adapters:
 
-**Spring-Armstrong Bridge:** A `@ActorScope` bean scope that wraps Spring beans in `Actor<BeanState, Msg>`. Transactions become explicit messages rather than `@Transactional` annotations. Security context is carried in message envelopes rather than `ThreadLocal`.
+**Spring-Armstrong Bridge:** A `@ProcScope` bean scope that wraps Spring beans in `Proc<BeanState, Msg>`. Transactions become explicit messages rather than `@Transactional` annotations. Security context is carried in message envelopes rather than `ThreadLocal`.
 
-**JDBC-Armstrong Pool:** A `SupervisedDataSource` that wraps HikariCP with an `Actor<Connection, SqlMsg>` per connection. Connection leaks become impossible. Pool size is `Supervisor` child count.
+**JDBC-Armstrong Pool:** A `SupervisedDataSource` that wraps HikariCP with a `Proc<Connection, SqlMsg>` per connection. Connection leaks become impossible. Pool size is `Supervisor` child count.
 
-**Netty-Armstrong Integration:** Netty's `ChannelHandler` implementations that dispatch events to `Actor<ChannelState, NetworkMsg>` instances. The network layer remains Netty; the application layer becomes actors.
+**Netty-Armstrong Integration:** Netty's `ChannelHandler` implementations that dispatch events to `Proc<ChannelState, NetworkMsg>` instances. The network layer remains Netty; the application layer becomes procs.
 
 These adapters will be the dominant adoption mechanism for existing codebases: organizations that cannot fully rewrite will adopt the Armstrong model at the boundary of new code while maintaining existing Spring infrastructure.
 
@@ -451,7 +460,7 @@ By 2029, sufficient organizational experience will exist to justify framework re
 The first rewrite candidates:
 1. **A new HTTP server framework** (likely from a cloud provider or startup) that is actor-native from the ground up. No ThreadLocal, no Servlet API, no Spring compatibility.
 2. **An actor-native database client** that replaces JDBC's synchronous, thread-affine API with a message-passing interface to a connection pool supervisor.
-3. **Distributed actor infrastructure** (competing with or replacing Akka Cluster) that extends `ActorRef` semantics across JVM boundaries using standard transport protocols.
+3. **Distributed actor infrastructure** (competing with or replacing Akka Cluster) that extends `ProcRef` semantics across JVM boundaries using standard transport protocols.
 
 Akka's retirement discussions will begin in this phase. The Akka team will face a strategic choice: rebrand as a distributed-only framework (abandoning the local actor use case to standard-library Java) or compete directly with native Armstrong implementations (unlikely to win on simplicity).
 
@@ -459,7 +468,7 @@ Akka's retirement discussions will begin in this phase. The Akka team will face 
 
 By 2032, the Java ecosystem will have bifurcated:
 
-**Armstrong-native systems** (new development, cloud-native microservices, AI infrastructure): Built on virtual threads, `Actor`, `Supervisor`, and actor-native frameworks. Spring Boot will have an "Armstrong mode" that disables `ThreadLocal` propagation and enables actor-scoped beans.
+**Armstrong-native systems** (new development, cloud-native microservices, AI infrastructure): Built on virtual threads, `Proc`, `Supervisor`, and proc-native frameworks. Spring Boot will have an "Armstrong mode" that disables `ThreadLocal` propagation and enables proc-scoped beans.
 
 **Legacy Spring systems** (existing enterprise applications, regulated industries): Maintained but not actively migrated. The migration cost for a 500k-line Spring monolith is too high to justify unless a major architectural change (cloud migration, compliance rewrite) creates an opportunity.
 
@@ -477,9 +486,9 @@ This thesis argues:
 
 1. Armstrong's axioms — share-nothing processes, message passing, supervision trees — are *correct* in the mathematical sense: they eliminate entire classes of concurrency bugs by construction.
 
-2. Java 25 provides, for the first time, the substrate to implement these axioms with standard-library code and no runtime penalty.
+2. Java 26 provides, for the first time, the substrate to implement these axioms with standard-library code and no runtime penalty.
 
-3. The combination of `Actor<S,M>`, `ActorRef<S,M>`, `Supervisor`, `CrashRecovery`, `Parallel`, and `Result<T,E>` implemented in ~300 lines constitutes a *complete* OTP implementation suitable for production use.
+3. The combination of `Proc<S,M>`, `ProcRef<S,M>`, `Supervisor`, `CrashRecovery`, `Parallel`, `StateMachine`, `ProcessLink`, `ProcessMonitor`, `ProcessRegistry`, `ProcTimer`, `ExitSignal`, `ProcSys`, `ProcLib`, `EventManager`, and `Result<T,E>` implemented in ~2,500 lines across 15 files constitutes a *complete* OTP implementation suitable for production use.
 
 4. This completion crosses the threshold for a phase change: the Armstrong model now covers the full surface area of concurrent, fault-tolerant application development in Java.
 
@@ -511,14 +520,14 @@ Armstrong is quoted throughout the Erlang documentation with an aphorism that ca
 
 > *"Processes share nothing, communicate only by message passing. A process is the unit of concurrency."*
 
-This sentence is now expressible in Java 25 as:
+This sentence is now expressible in Java 26 as:
 
 ```java
-public final class Actor<S, M> {
+public final class Proc<S, M> {
     private final TransferQueue<Envelope<M>> mailbox = new LinkedTransferQueue<>();
     private final Thread thread;
 
-    public Actor(S initial, BiFunction<S, M, S> handler) {
+    public Proc(S initial, BiFunction<S, M, S> handler) {
         thread = Thread.ofVirtual().start(() -> {
             S state = initial;
             while (!stopped || !mailbox.isEmpty()) {
@@ -534,7 +543,15 @@ public final class Actor<S, M> {
 }
 ```
 
-The entire actor model — Erlang's 35-year contribution to reliable software — is 60 lines of Java 25. Armstrong was right. Java is finally ready to admit it.
+The entire process model — Erlang's 35-year contribution to reliable software — is 60 lines of Java 26 (for the core `Proc`; the full 15-primitive set spans ~2,500 lines). Armstrong was right. Java is finally ready to admit it.
+
+---
+
+### Companion Documents
+
+This thesis is complemented by:
+- **[docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md)** — Formal equivalence proof with SPARQL ontology and benchmark data
+- **[INNOVATION-1-OTP-JDBC.md](INNOVATION-1-OTP-JDBC.md)** through **[INNOVATION-5-EVENT-SOURCING.md](INNOVATION-5-EVENT-SOURCING.md)** — Five applied innovation specifications built on this primitive set
 
 ---
 
@@ -566,6 +583,6 @@ Virding, R. (2018). Erlang's history. *Code BEAM SF 2018*. Erlang Solutions.
 
 ---
 
-*This thesis was written in the context of a Java 25 codebase implementing Armstrong's OTP primitives. The implementation — `Actor<S,M>`, `ActorRef<S,M>`, `Supervisor`, `CrashRecovery`, `Parallel`, and `Result<T,E>` — is available in the `org.acme` module. All code examples are drawn from or are consistent with that implementation.*
+*This thesis was written in the context of a Java 26 codebase implementing Armstrong's OTP primitives. The implementation — `Proc<S,M>`, `ProcRef<S,M>`, `Supervisor`, `CrashRecovery`, `StateMachine`, `ProcessLink`, `Parallel`, `ProcessMonitor`, `ProcessRegistry`, `ProcTimer`, `ExitSignal`, `ProcSys`, `ProcLib`, `EventManager`, and `Result<T,E>` — is available in the `org.acme` module. All code examples are drawn from or are consistent with that implementation.*
 
 *"Software is a young art, and we are still learning what works. Armstrong knew what worked in 1986. We are learning to listen."*

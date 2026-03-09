@@ -3,6 +3,12 @@
 **Technical Specification — Innovation 1**
 Status: Proposal | Date: 2026-03-08 | Author: Architecture Working Group
 
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** Proc, ProcRef, Supervisor, ProcessRegistry, Result
+> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [ProcRef.java](src/main/java/org/acme/ProcRef.java), [Supervisor.java](src/main/java/org/acme/Supervisor.java), [ProcessRegistry.java](src/main/java/org/acme/ProcessRegistry.java), [Result.java](src/main/java/org/acme/Result.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
+
 ---
 
 ## Table of Contents
@@ -68,14 +74,14 @@ The central idea: each database connection is not an object you hold — it is a
 
 ```
 Traditional pool:  caller holds Connection object → state can be corrupted, reference can escape
-OTP-Native JDBC:   caller holds ActorRef → sends SqlMsg → actor processes in isolation
+OTP-Native JDBC:   caller holds ProcRef → sends SqlMsg → actor processes in isolation
 ```
 
 The `Connection` object lives inside the actor's private state. No caller ever touches it directly. The actor's virtual thread is the only thread that ever calls methods on the JDBC `Connection`. This makes JDBC thread-safety a non-issue: there is exactly one thread per connection, always.
 
 ### 2.2 Structural Leak Prevention via Scope
 
-Connection acquisition is tied to a `StructuredTaskScope`. The pool supervisor is informed when a scope closes (via scope-local cleanup hooks or explicit `release` calls that are enforced by the type system — see Section 3). Because the `ActorRef` is the only handle to the connection, and the `ActorRef` cannot be serialized or placed in a `static` field without explicit effort, the structural pressure is toward correct usage.
+Connection acquisition is tied to a `StructuredTaskScope`. The pool supervisor is informed when a scope closes (via scope-local cleanup hooks or explicit `release` calls that are enforced by the type system — see Section 3). Because the `ProcRef` is the only handle to the connection, and the `ProcRef` cannot be serialized or placed in a `static` field without explicit effort, the structural pressure is toward correct usage.
 
 ### 2.3 Sealed Message Hierarchy
 
@@ -152,7 +158,7 @@ var poolSupervisor = new OtpConnectionPool(
 );
 
 // OtpConnectionPool internally creates a Supervisor with ONE_FOR_ONE
-// and registers one Actor<ConnectionState, SqlMsg> per connection.
+// and registers one Proc<ConnectionState, SqlMsg> per connection.
 // Each connection actor is identified by "conn-0", "conn-1", etc.
 ```
 
@@ -273,25 +279,25 @@ APPLICATION SUPERVISOR (ONE_FOR_ALL, maxRestarts=1, window=10s)
 │   Connected to application-level alerting / circuit breaker.
 │
 └── POOL SUPERVISOR  (ONE_FOR_ONE, maxRestarts=5, window=60s)
-    │   Actor<PoolState, PoolMsg>
+    │   Proc<PoolState, PoolMsg>
     │   Manages connection inventory: free list, wait queue, metrics.
     │   Handles: AcquireRequest, ReleaseNotification, HealthCheck
     │
-    ├── conn-0  Actor<ConnectionState, SqlMsg>  [IDLE]
+    ├── conn-0  Proc<ConnectionState, SqlMsg>  [IDLE]
     │   Virtual thread: blocking on mailbox.take()
     │   JDBC Connection: postgresql://... socket fd=7
     │
-    ├── conn-1  Actor<ConnectionState, SqlMsg>  [ACTIVE]
+    ├── conn-1  Proc<ConnectionState, SqlMsg>  [ACTIVE]
     │   Processing: Query("SELECT ...", params, future)
     │   JDBC Connection: postgresql://... socket fd=8
     │
-    ├── conn-2  Actor<ConnectionState, SqlMsg>  [IDLE]
+    ├── conn-2  Proc<ConnectionState, SqlMsg>  [IDLE]
     │   Virtual thread: blocking on mailbox.take()
     │   JDBC Connection: postgresql://... socket fd=9
     │
-    ├── conn-3  Actor<ConnectionState, SqlMsg>  [RESTARTING]
+    ├── conn-3  Proc<ConnectionState, SqlMsg>  [RESTARTING]
     │   Previous actor crashed: SocketTimeoutException
-    │   Supervisor spawning new Actor with fresh Connection
+    │   Supervisor spawning new Proc with fresh Connection
     │   Callers waiting in pool supervisor's wait queue
     │
     └── conn-N  [on-demand, up to maxConnections]
@@ -303,8 +309,8 @@ CRASH SCENARIO (conn-3 dies):
   2. Supervisor receives ChildCrashed("conn-3", SocketTimeoutException)
   3. ONE_FOR_ONE: only conn-3 is restarted; conn-0/1/2 keep running
   4. Supervisor calls CrashRecovery.retry(3, () -> openNewJdbcConnection())
-  5. On success: ActorRef<ConnectionState, SqlMsg> for conn-3 is swapped
-     atomically (ActorRef.swap()). All existing references now point to
+  5. On success: ProcRef<ConnectionState, SqlMsg> for conn-3 is swapped
+     atomically (ProcRef.swap()). All existing references now point to
      the new actor.
   6. Pool supervisor marks conn-3 IDLE again, serves next waiter.
   7. Crash counter incremented. If 5 crashes in 60s: pool supervisor
@@ -313,7 +319,7 @@ CRASH SCENARIO (conn-3 dies):
 ACQUISITION FLOW:
   Caller → poolSupervisor.ask(new AcquireRequest())
          → Pool actor checks free list
-         → If free: returns ActorRef<ConnectionState, SqlMsg>
+         → If free: returns ProcRef<ConnectionState, SqlMsg>
          → If empty: enqueues caller future in wait queue
          → When any conn sends Release: dequeues oldest waiter, fulfills future
          → If acquisitionTimeout exceeded: future completes with AcquisitionTimeout
@@ -331,9 +337,9 @@ OTP-Native JDBC introduces one additional layer compared to HikariCP: every SQL 
 
 | Operation              | HikariCP                         | OTP-Native JDBC                         |
 |------------------------|----------------------------------|-----------------------------------------|
-| Acquire connection     | ConcurrentBag.borrow (~200 ns)   | Actor ask() + CompletableFuture (~350 ns)|
+| Acquire connection     | ConcurrentBag.borrow (~200 ns)   | Proc ask() + CompletableFuture (~350 ns)|
 | Execute SQL            | Direct JDBC call                 | LinkedTransferQueue.add (~60 ns overhead)|
-| Return connection      | ConcurrentBag.requite (~100 ns)  | Actor tell(Release) (~50 ns)            |
+| Return connection      | ConcurrentBag.requite (~100 ns)  | Proc tell(Release) (~50 ns)            |
 | Total overhead/request | ~300 ns                          | ~460 ns                                 |
 
 The overhead is ~160 ns per request. At 100,000 requests/second, this is 16 ms of CPU time per second — well within noise for any workload where SQL execution itself takes more than 500 µs.
@@ -446,7 +452,7 @@ HikariCP solves the performance problem. OTP-Native JDBC solves the correctness 
 
 - `SqlMsg` sealed interface and all record variants
 - `ConnectionState` record with full lifecycle tracking
-- `Actor<ConnectionState, SqlMsg>` message handler with switch expression over `SqlMsg`
+- `Proc<ConnectionState, SqlMsg>` message handler with switch expression over `SqlMsg`
 - `OtpConnectionPool` wrapping `Supervisor` with `ONE_FOR_ONE`
 - `ScopedConnection` with `AutoCloseable` enforcement
 - Unit tests with H2 in-memory database
@@ -485,7 +491,7 @@ HikariCP solves the performance problem. OTP-Native JDBC solves the correctness 
 ## Appendix: Key Design Decisions
 
 **Why `LinkedTransferQueue` and not `ArrayBlockingQueue`?**
-`LinkedTransferQueue` is a lock-free MPMC queue. The existing `Actor<S,M>` implementation already uses it. Back-pressure from a bounded queue would require the pool supervisor to handle rejection, adding complexity without benefit — the pool supervisor's own wait queue provides the back-pressure.
+`LinkedTransferQueue` is a lock-free MPMC queue. The existing `Proc<S,M>` implementation already uses it. Back-pressure from a bounded queue would require the pool supervisor to handle rejection, adding complexity without benefit — the pool supervisor's own wait queue provides the back-pressure.
 
 **Why not `CompletableFuture` chains instead of actors?**
 `CompletableFuture` chains distribute state across callback closures with no single ownership point. When a chain fails, there is no supervisor to restart it. Actors provide a single-threaded, single-state-owner model that maps cleanly onto the crash-and-restart semantics the Supervisor already implements.
@@ -498,3 +504,20 @@ One virtual thread per connection means the actor's message loop is always a str
 
 **Why `ONE_FOR_ONE` and not `ONE_FOR_ALL`?**
 A connection crash is local — it reflects a problem with one TCP socket or one server-side session, not with all connections. `ONE_FOR_ONE` limits the blast radius. `ONE_FOR_ALL` would take the entire pool offline for a single bad connection, which is exactly the kind of cascading failure OTP supervision trees are designed to avoid.
+
+---
+
+## Template Generation
+
+The following `jgen` templates scaffold this innovation's core components:
+
+| Component | Template |
+|---|---|
+| JdbcActor (connection process with mailbox) | `bin/jgen generate -t patterns/repository-generic -n JdbcActor -p org.acme.jdbc` |
+| Result wrappers for SQL operations | `bin/jgen generate -t error-handling/result-railway -n SqlResult -p org.acme.jdbc` |
+
+Run `bin/jgen list` to see all 72 available templates.
+
+---
+
+*This specification is part of the [java-maven-template](https://github.com/seanchatmangpt/java-maven-template) innovation suite. See also: [INNOVATION-1](INNOVATION-1-OTP-JDBC.md) · [INNOVATION-2](INNOVATION-2-LLM-SUPERVISOR.md) · [INNOVATION-3](INNOVATION-3-ACTOR-HTTP.md) · [INNOVATION-4](INNOVATION-4-DISTRIBUTED-OTP.md) · [INNOVATION-5](INNOVATION-5-EVENT-SOURCING.md)*

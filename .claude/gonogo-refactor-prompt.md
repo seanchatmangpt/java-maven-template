@@ -107,15 +107,25 @@ Instant refactors only. If the fix requires more than one of these, it is not in
 
 | Erlang concept | Java 26 equivalent | jgen command |
 |---|---|---|
-| `spawn(fun)` | `new Proc<>(init, handler)` | `jgen generate -t patterns/actor -n ClassName` |
-| `supervisor` | `new Supervisor(specs, strategy)` | `jgen generate -t patterns/supervisor -n ClassName` |
-| `gen_statem` | `new StateMachine<>(state, data, transitions)` | `jgen generate -t patterns/state-machine -n ClassName` |
-| `gen_event` | `new EventManager<>()` | `jgen generate -t patterns/event-manager -n ClassName` |
+| `spawn(fun)` / `gen_server` | `new Proc<>(init, handler)` | `jgen generate -t concurrency/virtual-thread -n ClassName` |
+| `Pid` / stable handle | `ProcRef<S,M>` | part of `Proc` setup |
+| `supervisor` | `new Supervisor(specs, strategy)` | `jgen generate -t patterns/state-machine-sealed -n ClassName` |
+| `let it crash` | `CrashRecovery.supervise(supplier, maxRetries)` | `jgen generate -t error-handling/result-railway -n ClassName` |
+| `gen_statem` | `new StateMachine<>(state, data, transitions)` | `jgen generate -t patterns/state-machine-sealed -n ClassName` |
+| `process link` | `ProcessLink` | `jgen generate -t patterns/observer-flow -n ClassName` |
+| `pmap` | `Parallel.map(list, fn)` | `jgen generate -t concurrency/structured-concurrency -n ClassName` |
+| `monitor/demonitor` | `ProcessMonitor` | `jgen generate -t patterns/observer-flow -n ClassName` |
+| `register/whereis` | `ProcessRegistry` | `jgen generate -t patterns/repository-generic -n ClassName` |
+| `timer:send_after` | `ProcTimer` | `jgen generate -t api/java-time -n ClassName` |
+| `exit signal` | `ExitSignal` | part of `ProcessLink` setup |
+| `sys:get_state` | `ProcSys` | part of `Proc` introspection |
+| `proc_lib:start_link` | `ProcLib` | part of `Proc` startup |
+| `gen_event` | `new EventManager<>()` | `jgen generate -t patterns/observer-flow -n ClassName` |
 | `try/catch` → supervisor | `CrashRecovery.supervise(supplier, maxRetries)` | replace inline |
 | `null` / `Optional` | `Result<T, E>` | `jgen generate -t error-handling/result-railway -n ClassName` |
 | mutable DTO | `record` | `jgen generate -t core/record -n ClassName` |
 | `instanceof` chain | `sealed interface` + `switch` | `jgen generate -t core/sealed-types -n ClassName` |
-| manual retry | `Supervisor` with restart window | `jgen generate -t patterns/supervisor -n ClassName` |
+| manual retry | `Supervisor` with restart window | `jgen generate -t patterns/state-machine-sealed -n ClassName` |
 
 ---
 
@@ -158,7 +168,7 @@ RULE VIOLATED: Rule 1 — Share Nothing
 GO — This static HashMap is shared state and it will corrupt under concurrency; in Erlang this is a process.
 
 REFACTOR:
-  jgen generate -t patterns/actor -n UserCache -p org.acme
+  jgen generate -t concurrency/virtual-thread -n UserCache -p org.acme
 
 BECAUSE: A process owns its state; no other process reads or writes it directly — that is how you get nine nines.
 ```

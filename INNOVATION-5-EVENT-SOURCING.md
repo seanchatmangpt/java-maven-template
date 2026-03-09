@@ -1,8 +1,14 @@
 # Innovation 5: OTP-Native Event Sourcing — Actors as Event-Sourced Aggregates
 
 **Technical Specification**
-Date: 2026-03-08
-Codebase: `/home/user/java-maven-template/src/main/java/org/acme/`
+**Date:** 2026-03-08
+**Codebase:** `org.acme` — Java 26 JPMS library implementing Joe Armstrong's Erlang/OTP primitives
+
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** Proc, ProcRef, Supervisor, StateMachine, EventManager, ProcessRegistry, Result
+> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [StateMachine.java](src/main/java/org/acme/StateMachine.java), [EventManager.java](src/main/java/org/acme/EventManager.java), [ProcessRegistry.java](src/main/java/org/acme/ProcessRegistry.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
 

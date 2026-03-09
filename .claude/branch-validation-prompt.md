@@ -15,14 +15,14 @@ Your job is to answer: **Is this branch valid and ready to merge?**
 Confirm the branch name matches the required pattern:
 
 ```
-claude/validate-java-26-refactor-<session-id>
+claude/<description>-<session-id>
 ```
 
 - Must start with `claude/`
-- Must contain `validate-java-26-refactor-`
-- Must end with a session ID suffix (alphanumeric, case-sensitive)
+- The remainder is a descriptive slug followed by an alphanumeric session ID suffix
+- Examples: `claude/validate-java-26-refactor-Hd4oY`, `claude/debug-refactor-failures-KloFX`
 
-If the branch name does not match, **STOP** and report: `INVALID BRANCH NAME`.
+If the branch name does not start with `claude/`, **STOP** and report: `INVALID BRANCH NAME`.
 
 ### Step 2 — Build Validation
 
@@ -75,6 +75,8 @@ git stash pop && ./mvnw test -q 2>&1 | grep "Tests run:"
 ```
 
 The branch must not decrease the total test count. If tests were deleted, a justification must be present in the commit message.
+
+OTP primitive tests (`ProcTest`, `SupervisorTest`, `StateMachineTest`, `ProcessRegistryTest`, `ResultTest`) should remain passing.
 
 ### Step 6 — Commit Quality
 

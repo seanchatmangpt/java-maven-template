@@ -3,7 +3,13 @@
 **Technical Specification**
 **Date:** 2026-03-08
 **Status:** Proposed
-**Codebase:** `org.acme` — Java 25 JPMS library, GraalVM Community CE 25.0.2
+**Codebase:** `org.acme` — Java 26 JPMS library, GraalVM Community CE 25.0.2
+
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** ProcRef, Supervisor, ProcessRegistry, ProcessMonitor, ProcessLink, EventManager
+> **Related Source:** [Supervisor.java](src/main/java/org/acme/Supervisor.java), [ProcRef.java](src/main/java/org/acme/ProcRef.java), [ProcessRegistry.java](src/main/java/org/acme/ProcessRegistry.java), [ProcessLink.java](src/main/java/org/acme/ProcessLink.java), [EventManager.java](src/main/java/org/acme/EventManager.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
 
@@ -33,7 +39,7 @@ Erlang's distribution layer avoided this trap by a simple insight: a `Pid` is a 
 
 ### 2.1 Design Principle: Zero New Concepts for Callers
 
-The single non-negotiable constraint is that code which uses `ActorRef<S,M>` locally requires no changes to work with a remote actor. The distribution layer must be transparent to call sites. This is achievable because the existing `ActorRef` is already an opaque indirection handle — `Supervisor.swap()` already replaces the underlying `Actor` without any caller awareness. The distributed extension adds one more level of indirection beneath that.
+The single non-negotiable constraint is that code which uses `ProcRef<S,M>` locally requires no changes to work with a remote actor. The distribution layer must be transparent to call sites. This is achievable because the existing `ProcRef` is already an opaque indirection handle — `Supervisor.swap()` already replaces the underlying `Proc` without any caller awareness. The distributed extension adds one more level of indirection beneath that.
 
 ### 2.2 Scope: Under 1,000 Lines
 
@@ -41,7 +47,7 @@ The full distributed layer can be implemented in fewer than 1,000 lines because:
 
 - **Transport** is delegated to a single pluggable interface (`NodeTransport`). The default implementation uses UDP datagrams (plain `java.net.DatagramSocket`, no dependencies). An optional Aeron implementation can be dropped in for high-throughput scenarios.
 - **Serialization** uses Java Records' structural decomposition via Jackson (one `ObjectMapper`, configured once). Records are self-describing; their component accessors provide all information needed for field-by-field JSON encoding without reflection on private state.
-- **Membership** is a gossip protocol implemented as a first-class `Actor` using the existing `Actor<S,M>` class — no new concurrency primitives.
+- **Membership** is a gossip protocol implemented as a first-class `Proc` using the existing `Proc<S,M>` class — no new concurrency primitives.
 - **Supervision** extends `Supervisor` by overriding crash detection to also handle network timeouts, using the existing `ChildCrashed` event pathway.
 - **State replication** (the Mnesia analogue) is implemented as Raft over actor message passing — Raft messages are just another sealed-record hierarchy delivered to `DistributedStateActor<S>`.
 
