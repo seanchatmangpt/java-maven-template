@@ -514,6 +514,94 @@ class ModernizationScorerTest implements WithAssertions {
         }
     }
 
+    // ── Enterprise patterns (GoNoGo rules) ───────────────────────────────────
+
+    @Nested
+    @DisplayName("Enterprise legacy patterns")
+    class EnterprisePatterns {
+
+        @Test
+        @DisplayName("ThreadLocal detected as legacy concurrency pattern")
+        void threadLocalIsLegacy() {
+            var source =
+                    """
+                    package com.example;
+                    public class RequestContext {
+                        private static final ThreadLocal<String> current = new ThreadLocal<>();
+                        public static void set(String v) { current.set(v); }
+                    }
+                    """;
+
+            var score = scorer.analyze(source);
+
+            var concurrencyFindings = findingsForCategory(score, "concurrency");
+            assertThat(concurrencyFindings)
+                    .anyMatch(
+                            f ->
+                                    f instanceof Finding.LegacyUsage lu
+                                            && lu.pattern().contains("ThreadLocal"));
+        }
+
+        @Test
+        @DisplayName("static AtomicInteger detected as legacy shared state")
+        void staticAtomicIntegerIsLegacy() {
+            var source =
+                    """
+                    package com.example;
+                    import java.util.concurrent.atomic.AtomicInteger;
+                    public class Counter {
+                        private static final AtomicInteger count = new AtomicInteger(0);
+                    }
+                    """;
+
+            var score = scorer.analyze(source);
+
+            var concurrencyFindings = findingsForCategory(score, "concurrency");
+            assertThat(concurrencyFindings)
+                    .anyMatch(
+                            f ->
+                                    f instanceof Finding.LegacyUsage lu
+                                            && lu.pattern().contains("Atomic"));
+        }
+
+        @Test
+        @DisplayName("ScopedValue.newInstance detected as modern concurrency pattern")
+        void scopedValueIsModern() {
+            var source =
+                    """
+                    package com.example;
+                    public class RequestContext {
+                        private static final ScopedValue<String> REQUEST_ID =
+                            ScopedValue.newInstance();
+                    }
+                    """;
+
+            var score = scorer.analyze(source);
+
+            var concurrencyFindings = findingsForCategory(score, "concurrency");
+            assertThat(concurrencyFindings)
+                    .anyMatch(
+                            f ->
+                                    f instanceof Finding.ModernUsage mu
+                                            && mu.pattern().contains("ScopedValue"));
+        }
+
+        @Test
+        @DisplayName("ThreadLocal lowers concurrency score vs ScopedValue")
+        void threadLocalLowersScoreVsScopedValue() {
+            var threadLocalSource =
+                    "public class A { static final ThreadLocal<String> t = new ThreadLocal<>(); }";
+            var scopedValueSource =
+                    "public class B { static final ScopedValue<String> s = ScopedValue.newInstance(); }";
+
+            var threadLocalScore = scorer.analyze(threadLocalSource);
+            var scopedValueScore = scorer.analyze(scopedValueSource);
+
+            assertThat(threadLocalScore.overallScore())
+                    .isLessThan(scopedValueScore.overallScore());
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static java.util.List<Finding> findingsForCategory(
