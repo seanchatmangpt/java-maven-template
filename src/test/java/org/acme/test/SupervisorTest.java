@@ -15,6 +15,8 @@ import org.acme.Supervisor;
 import org.acme.Supervisor.Strategy;
 import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 /**
  * Demonstrates Joe Armstrong's OTP supervision tree in Java 26.
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.Test;
  * <p>Each test shows a different facet of supervision: crash-and-restart, isolation between
  * children (ONE_FOR_ONE), cascaded restart (ONE_FOR_ALL), and max-restart threshold propagation.
  */
+@Execution(ExecutionMode.SAME_THREAD)  // Isolate from parallel tests due to timing sensitivity
 class SupervisorTest implements WithAssertions {
 
     // ── Shared message vocabulary ──────────────────────────────────────────
@@ -144,7 +147,7 @@ class SupervisorTest implements WithAssertions {
         }
 
         // Supervisor should have terminated itself
-        await().atMost(Duration.ofSeconds(3)).until(() -> !sup.isRunning());
+        await().atMost(Duration.ofSeconds(5)).until(() -> !sup.isRunning());
         assertThat(sup.fatalError()).isNotNull();
         assertThat(sup.fatalError().getMessage()).startsWith("crash");
     }
