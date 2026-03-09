@@ -6,8 +6,8 @@
 
 > **Status:** Specification
 > **Priority:** High
-> **OTP Primitives Used:** Proc, ProcRef, Supervisor, StateMachine, EventManager, ProcessRegistry, Result
-> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [StateMachine.java](src/main/java/org/acme/StateMachine.java), [EventManager.java](src/main/java/org/acme/EventManager.java), [ProcessRegistry.java](src/main/java/org/acme/ProcessRegistry.java)
+> **OTP Primitives Used:** Proc, ProcRef, Supervisor, StateMachine, Result, EventManager
+> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [StateMachine.java](src/main/java/org/acme/StateMachine.java), [EventManager.java](src/main/java/org/acme/EventManager.java), [Result.java](src/main/java/org/acme/Result.java)
 > **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
@@ -44,7 +44,7 @@ the right primitives.
 
 Erlang/OTP has had those primitives since 1987: isolated processes, message passing, supervision
 trees, and transparent restart. Java 25 virtual threads bring the same model to the JVM. The
-`Actor<S,M>`, `Supervisor`, and `ActorRef` types in this codebase are a direct translation. The
+`Proc<S,M>`, `Supervisor`, and `ProcRef` types in this codebase are a direct translation. The
 missing piece is formalising the three-phase command-event-state cycle as a typed structure that
 sits on top of those primitives. That is `EventSourcedActor<S,C,E>`.
 
@@ -127,7 +127,7 @@ sealed interface Msg<C extends Record, E extends Record>
 The actor's handler dispatches on pattern:
 
 ```java
-// Inside Actor<AggregateState<S,E>, Msg<C,E>> handler:
+// Inside Proc<AggregateState<S,E>, Msg<C,E>> handler:
 (aggState, msg) -> switch (msg) {
 
     case Msg.Replay<C,E>(var event) -> {
@@ -187,11 +187,11 @@ public EventSourcedActor(
     Supplier<S> empty,
     BiFunction<S, C, Result<List<E>, String>> decide,
     BiFunction<S, E, S> evolve,
-    ActorRef<EventStore.State, EventStore.Msg<E>> eventStore,
-    List<ActorRef<?, E>> projections,
+    ProcRef<EventStore.State, EventStore.Msg<E>> eventStore,
+    List<ProcRef<?, E>> projections,
     Supervisor supervisor
 ) {
-    // 1. Create the internal Actor, supervised
+    // 1. Create the internal Proc, supervised
     // 2. Immediately replay the event stream from eventStore to reconstruct state
     // 3. Register with supervisor for ONE_FOR_ONE restart
 }
@@ -199,14 +199,14 @@ public EventSourcedActor(
 
 ### Aggregate Registry
 
-A `ConcurrentHashMap<AggregateId, ActorRef<AggregateState<S>, Msg<C,E>>>` serves as the
+A `ConcurrentHashMap<AggregateId, ProcRef<AggregateState<S>, Msg<C,E>>>` serves as the
 registry. On first access, the actor is created (which triggers replay). On subsequent accesses,
-the same `ActorRef` is returned. Because `ActorRef` survives restarts — the `delegate` field is
+the same `ProcRef` is returned. Because `ProcRef` survives restarts — the `delegate` field is
 `volatile` and `swap` is atomic — callers never observe the difference between a live actor and
 a freshly restarted one:
 
 ```java
-public ActorRef<AggregateState<S>, Msg<C,E>> getOrCreate(AggregateId id) {
+public ProcRef<AggregateState<S>, Msg<C,E>> getOrCreate(AggregateId id) {
     return registry.computeIfAbsent(id, k -> {
         String streamId = aggregateType + "-" + k.value();
         return supervisor.supervise(streamId,
