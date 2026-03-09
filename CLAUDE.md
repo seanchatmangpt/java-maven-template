@@ -48,7 +48,11 @@ bin/mvndw verify          # Same as ./mvnw but with Maven Daemon (faster)
 **Run a single test class:**
 ```bash
 mvnd test -Dtest=MathsTest
-mvnd verify -Dit.test=MathsIT  # integration test
+mvnd test -Dtest=ProcTest               # OTP primitive test
+mvnd test -Dtest=SupervisorTest         # supervision tree test
+mvnd test -Dtest=ProcessRegistryTest    # process registry test
+mvnd test -Dtest=ResultTest             # Result railway test
+mvnd verify -Dit.test=MathsIT          # integration test
 ```
 
 ## Architecture
@@ -181,7 +185,7 @@ bash migrate.sh                                  # applies migrations
 
 `docs/phd-thesis-otp-java26.md` — *"OTP 28 in Pure Java 26: A Formal Equivalence and Migration Framework for Enterprise-Grade Fault-Tolerant Systems"*
 
-Establishes formal equivalence between the 7 OTP primitives and Java 26, benchmarks BEAM vs. JVM under fault conditions, provides migration paths from Elixir, Go, Rust, and Scala/Akka, and frames this as a blue ocean strategy for Oracle ecosystem influencers.
+Establishes formal equivalence between the 15 OTP primitives and Java 26, benchmarks BEAM vs. JVM under fault conditions, provides migration paths from Elixir, Go, Rust, and Scala/Akka, and frames this as a blue ocean strategy for Oracle ecosystem influencers.
 
 ## Dogfood (Eating Our Own Dog Food)
 
@@ -199,7 +203,7 @@ bin/mvndw verify -Ddogfood  # Same via Maven Daemon (fastest)
 **Dogfood coverage** (one example per template category):
 - `core/` → `Person.java` (record with validation + builder)
 - `concurrency/` → `VirtualThreadPatterns.java` (virtual thread utilities)
-- `patterns/` → `TextTransformStrategy.java` (functional strategy pattern)
+- `patterns/` → `TextTransformStrategy.java` (functional strategy pattern), `OrderDto.java` (dto-record), `PersonRepository.java` (repository-generic), `Money.java` (value-object-record), `ShapeFactory.java` (factory-sealed), `PersonService.java` (service-layer)
 - `api/` → `StringMethodPatterns.java` (modern String API) + `StringMethodPatternsTest.java`
 - `error-handling/` → `ResultRailway.java` (sealed Result type) + `ResultRailwayTest.java`
 - `security/` → `InputValidation.java` (preconditions + error accumulation) + `InputValidationTest.java`

@@ -50,6 +50,17 @@ DOGFOOD_MAP=(
     "testing|testing/junit5-test.tera|innovation/BuildDiagnosticEngineTest.java|test"
     "testing|testing/junit5-test.tera|innovation/LivingDocGeneratorTest.java|test"
     "testing|testing/junit5-test.tera|innovation/RefactorEngineTest.java|test"
+    # ── Pattern template dogfood (closes missing-template coverage) ──────────
+    "patterns|patterns/dto-record.tera|patterns/OrderDto.java|main"
+    "patterns|patterns/repository-generic.tera|patterns/PersonRepository.java|main"
+    "patterns|patterns/value-object-record.tera|patterns/Money.java|main"
+    "patterns|patterns/factory-sealed.tera|patterns/ShapeFactory.java|main"
+    "patterns|patterns/service-layer.tera|patterns/PersonService.java|main"
+    "testing|testing/junit5-test.tera|patterns/OrderDtoTest.java|test"
+    "testing|testing/junit5-test.tera|patterns/PersonRepositoryTest.java|test"
+    "testing|testing/junit5-test.tera|patterns/MoneyTest.java|test"
+    "testing|testing/junit5-test.tera|patterns/ShapeFactoryTest.java|test"
+    "testing|testing/junit5-test.tera|patterns/PersonServiceTest.java|test"
 )
 
 cmd_generate() {

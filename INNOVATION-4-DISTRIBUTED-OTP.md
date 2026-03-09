@@ -3,7 +3,13 @@
 **Technical Specification**
 **Date:** 2026-03-08
 **Status:** Proposed
-**Codebase:** `org.acme` — Java 25 JPMS library, GraalVM Community CE 25.0.2
+**Codebase:** `org.acme` — Java 26 JPMS library, GraalVM Community CE 25.0.2
+
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** ProcRef, Supervisor, ProcessRegistry, ProcessMonitor, ProcessLink, EventManager
+> **Related Source:** [Supervisor.java](src/main/java/org/acme/Supervisor.java), [ProcRef.java](src/main/java/org/acme/ProcRef.java), [ProcessRegistry.java](src/main/java/org/acme/ProcessRegistry.java), [ProcessLink.java](src/main/java/org/acme/ProcessLink.java), [EventManager.java](src/main/java/org/acme/EventManager.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
 
@@ -33,7 +39,7 @@ Erlang's distribution layer avoided this trap by a simple insight: a `Pid` is a 
 
 ### 2.1 Design Principle: Zero New Concepts for Callers
 
-The single non-negotiable constraint is that code which uses `ActorRef<S,M>` locally requires no changes to work with a remote actor. The distribution layer must be transparent to call sites. This is achievable because the existing `ActorRef` is already an opaque indirection handle — `Supervisor.swap()` already replaces the underlying `Actor` without any caller awareness. The distributed extension adds one more level of indirection beneath that.
+The single non-negotiable constraint is that code which uses `ProcRef<S,M>` locally requires no changes to work with a remote actor. The distribution layer must be transparent to call sites. This is achievable because the existing `ProcRef` is already an opaque indirection handle — `Supervisor.swap()` already replaces the underlying `Proc` without any caller awareness. The distributed extension adds one more level of indirection beneath that.
 
 ### 2.2 Scope: Under 1,000 Lines
 
@@ -41,7 +47,7 @@ The full distributed layer can be implemented in fewer than 1,000 lines because:
 
 - **Transport** is delegated to a single pluggable interface (`NodeTransport`). The default implementation uses UDP datagrams (plain `java.net.DatagramSocket`, no dependencies). An optional Aeron implementation can be dropped in for high-throughput scenarios.
 - **Serialization** uses Java Records' structural decomposition via Jackson (one `ObjectMapper`, configured once). Records are self-describing; their component accessors provide all information needed for field-by-field JSON encoding without reflection on private state.
-- **Membership** is a gossip protocol implemented as a first-class `Actor` using the existing `Actor<S,M>` class — no new concurrency primitives.
+- **Membership** is a gossip protocol implemented as a first-class `Proc` using the existing `Proc<S,M>` class — no new concurrency primitives.
 - **Supervision** extends `Supervisor` by overriding crash detection to also handle network timeouts, using the existing `ChildCrashed` event pathway.
 - **State replication** (the Mnesia analogue) is implemented as Raft over actor message passing — Raft messages are just another sealed-record hierarchy delivered to `DistributedStateActor<S>`.
 
@@ -74,7 +80,7 @@ public sealed interface DistributedActorRef<S, M>
 }
 ```
 
-`LocalDistributedActorRef<S,M>` simply wraps the existing `ActorRef<S,M>` and delegates `tell`/`ask` directly. It is returned by `ActorRegistry.lookup()` when the actor's home node is the local JVM. No serialization occurs on the hot path.
+`LocalDistributedActorRef<S,M>` simply wraps the existing `ProcRef<S,M>` and delegates `tell`/`ask` directly. It is returned by `ActorRegistry.lookup()` when the actor's home node is the local JVM. No serialization occurs on the hot path.
 
 `RemoteDistributedActorRef<S,M>` holds a `NodeId` (the remote JVM's host:port:uuid triple) and serializes the message before dispatching over the transport. Its `tell` implementation:
 
@@ -176,7 +182,7 @@ All existing `DistributedActorRef` handles in the application now silently route
 
 ### 5.1 Motivation
 
-The `Actor<S,M>` model keeps state local to one virtual thread — exactly right for single-JVM reliability. But some state must survive the loss of any single JVM: payment totals, inventory counts, distributed locks. This is the problem Erlang's Mnesia solves. The equivalent here is `DistributedStateActor<S>`, which replicates state across `2f+1` nodes using Raft consensus, where each Raft RPC is an actor message.
+The `Proc<S,M>` model keeps state local to one virtual thread — exactly right for single-JVM reliability. But some state must survive the loss of any single JVM: payment totals, inventory counts, distributed locks. This is the problem Erlang's Mnesia solves. The equivalent here is `DistributedStateActor<S>`, which replicates state across `2f+1` nodes using Raft consensus, where each Raft RPC is an actor message.
 
 ### 5.2 Raft Message Hierarchy
 
@@ -200,7 +206,7 @@ record AppendEntries<S>(
 record LogEntry<S>(long term, long index, S stateDelta) {}
 ```
 
-All seven Raft message types are Java records in a sealed hierarchy. They serialize transparently via the same `Serializer<M>` used by `DistributedActorRef`. The Raft state machine is the `handler` function passed to `Actor<RaftState<S>, RaftMsg<S>>` — a pure `(state, message) -> nextState` function of roughly 250 lines. Raft leader election, log replication, and commit are entirely expressed as actor state transitions with no locks, no shared mutable fields, and no scheduler — only actor message delivery and `Parallel.all()` for broadcasting `AppendEntries` to followers in parallel.
+All seven Raft message types are Java records in a sealed hierarchy. They serialize transparently via the same `Serializer<M>` used by `DistributedActorRef`. The Raft state machine is the `handler` function passed to `Proc<RaftState<S>, RaftMsg<S>>` — a pure `(state, message) -> nextState` function of roughly 250 lines. Raft leader election, log replication, and commit are entirely expressed as actor state transitions with no locks, no shared mutable fields, and no scheduler — only actor message delivery and `Parallel.all()` for broadcasting `AppendEntries` to followers in parallel.
 
 ### 5.3 Leader Election Sketch
 
@@ -273,14 +279,14 @@ Every major Java distribution framework (Akka Cluster, Hazelcast, Infinispan, Ap
 
 No framework offers distribution with the identical API as local actors. Erlang has had this since 1987. The JVM ecosystem has not. The reason is historical: Java frameworks were built bottom-up from network infrastructure, not top-down from a programming model. Akka came closest but could not resist exposing cluster-specific abstractions because Lightbend's commercial model required visible enterprise features.
 
-The blue ocean is the developer who has already adopted actor-model concurrency (this codebase, any Akka-local, any Vert.x EventBus application) and wants to scale to multiple JVMs without rewriting their concurrency model. For that developer, every existing framework requires a migration. This implementation requires zero migration — because `DistributedActorRef<S,M>` is API-compatible with `ActorRef<S,M>`, and `ClusterSupervisor` is API-compatible with `Supervisor`.
+The blue ocean is the developer who has already adopted actor-model concurrency (this codebase, any Akka-local, any Vert.x EventBus application) and wants to scale to multiple JVMs without rewriting their concurrency model. For that developer, every existing framework requires a migration. This implementation requires zero migration — because `DistributedActorRef<S,M>` is API-compatible with `ProcRef<S,M>`, and `ClusterSupervisor` is API-compatible with `Supervisor`.
 
 ### 7.3 Zero New Concepts
 
 A developer familiar with this codebase needs to learn exactly three facts to use the distributed layer:
 
 1. `ActorRegistry registry = new ActorRegistry(clusterConfig)` — one-time setup.
-2. `registry.lookup("name")` returns a `DistributedActorRef` instead of an `ActorRef`.
+2. `registry.lookup("name")` returns a `DistributedActorRef` instead of a `ProcRef`.
 3. `registry.lookupReplicated("name")` returns a `DistributedStateActor` with `read()`/`write()` methods.
 
 Every other concept — `tell()`, `ask()`, `Supervisor`, `CrashRecovery`, `Result<T,E>`, `Parallel.all()` — is unchanged. The gossip protocol, Raft consensus, split-brain resolution, and remote restart are infrastructure that the application never interacts with directly.
@@ -293,7 +299,7 @@ The combination of properties that defines this blue ocean:
 
 - **Same API, local and distributed** — eliminates migration cost.
 - **Under 1,000 lines** — auditable, forkable, embeddable. No enterprise licensing.
-- **Virtual thread per actor** — `O(actor count)` memory, not `O(thread count)`. A 3-node cluster can sustain 300,000 distributed actors in 300 MB of heap.
+- **Virtual thread per proc** — `O(proc count)` memory, not `O(thread count)`. A 3-node cluster can sustain 300,000 distributed actors in 300 MB of heap.
 - **Dependency-minimal** — Jackson for serialization (optional), plain `DatagramSocket` for transport. No Netty, no gRPC, no ZooKeeper, no etcd required for the basic cluster.
 - **Java 25 `StructuredTaskScope` for health checks** — parallel multi-node liveness probes complete within the slowest-responding node's latency, bounded and cancellable.
 - **`CrashRecovery` for network retries** — the same mechanism used for local fault tolerance applies to remote call retries. One concept, two use cases.
@@ -351,3 +357,20 @@ interface SplitBrainStrategy {
 ---
 
 *This specification is grounded in the existing `org.acme` OTP implementation at `/home/user/java-maven-template/src/main/java/org/acme/`. All code sketches use APIs present in Java 25 and the existing codebase. No new language features or external dependencies beyond Jackson are required for the base implementation.*
+
+---
+
+## Template Generation
+
+The following `jgen` templates scaffold this innovation's core components:
+
+| Component | Template |
+|---|---|
+| NodeId and DistributedActorRef value types | `bin/jgen generate -t patterns/builder-record -n NodeId -p org.acme.distributed` |
+| Virtual thread UDP transport layer | `bin/jgen generate -t concurrency/virtual-thread -n NodeTransport -p org.acme.distributed` |
+
+Run `bin/jgen list` to see all 72 available templates.
+
+---
+
+*This specification is part of the [java-maven-template](https://github.com/seanchatmangpt/java-maven-template) innovation suite. See also: [INNOVATION-1](INNOVATION-1-OTP-JDBC.md) · [INNOVATION-2](INNOVATION-2-LLM-SUPERVISOR.md) · [INNOVATION-3](INNOVATION-3-ACTOR-HTTP.md) · [INNOVATION-4](INNOVATION-4-DISTRIBUTED-OTP.md) · [INNOVATION-5](INNOVATION-5-EVENT-SOURCING.md)*

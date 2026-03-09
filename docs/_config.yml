@@ -1,19 +1,18 @@
-# GitHub Pages configuration for Java 25 Maven Template
+# GitHub Pages configuration for Java 26 OTP Library & Migration Toolkit
 
 # Site settings
-title: "Java 25 Maven Template"
-description: "Modern Java 25 Maven template with best practices, testing, and CI/CD ready to use"
-url: "https://cchacin.github.io"
+title: "Java 26 OTP Library"
+description: "Erlang/OTP fault-tolerance primitives for Java 26: 15 primitives, jgen code generation, and innovation engines"
+url: "https://seanchatmangpt.github.io"
 baseurl: "/java-maven-template"
 
 # Repository information
-repository: "cchacin/java-maven-template"
+repository: "seanchatmangpt/java-maven-template"
 
 # Author information
 author:
-  name: "Carlos Chacin"
-  email: "carloschac.in@gmail.com"
-  url: "https://carloschac.in"
+  name: "Sean Chatman"
+  url: "https://github.com/seanchatmangpt"
 
 # GitHub Pages settings
 plugins:
@@ -60,26 +59,26 @@ defaults:
 
 # SEO and social
 social:
-  name: "Carlos Chacin"
+  name: "Sean Chatman"
   links:
-    - "https://github.com/cchacin"
-    - "https://carloschac.in"
+    - "https://github.com/seanchatmangpt"
 
 # GitHub metadata (for GitHub Pages)
 github:
-  repository_url: "https://github.com/cchacin/java-maven-template"
+  repository_url: "https://github.com/seanchatmangpt/java-maven-template"
 
 # Theme (using default GitHub Pages theme for now)
 theme: minima
 
 # Custom variables for the template
 template:
-  version: "1.0.0"
-  java_version: "25"
+  version: "2.0.0"
+  java_version: "26"
   features:
-    - "Java 25 Ready"
-    - "Maven Wrapper"
-    - "Testing Excellence"
-    - "Code Quality"
-    - "CI/CD Ready"
-    - "JShell Integration"
+    - "Java 26 Ready"
+    - "15 OTP Primitives"
+    - "jgen Code Generation (72 templates)"
+    - "Innovation Engines"
+    - "Dogfood Verification"
+    - "Virtual Threads"
+    - "Diátaxis Documentation"

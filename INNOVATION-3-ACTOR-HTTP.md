@@ -2,13 +2,19 @@
 
 **Status:** Technical Specification
 **Date:** 2026-03-08
-**Codebase context:** `org.acme` — Java 25 JPMS library, GraalVM Community CE 25.0.2, `--enable-preview`
+**Codebase context:** `org.acme` — Java 26 JPMS library, GraalVM Community CE 25.0.2, `--enable-preview`
+
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** Proc, ProcRef, Supervisor, StateMachine, ProcTimer, CrashRecovery
+> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [StateMachine.java](src/main/java/org/acme/StateMachine.java), [ProcTimer.java](src/main/java/org/acme/ProcTimer.java), [Supervisor.java](src/main/java/org/acme/Supervisor.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
 
 ## Executive Summary
 
-Every mainstream Java HTTP server shares at least one resource across requests: thread pools, schedulers, or execution contexts. This shared ownership is the root cause of a class of failure modes — leaked `ThreadLocal` state, cascading handler panics, and "noisy neighbor" latency spikes — that no amount of application-level discipline can fully eliminate. The Actor-Per-Request architecture described here makes isolation structural: each HTTP request is its own `Actor<RequestState, HttpMsg>`, supervised by a dedicated `RequestSupervisor`, running on exactly one virtual thread. Failure of one request actor is incapable of affecting any other. State that today travels through `ThreadLocal` instead travels through actor messages. The result is an HTTP server with the same failure-isolation properties that Erlang gave telephony systems in 1987 — except built entirely on Project Loom and the OTP primitives already present in `org.acme`.
+Every mainstream Java HTTP server shares at least one resource across requests: thread pools, schedulers, or execution contexts. This shared ownership is the root cause of a class of failure modes — leaked `ThreadLocal` state, cascading handler panics, and "noisy neighbor" latency spikes — that no amount of application-level discipline can fully eliminate. The Actor-Per-Request architecture described here makes isolation structural: each HTTP request is its own `Proc<RequestState, HttpMsg>`, supervised by a dedicated `RequestSupervisor`, running on exactly one virtual thread. Failure of one request actor is incapable of affecting any other. State that today travels through `ThreadLocal` instead travels through actor messages. The result is an HTTP server with the same failure-isolation properties that Erlang gave telephony systems in 1987 — except built entirely on Project Loom and the OTP primitives already present in `org.acme`.
 
 ---
 
@@ -78,7 +84,7 @@ record RequestState(
 
 ### 2.2 RequestActor Lifecycle
 
-Each accepted TCP connection triggers the creation of one `Actor<RequestState, HttpMsg>`. The `Supervisor.supervise()` call registers the actor and returns a stable `ActorRef<RequestState, HttpMsg>` — the request's Pid analogue.
+Each accepted TCP connection triggers the creation of one `Proc<RequestState, HttpMsg>`. The `Supervisor.supervise()` call registers the actor and returns a stable `ProcRef<RequestState, HttpMsg>` — the request's Pid analogue.
 
 ```
 ACCEPT                ROUTING               BODY_READ            RESPONDING            DONE
@@ -184,7 +190,7 @@ When the actor fans out via `Parallel.all()`, each sub-request lambda captures `
 
 Cancellation in this model is a first-class message, not an interrupt thrown at an arbitrary stack frame.
 
-When a client closes the connection before the response is written, the `ConnectionPoolActor` detects the channel closure via its NIO selector. It holds a registry of `(channelId -> ActorRef<RequestState, HttpMsg>)`. On detecting closure:
+When a client closes the connection before the response is written, the `ConnectionPoolActor` detects the channel closure via its NIO selector. It holds a registry of `(channelId -> ProcRef<RequestState, HttpMsg>)`. On detecting closure:
 
 ```
 ConnectionPoolActor detects EOF on channel ch-7
@@ -265,9 +271,9 @@ This converts a runtime failure mode (context leak under load) into a compile-ti
 
 ### 6.1 Virtual Thread Cost Per Request
 
-A Java 25 virtual thread costs approximately 1–2 KB of heap at creation (the initial stack chunk). The `LinkedTransferQueue` mailbox used by `Actor` is allocated once at actor construction and adds approximately 48 bytes of object overhead. Total per-request allocation overhead is approximately 2–3 KB, compared to Tomcat's platform thread stack at 512 KB (the default `-Xss` value).
+A Java 25 virtual thread costs approximately 1–2 KB of heap at creation (the initial stack chunk). The `LinkedTransferQueue` mailbox used by `Proc` is allocated once at actor construction and adds approximately 48 bytes of object overhead. Total per-request allocation overhead is approximately 2–3 KB, compared to Tomcat's platform thread stack at 512 KB (the default `-Xss` value).
 
-Message delivery latency through `LinkedTransferQueue.add()` is 50–150 ns under low contention (from the `Actor` class Javadoc, consistent with published JMH benchmarks for MPMC lock-free queues). For a request that processes three messages (`HandleRoute`, `ReadBody`, `WriteResponse`), this adds at most 450 ns of message-passing overhead — negligible against typical handler latency of hundreds of microseconds to milliseconds.
+Message delivery latency through `LinkedTransferQueue.add()` is 50–150 ns under low contention (from the `Proc` class Javadoc, consistent with published JMH benchmarks for MPMC lock-free queues). For a request that processes three messages (`HandleRoute`, `ReadBody`, `WriteResponse`), this adds at most 450 ns of message-passing overhead — negligible against typical handler latency of hundreds of microseconds to milliseconds.
 
 Virtual thread scheduling is performed by the JVM's fork-join pool (default: carrier threads = CPU cores). When the actor's virtual thread blocks on I/O (database call, upstream HTTP), it unmounts from the carrier thread immediately, freeing the carrier for another virtual thread. This is the same scheduling behavior that Netty achieves with non-blocking I/O, but without requiring the developer to structure their code as a chain of callbacks or reactive operators.
 
@@ -326,9 +332,9 @@ The blue ocean is not a new I/O library. It is a new unit of isolation — the r
 
 | Component | Signature | Notes |
 |---|---|---|
-| `Actor<S,M>` | `Actor(S initial, BiFunction<S,M,S> handler)` | One virtual thread per instance, lock-free mailbox |
-| `ActorRef<S,M>` | `tell(M)`, `ask(M) -> CF<S>`, `stop()` | Stable Pid — survives supervisor restart |
-| `Supervisor` | `supervise(id, S, BiFunction) -> ActorRef` | Registers child with crash detection and restart |
+| `Proc<S,M>` | `Proc(S initial, BiFunction<S,M,S> handler)` | One virtual thread per instance, lock-free mailbox |
+| `ProcRef<S,M>` | `tell(M)`, `ask(M) -> CF<S>`, `stop()` | Stable Pid — survives supervisor restart |
+| `Supervisor` | `supervise(id, S, BiFunction) -> ProcRef` | Registers child with crash detection and restart |
 | `Supervisor.Strategy` | `ONE_FOR_ONE`, `ONE_FOR_ALL`, `REST_FOR_ONE` | Direct OTP semantics |
 | `Parallel.all()` | `List<Supplier<T>> -> Result<List<T>, Exception>` | `StructuredTaskScope` fan-out, fail-fast |
 | `Result<T,E>` | `map`, `flatMap`, `fold`, `recover`, `orElseThrow` | Railway-oriented, sealed `Success`/`Failure` |
@@ -337,3 +343,20 @@ The blue ocean is not a new I/O library. It is a new unit of isolation — the r
 ---
 
 *End of specification.*
+
+---
+
+## Template Generation
+
+The following `jgen` templates scaffold this innovation's core components:
+
+| Component | Template |
+|---|---|
+| RequestState phases (ROUTING/BODY_READ/RESPONDING/DONE) | `bin/jgen generate -t patterns/state-machine-sealed -n RequestState -p org.acme.http` |
+| Structured fan-out for sub-request concurrency | `bin/jgen generate -t concurrency/structured-concurrency -n RequestScope -p org.acme.http` |
+
+Run `bin/jgen list` to see all 72 available templates.
+
+---
+
+*This specification is part of the [java-maven-template](https://github.com/seanchatmangpt/java-maven-template) innovation suite. See also: [INNOVATION-1](INNOVATION-1-OTP-JDBC.md) · [INNOVATION-2](INNOVATION-2-LLM-SUPERVISOR.md) · [INNOVATION-3](INNOVATION-3-ACTOR-HTTP.md) · [INNOVATION-4](INNOVATION-4-DISTRIBUTED-OTP.md) · [INNOVATION-5](INNOVATION-5-EVENT-SOURCING.md)*

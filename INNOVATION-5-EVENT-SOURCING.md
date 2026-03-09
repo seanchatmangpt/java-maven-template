@@ -1,8 +1,14 @@
 # Innovation 5: OTP-Native Event Sourcing — Actors as Event-Sourced Aggregates
 
 **Technical Specification**
-Date: 2026-03-08
-Codebase: `/home/user/java-maven-template/src/main/java/org/acme/`
+**Date:** 2026-03-08
+**Codebase:** `org.acme` — Java 26 JPMS library implementing Joe Armstrong's Erlang/OTP primitives
+
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** Proc, ProcRef, Supervisor, StateMachine, Result, EventManager
+> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [StateMachine.java](src/main/java/org/acme/StateMachine.java), [EventManager.java](src/main/java/org/acme/EventManager.java), [Result.java](src/main/java/org/acme/Result.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
 
@@ -38,7 +44,7 @@ the right primitives.
 
 Erlang/OTP has had those primitives since 1987: isolated processes, message passing, supervision
 trees, and transparent restart. Java 25 virtual threads bring the same model to the JVM. The
-`Actor<S,M>`, `Supervisor`, and `ActorRef` types in this codebase are a direct translation. The
+`Proc<S,M>`, `Supervisor`, and `ProcRef` types in this codebase are a direct translation. The
 missing piece is formalising the three-phase command-event-state cycle as a typed structure that
 sits on top of those primitives. That is `EventSourcedActor<S,C,E>`.
 
@@ -121,7 +127,7 @@ sealed interface Msg<C extends Record, E extends Record>
 The actor's handler dispatches on pattern:
 
 ```java
-// Inside Actor<AggregateState<S,E>, Msg<C,E>> handler:
+// Inside Proc<AggregateState<S,E>, Msg<C,E>> handler:
 (aggState, msg) -> switch (msg) {
 
     case Msg.Replay<C,E>(var event) -> {
@@ -181,11 +187,11 @@ public EventSourcedActor(
     Supplier<S> empty,
     BiFunction<S, C, Result<List<E>, String>> decide,
     BiFunction<S, E, S> evolve,
-    ActorRef<EventStore.State, EventStore.Msg<E>> eventStore,
-    List<ActorRef<?, E>> projections,
+    ProcRef<EventStore.State, EventStore.Msg<E>> eventStore,
+    List<ProcRef<?, E>> projections,
     Supervisor supervisor
 ) {
-    // 1. Create the internal Actor, supervised
+    // 1. Create the internal Proc, supervised
     // 2. Immediately replay the event stream from eventStore to reconstruct state
     // 3. Register with supervisor for ONE_FOR_ONE restart
 }
@@ -193,14 +199,14 @@ public EventSourcedActor(
 
 ### Aggregate Registry
 
-A `ConcurrentHashMap<AggregateId, ActorRef<AggregateState<S>, Msg<C,E>>>` serves as the
+A `ConcurrentHashMap<AggregateId, ProcRef<AggregateState<S>, Msg<C,E>>>` serves as the
 registry. On first access, the actor is created (which triggers replay). On subsequent accesses,
-the same `ActorRef` is returned. Because `ActorRef` survives restarts — the `delegate` field is
+the same `ProcRef` is returned. Because `ProcRef` survives restarts — the `delegate` field is
 `volatile` and `swap` is atomic — callers never observe the difference between a live actor and
 a freshly restarted one:
 
 ```java
-public ActorRef<AggregateState<S>, Msg<C,E>> getOrCreate(AggregateId id) {
+public ProcRef<AggregateState<S>, Msg<C,E>> getOrCreate(AggregateId id) {
     return registry.computeIfAbsent(id, k -> {
         String streamId = aggregateType + "-" + k.value();
         return supervisor.supervise(streamId,
@@ -214,11 +220,11 @@ public ActorRef<AggregateState<S>, Msg<C,E>> getOrCreate(AggregateId id) {
 
 ## 3. The Event Store as an OTP Actor
 
-The event store is not a database client that lives outside the actor system. It is itself an
-`Actor<EventStore.State, EventStore.Msg<E>>`, supervised by the same `Supervisor` tree as the
+The event store is not a database client that lives outside the actor system. It is itself a
+`Proc<EventStore.State, EventStore.Msg<E>>`, supervised by the same `Supervisor` tree as the
 aggregates.
 
-### Why an Actor?
+### Why a Proc?
 
 An actor-based event store provides sequential, conflict-free writes for a given stream without
 locks. Because an actor processes one message at a time, two concurrent `Append` messages for the
@@ -338,7 +344,7 @@ framework support.
 
 ### Projection Actor Shape
 
-A projection actor is an ordinary `Actor<P, E>` where `P` is the projection's state (e.g., a
+A projection actor is an ordinary `Proc<P, E>` where `P` is the projection's state (e.g., a
 `Map<OrderId, OrderSummary>`) and `E` is the event type. The handler is a pure function
 `(P, E) -> P`. Projections have no concept of commands or command rejection. They are
 append-only event consumers:
@@ -391,7 +397,7 @@ private AggregateState<S> replayFromStore() {
 This function is registered as the `stateFactory` in the `Supervisor.ChildEntry`. When the
 supervisor calls `entry.stateFactory.get()`, it gets a fully reconstructed aggregate state.
 The supervisor does not know it is doing event replay. The aggregate actor does not know it was
-restarted. The `ActorRef` held by clients does not know the underlying actor was replaced.
+restarted. The `ProcRef` held by clients does not know the underlying actor was replaced.
 Armstrong called this "transparent process restart." Here it is structurally enforced rather than
 documented.
 
@@ -401,7 +407,7 @@ and the actor's virtual thread dies. The supervisor's uncaught exception handler
 `ChildCrashed`. The supervisor calls `restartOne`. The state factory calls `replayFromStore`.
 The actor's mailbox still contains the unprocessed commands from the batch (they were sent with
 `tell`, not drained on crash). The restarted actor, with fresh state, continues processing them.
-The client observing via `ActorRef.ask()` sees a momentary timeout on in-flight requests (the
+The client observing via `ProcRef.ask()` sees a momentary timeout on in-flight requests (the
 futures of messages lost during the restart window) and a normal response on the retry. No data
 is lost because every committed event is in the event store.
 
@@ -463,7 +469,7 @@ void decidedEventsAlwaysPreserveMoneyConservation(
 }
 ```
 
-**Testing the full actor pipeline:** Use `ActorRef.ask()` with Awaitility for integration tests
+**Testing the full actor pipeline:** Use `ProcRef.ask()` with Awaitility for integration tests
 that exercise the actor's mailbox, event store persistence, and projection fan-out. These are
 `*IT.java` tests that run under `mvnd verify`. Because the event store is itself an in-memory
 actor during tests, there is no database to set up. The test constructs the supervision tree,
@@ -478,7 +484,7 @@ uses a `PooledStreamingEventProcessor` with a configurable segment count; comman
 aggregates compete for threads in the pool. Under load, a slow aggregate (e.g., one replaying
 10,000 events) blocks a thread that could serve a fast aggregate.
 
-In this design, each aggregate is an `Actor` running on its own virtual thread. Virtual threads
+In this design, each aggregate is a `Proc` running on its own virtual thread. Virtual threads
 in Java 25 have approximately 1 KB of initial stack, are scheduled cooperatively by the JVM's
 `ForkJoinPool` carrier threads, and park cheaply on blocking operations. The JVM supports
 millions of concurrent virtual threads on commodity hardware.
@@ -534,9 +540,9 @@ infrastructure — each correspond exactly to one existing OTP primitive:
 
 | Property                   | OTP Primitive          | Java 25 Implementation    |
 |----------------------------|------------------------|---------------------------|
-| Command isolation          | Process share-nothing  | `Actor<S,M>` virtual thread |
+| Command isolation          | Process share-nothing  | `Proc<S,M>` virtual thread |
 | Serialised writes          | Single-process mailbox | `LinkedTransferQueue`     |
-| Transparent restart        | Supervisor + Pid       | `Supervisor` + `ActorRef` |
+| Transparent restart        | Supervisor + Pid       | `Supervisor` + `ProcRef` |
 | State reconstruction       | Process initialisation | `replayFromStore()` as `stateFactory` |
 | Pure testability           | Functional core        | `Record`-bounded type params |
 
@@ -558,8 +564,8 @@ lines of code total (implementation + tests), offer better correctness guarantee
 at 1/100th the API surface, and run anywhere a JDK 25 exists.
 
 The specification above is not aspirational. Every piece of it composes directly from code that
-already exists in `/home/user/java-maven-template/src/main/java/org/acme/`. The `Actor`,
-`ActorRef`, `Supervisor`, `Parallel`, and `Result` types are production-ready. The
+already exists in `/home/user/java-maven-template/src/main/java/org/acme/`. The `Proc`,
+`ProcRef`, `Supervisor`, `Parallel`, and `Result` types are production-ready. The
 `EventSourcedActor` is a thin orchestration layer over them — roughly 200 lines — that closes
 the loop from OTP primitives to a complete, framework-free event sourcing runtime.
 
@@ -572,3 +578,20 @@ holding the banana and the entire jungle." `EventSourcedActor<S,C,E>` gives you 
 *End of specification. Target implementation: `src/main/java/org/acme/EventSourcedActor.java`,
 `src/main/java/org/acme/EventStore.java`. Tests: `src/test/java/org/acme/EventSourcedActorTest.java`,
 `src/test/java/org/acme/EventSourcedActorIT.java`.*
+
+---
+
+## Template Generation
+
+The following `jgen` templates scaffold this innovation's core components:
+
+| Component | Template |
+|---|---|
+| EventSourcedActor state machine (REPLAYING/READY/PROCESSING) | `bin/jgen generate -t patterns/state-machine-sealed -n EventSourcedActor -p org.acme.eventsourcing` |
+| Command validation with Result railway | `bin/jgen generate -t error-handling/result-railway -n CommandResult -p org.acme.eventsourcing` |
+
+Run `bin/jgen list` to see all 72 available templates.
+
+---
+
+*This specification is part of the [java-maven-template](https://github.com/seanchatmangpt/java-maven-template) innovation suite. See also: [INNOVATION-1](INNOVATION-1-OTP-JDBC.md) · [INNOVATION-2](INNOVATION-2-LLM-SUPERVISOR.md) · [INNOVATION-3](INNOVATION-3-ACTOR-HTTP.md) · [INNOVATION-4](INNOVATION-4-DISTRIBUTED-OTP.md) · [INNOVATION-5](INNOVATION-5-EVENT-SOURCING.md)*

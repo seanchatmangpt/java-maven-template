@@ -2,7 +2,13 @@
 
 **Technical Specification v1.0**
 **Date:** 2026-03-08
-**Codebase:** `org.acme` — Java 25 JPMS library implementing Joe Armstrong's Erlang/OTP primitives
+**Codebase:** `org.acme` — Java 26 JPMS library implementing Joe Armstrong's Erlang/OTP primitives
+
+> **Status:** Specification
+> **Priority:** High
+> **OTP Primitives Used:** Proc, ProcRef, Supervisor, ProcessMonitor, ProcessRegistry, CrashRecovery
+> **Related Source:** [Proc.java](src/main/java/org/acme/Proc.java), [Supervisor.java](src/main/java/org/acme/Supervisor.java), [ProcessMonitor.java](src/main/java/org/acme/ProcessMonitor.java), [CrashRecovery.java](src/main/java/org/acme/CrashRecovery.java)
+> **Formal Basis:** [docs/phd-thesis-otp-java26.md](docs/phd-thesis-otp-java26.md) §4 (Performance Analysis)
 
 ---
 
@@ -97,7 +103,7 @@ record SwapWeights(ModelDescriptor next, CompletableFuture<Void> ack) implements
 ```
 
 The `Infer` message carries its own `CompletableFuture<InferenceResult>` reply channel. This is
-deliberate: the `Actor.ask()` mechanism in `org.acme.Actor` returns the actor's full state after
+deliberate: the `Proc.ask()` mechanism in `org.acme.Proc` returns the actor's full state after
 processing, which would expose internal `ModelState` to callers. Embedding the reply future in the
 message itself gives callers exactly the inference result they need without leaking actor internals.
 
@@ -152,7 +158,7 @@ BiFunction<ModelState, InferenceMsg, ModelState> gpuShardHandler = (state, msg) 
 
 The handler is a pure function of `(state, message) -> nextState`. Side effects (CUDA calls,
 VRAM allocation) are localized to this function. When `nativeInfer` throws — CUDA OOM, illegal
-memory access, kernel timeout — the exception propagates out of the handler. The `Actor`'s event
+memory access, kernel timeout — the exception propagates out of the handler. The `Proc`'s event
 loop does not catch it. The exception becomes an uncaught exception on the virtual thread, which
 the `Supervisor`'s installed `UncaughtExceptionHandler` converts into a `ChildCrashed` event on
 the supervisor's internal event queue. The supervisor then applies its restart policy.
@@ -182,7 +188,7 @@ ClusterSupervisor  (ONE_FOR_ALL, maxRestarts=2, window=60s)
 
 ### 3.1 Level 3 — GPU Shard Actors (Leaves)
 
-Each `GpuShardActor` is an `Actor<ModelState, InferenceMsg>` supervised by its node's
+Each `GpuShardActor` is a `Proc<ModelState, InferenceMsg>` supervised by its node's
 `NodeSupervisor`. At this level, there is no explicit supervisor strategy for the leaf actors
 themselves — the `NodeSupervisor` applies its strategy when a leaf crashes.
 
@@ -201,13 +207,13 @@ Supervisor nodeSupervisor = new Supervisor(
 );
 
 // Register shards in pipeline order: embedding → attention-0 → attention-1 → lm-head
-ActorRef<ModelState, InferenceMsg> embeddingRef =
+ProcRef<ModelState, InferenceMsg> embeddingRef =
     nodeSupervisor.supervise("gpu0-embedding", embeddingState, gpuShardHandler);
-ActorRef<ModelState, InferenceMsg> attn0Ref =
+ProcRef<ModelState, InferenceMsg> attn0Ref =
     nodeSupervisor.supervise("gpu1-attn0", attn0State, gpuShardHandler);
-ActorRef<ModelState, InferenceMsg> attn1Ref =
+ProcRef<ModelState, InferenceMsg> attn1Ref =
     nodeSupervisor.supervise("gpu2-attn1", attn1State, gpuShardHandler);
-ActorRef<ModelState, InferenceMsg> lmHeadRef =
+ProcRef<ModelState, InferenceMsg> lmHeadRef =
     nodeSupervisor.supervise("gpu3-lmhead", lmHeadState, gpuShardHandler);
 ```
 
@@ -236,11 +242,11 @@ Supervisor clusterSupervisor = new Supervisor(
     window: Duration.ofSeconds(60)
 );
 
-ActorRef<NodeState, NodeMsg> nodeARef =
+ProcRef<NodeState, NodeMsg> nodeARef =
     clusterSupervisor.supervise("node-host-a", nodeAState, nodeHandler);
-ActorRef<NodeState, NodeMsg> nodeBRef =
+ProcRef<NodeState, NodeMsg> nodeBRef =
     clusterSupervisor.supervise("node-host-b", nodeBState, nodeHandler);
-ActorRef<NodeState, NodeMsg> nodeCRef =
+ProcRef<NodeState, NodeMsg> nodeCRef =
     clusterSupervisor.supervise("node-host-c", nodeCState, nodeHandler);
 ```
 
@@ -278,7 +284,7 @@ compute.
 public InferenceResult inferSpeculative(
         String prompt,
         InferenceParams params,
-        List<ActorRef<ModelState, InferenceMsg>> shards) {
+        List<ProcRef<ModelState, InferenceMsg>> shards) {
 
     List<Supplier<InferenceResult>> tasks = shards.stream()
         .map(shard -> (Supplier<InferenceResult>) () -> {
@@ -346,11 +352,11 @@ previous attempt — Armstrong's "crash the process, start fresh" at the call-si
 
 ---
 
-## 5. Hot Model Swapping via `ActorRef.swap()`
+## 5. Hot Model Swapping via `ProcRef.swap()`
 
-`ActorRef<S, M>` in `org.acme.ActorRef` holds a `volatile Actor<S, M> delegate`. The `swap()`
+`ProcRef<S, M>` in `org.acme.ProcRef` holds a `volatile Proc<S, M> delegate`. The `swap()`
 method performs an atomic write to that volatile field. Any `tell()` or `ask()` call after the
-swap transparently routes to the new actor. Callers holding an `ActorRef` handle see no
+swap transparently routes to the new actor. Callers holding a `ProcRef` handle see no
 discontinuity — their reference remains valid.
 
 ### 5.1 Zero-Downtime Model Update Protocol
@@ -370,7 +376,7 @@ A model update (e.g., deploying a new fine-tune) proceeds as follows:
    closes the old `MemorySegment` (releasing VRAM) and begins using the new segment. The handler
    returns `ack.complete(null)` when the swap is complete.
 
-4. **Resume traffic.** The load balancer resumes routing to the updated shards. All `ActorRef`
+4. **Resume traffic.** The load balancer resumes routing to the updated shards. All `ProcRef`
    handles callers hold are unchanged.
 
 The total downtime per shard is zero: the shard serves old-model requests until the moment it
@@ -420,7 +426,7 @@ MemorySegment weightsSegment = cudaMalloc(gpuArena, modelSizeBytes);
 ```
 
 `Arena.ofConfined()` binds the memory segment's lifetime to the thread that allocated it. Since
-each `Actor` runs on a single virtual thread (`Thread.ofVirtual()`), the GPU shard's weights
+each `Proc` runs on a single virtual thread (`Thread.ofVirtual()`), the GPU shard's weights
 segment is confined to that virtual thread. Attempts to access the segment from other threads
 (e.g., a racing call during restart) throw `WrongThreadException` at the Java level, preventing
 use-after-free at the VRAM level.
@@ -458,7 +464,7 @@ without finalizers, and without a separate reference counting scheme.
 ### 6.3 Crash Safety
 
 When an actor crashes mid-inference (CUDA kernel exception propagates out of the handler), the
-`Actor`'s virtual thread terminates. `Arena.ofConfined()` detects thread termination and closes
+`Proc`'s virtual thread terminates. `Arena.ofConfined()` detects thread termination and closes
 the arena, calling the `cudaFree` cleanup action. VRAM is reclaimed even on abnormal exit.
 
 When the `Supervisor` restarts the actor, the state factory function allocates a new `Arena` and
@@ -483,7 +489,7 @@ these dots.
 | TensorRT-LLM | OS process | None (manual) | No | No |
 | Ollama | goroutine | None | No | No |
 | Ray Serve | Ray actor | Ray supervisor (coarse) | No | Blue-green deploy |
-| **OTP Inference Supervisor** | Virtual thread actor | 3-level OTP tree | Yes (`firstSuccess`) | Yes (`ActorRef.swap()`) |
+| **OTP Inference Supervisor** | Virtual thread actor | 3-level OTP tree | Yes (`firstSuccess`) | Yes (`ProcRef.swap()`) |
 
 Ray Serve is the closest existing system: it uses Ray's actor model. However, Ray actors are OS
 processes (not virtual threads), Ray's supervision is coarse-grained (whole-deployment level, not
@@ -497,7 +503,7 @@ factory function is called.
 The combination of capabilities that is novel:
 
 **Per-shard failure isolation.** No existing LLM framework models individual GPU shards as
-independently restartable units. The `Actor<ModelState, InferenceMsg>` design makes the shard
+independently restartable units. The `Proc<ModelState, InferenceMsg>` design makes the shard
 the unit of concurrency and the unit of failure, which are the same unit in Erlang/OTP.
 
 **Declarative restart policy per tree level.** The choice of `REST_FOR_ONE` at the node level
@@ -510,7 +516,7 @@ in any published LLM serving architecture.
 return the first success, cancel the losers. The losers are cancelled via thread interruption in
 a structured scope — no cleanup thread needed, no reference counting of outstanding requests.
 
-**Zero-downtime model swap via volatile actor reference.** The `volatile ActorRef.delegate` field
+**Zero-downtime model swap via volatile proc reference.** The `volatile ProcRef.delegate` field
 updated by `swap()` is a single-word atomic write on all JVM implementations. The swap takes one
 CPU cycle. Callers experience no interruption. No existing LLM serving system provides sub-second
 model swaps without a load-balancer-level blue-green routing change.
@@ -526,8 +532,8 @@ gigabytes of VRAM under load).
 The competitive moat for this system is not algorithmic; it is architectural. Any team can
 implement a retry loop around vLLM. No team has implemented a three-level OTP supervision tree
 for GPU inference workers, because doing so requires both deep LLM infrastructure knowledge and
-deep expertise in Erlang/OTP reliability patterns. The `org.acme` codebase — `Actor`, `Supervisor`,
-`ActorRef`, `CrashRecovery`, `Parallel`, `Result` — is the foundation that makes the
+deep expertise in Erlang/OTP reliability patterns. The `org.acme` codebase — `Proc`, `Supervisor`,
+`ProcRef`, `CrashRecovery`, `Parallel`, `Result` — is the foundation that makes the
 implementation tractable in a few thousand lines of Java 25 rather than a multi-year systems
 programming project.
 
@@ -542,11 +548,11 @@ competing for, because their architectures cannot serve it.
 ## Appendix: Key Type Signatures
 
 ```java
-// Core actor parametrization
-Actor<ModelState, InferenceMsg>
+// Core proc parametrization
+Proc<ModelState, InferenceMsg>
 
 // Supervised reference (survives restarts)
-ActorRef<ModelState, InferenceMsg>
+ProcRef<ModelState, InferenceMsg>
 
 // Node-level supervisor (REST_FOR_ONE)
 Supervisor nodeSupervisor = new Supervisor(
@@ -574,3 +580,20 @@ robust
     .recover(err -> fallbackResponse(err))
     .peek(response -> metrics.record(response));
 ```
+
+---
+
+## Template Generation
+
+The following `jgen` templates scaffold this innovation's core components:
+
+| Component | Template |
+|---|---|
+| InferenceWorker state machine (IDLE/LOADING/RUNNING) | `bin/jgen generate -t patterns/state-machine-sealed -n InferenceWorker -p org.acme.llm` |
+| GPU shard virtual thread workers | `bin/jgen generate -t concurrency/virtual-thread -n GpuShardWorker -p org.acme.llm` |
+
+Run `bin/jgen list` to see all 72 available templates.
+
+---
+
+*This specification is part of the [java-maven-template](https://github.com/seanchatmangpt/java-maven-template) innovation suite. See also: [INNOVATION-1](INNOVATION-1-OTP-JDBC.md) · [INNOVATION-2](INNOVATION-2-LLM-SUPERVISOR.md) · [INNOVATION-3](INNOVATION-3-ACTOR-HTTP.md) · [INNOVATION-4](INNOVATION-4-DISTRIBUTED-OTP.md) · [INNOVATION-5](INNOVATION-5-EVENT-SOURCING.md)*
