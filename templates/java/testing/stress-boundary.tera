@@ -1,0 +1,166 @@
+{# Stress Test: Boundary — at-limit, beyond-limit, window reset, off-by-one property testing #}
+---
+to: "{{ output_dir | default(value='src/test/java') }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyServiceBoundaryStressTest"
+  package: "org.acme.test"
+  subject_class: "MyService"
+  max_value: 3
+  window_duration_ms: 1_000
+  off_by_one_margin: 1
+---
+package {{ package }};
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.constraints.IntRange;
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+/**
+ * Armstrong Boundary Stress Test — {{ subject_class }}.
+ *
+ * <h2>Breaking points under investigation</h2>
+ * <ol>
+ *   <li><b>At-limit allowed</b> — exactly {{ max_value }} attempts must succeed.
+ *   <li><b>Beyond-limit rejected</b> — attempt {{ max_value }} + 1 must be rejected.
+ *   <li><b>Window expiry resets budget</b> — after {{ window_duration_ms }} ms, counter resets.
+ *   <li><b>Property: N ≤ limit → allowed; N > limit → rejected</b> (tries=50).
+ * </ol>
+ *
+ * <p>TODO: Replace the sliding-window counter below with the actual {{ subject_class }} limit logic.
+ */
+@Timeout(30)
+class {{ name }} implements WithAssertions {
+
+    private static final int MAX = {{ max_value }};
+    private static final long WINDOW_MS = {{ window_duration_ms }};
+
+    // ── Simple sliding-window counter (replace with actual {{ subject_class }}) ─
+
+    static final class SlidingWindowCounter {
+        private final int max;
+        private final long windowMs;
+        private final AtomicInteger count = new AtomicInteger(0);
+        private volatile long windowStart = System.currentTimeMillis();
+
+        SlidingWindowCounter(int max, long windowMs) {
+            this.max = max;
+            this.windowMs = windowMs;
+        }
+
+        /** @return true if the attempt is allowed under the budget. */
+        synchronized boolean tryAcquire() {
+            long now = System.currentTimeMillis();
+            if (now - windowStart >= windowMs) {
+                count.set(0);
+                windowStart = now;
+            }
+            if (count.get() >= max) return false;
+            count.incrementAndGet();
+            return true;
+        }
+
+        void resetWindow() {
+            count.set(0);
+            windowStart = System.currentTimeMillis() - windowMs - 1;
+        }
+    }
+
+    // ── Test 1: exactly MAX attempts are allowed ───────────────────────────────
+
+    @Test
+    void atLimit_exactlyMaxAttempts_areAllowed() {
+        // TODO: replace with actual {{ subject_class }} instance
+        var counter = new SlidingWindowCounter(MAX, WINDOW_MS);
+
+        for (int i = 0; i < MAX; i++) {
+            assertThat(counter.tryAcquire())
+                    .as("Attempt %d of %d must be allowed", i + 1, MAX)
+                    .isTrue();
+        }
+    }
+
+    // ── Test 2: attempt MAX+1 is rejected ─────────────────────────────────────
+
+    @Test
+    void beyondLimit_attempt_maxPlusOne_isRejected() {
+        var counter = new SlidingWindowCounter(MAX, WINDOW_MS);
+
+        for (int i = 0; i < MAX; i++) counter.tryAcquire();
+
+        assertThat(counter.tryAcquire())
+                .as("Attempt %d (beyond max=%d) must be rejected", MAX + 1, MAX)
+                .isFalse();
+    }
+
+    // ── Test 3: window expiry resets the budget ────────────────────────────────
+
+    @Test
+    void windowExpiry_resetsBudget() throws Exception {
+        var counter = new SlidingWindowCounter(MAX, 100); // 100 ms window for speed
+
+        // Exhaust the budget
+        for (int i = 0; i < MAX; i++) counter.tryAcquire();
+        assertThat(counter.tryAcquire()).as("Budget exhausted").isFalse();
+
+        // Wait for window to expire
+        Thread.sleep(150);
+
+        assertThat(counter.tryAcquire())
+                .as("After window expiry, budget should reset and first attempt allowed")
+                .isTrue();
+    }
+
+    // ── Test 4: concurrent hammering at boundary ───────────────────────────────
+
+    @Test
+    void concurrent_hammering_atBoundary_noPanicOrDataRace() throws Exception {
+        var counter = new SlidingWindowCounter(MAX, WINDOW_MS);
+        var allowed = new AtomicInteger(0);
+        var rejected = new AtomicInteger(0);
+        var done = new CountDownLatch(20);
+
+        for (int t = 0; t < 20; t++) {
+            Thread.ofVirtual().start(() -> {
+                for (int i = 0; i < 50; i++) {
+                    if (counter.tryAcquire()) allowed.incrementAndGet();
+                    else rejected.incrementAndGet();
+                }
+                done.countDown();
+            });
+        }
+
+        assertThat(done.await(15, TimeUnit.SECONDS)).isTrue();
+
+        int total = allowed.get() + rejected.get();
+        assertThat(total).isEqualTo(20 * 50);
+        assertThat(allowed.get())
+                .as("Allowed count must never exceed MAX=%d per window", MAX)
+                .isLessThanOrEqualTo(MAX);
+    }
+
+    // ── Property: N ≤ MAX → all allowed; single extra → rejected ──────────────
+
+    @Property(tries = 50)
+    void property_nAttempts_correctBoundaryBehavior(
+            @ForAll @IntRange(min = 1, max = 10) int n) {
+        var limit = Math.max(1, n - 1); // limit = n-1 so nth attempt is rejected
+        var counter = new SlidingWindowCounter(limit, WINDOW_MS);
+
+        for (int i = 0; i < limit; i++) {
+            assertThat(counter.tryAcquire())
+                    .as("Attempt %d/%d must be allowed (limit=%d)", i + 1, n, limit)
+                    .isTrue();
+        }
+
+        // The (limit+1)th attempt must be rejected
+        assertThat(counter.tryAcquire())
+                .as("Attempt beyond limit=%d must be rejected", limit)
+                .isFalse();
+    }
+}

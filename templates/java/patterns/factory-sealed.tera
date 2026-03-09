@@ -1,0 +1,76 @@
+{# Factory (Sealed Interface) — Type-safe factory using sealed hierarchy with static creators #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyProduct"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  type_parameters: []
+  common_methods: []
+  variants: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public sealed interface {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if tp.bound is defined %} extends {{ tp.bound }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %}
+
+        permits {% for v in variants %}{{ name }}.{{ v.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+
+    // =========================================================================
+    // Factory methods — callers never use 'new', only these static creators
+    // =========================================================================
+{% for v in variants %}
+
+    {% if v.javadoc is defined %}/**
+     * {{ v.javadoc }}
+     */
+    {% endif %}static {% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if tp.bound is defined %} extends {{ tp.bound }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}> {% endif %}{{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} {{ v.factory_name | default(value=v.name | lower) }}({% for p in v.params | default(value=v.components | default(value=[])) %}{{ p.type }} {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        return new {{ v.name }}{% if type_parameters | length > 0 %}<>{% endif %}({% for p in v.params | default(value=v.components | default(value=[])) %}{{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+    }
+{% endfor %}
+
+    // =========================================================================
+    // Common interface methods
+    // =========================================================================
+{% for method in common_methods %}
+
+    {{ method.return_type }} {{ method.name }}({% for param in method.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+{% endfor %}
+
+    // =========================================================================
+    // Permitted subtypes (records for immutability)
+    // =========================================================================
+{% for v in variants %}
+
+    {% if v.javadoc is defined %}/**
+     * {{ v.javadoc }}
+     */
+    {% endif %}record {{ v.name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %}({% for comp in v.components | default(value=[]) %}{{ comp.type }} {{ comp.name }}{% if not loop.last %}, {% endif %}{% endfor %}) implements {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} {
+{% if v.validation is defined %}
+
+        public {{ v.name }} {
+{% for val in v.validation %}
+            {{ val }}
+{% endfor %}
+        }
+{% endif %}
+{% for method in v.method_impls | default(value=[]) %}
+
+        @Override
+        public {{ method.return_type }} {{ method.name }}({% for param in method.params | default(value=[]) %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ method.body }}
+        }
+{% endfor %}
+    }
+{% endfor %}
+}

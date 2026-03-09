@@ -1,0 +1,112 @@
+{# JUnit 5 Basic Test — Generates a JUnit 5 test class with AssertJ fluent assertions, lifecycle hooks, and @DisplayName annotations for Java 26 #}
+{# Before: JUnit 4 @Test (org.junit.Test) with Assert.assertEquals → After: JUnit 5 @Test (org.junit.jupiter.api.Test) with AssertJ fluent assertions #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"
+vars:
+  name: "MyClass"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  subject_class: ""
+  test_methods: []
+  imports: []
+  has_setup: true
+  has_teardown: false
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.BeforeEach;
+{% if has_teardown %}
+import org.junit.jupiter.api.AfterEach;
+{% endif %}
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@DisplayName("{{ name }}")
+class {{ name }}Test implements WithAssertions {
+
+{% if subject_class %}
+    private {{ subject_class }} subject;
+{% endif %}
+{% if has_setup %}
+
+    @BeforeEach
+    void setUp() {
+{% if subject_class %}
+        subject = new {{ subject_class }}();
+{% else %}
+        // TODO: initialize test fixtures
+{% endif %}
+    }
+{% endif %}
+{% if has_teardown %}
+
+    @AfterEach
+    void tearDown() {
+        // TODO: clean up test resources
+    }
+{% endif %}
+{% for method in test_methods %}
+
+    @Test
+    @DisplayName("{{ method.display_name | default(value=method.name) }}")
+    void {{ method.name }}() {
+{% if method.body is defined %}
+        {{ method.body }}
+{% else %}
+        // Given
+        // TODO: set up preconditions
+
+        // When
+        // TODO: invoke the method under test
+
+        // Then
+        // TODO: verify results with AssertJ
+        // assertThat(actual).isEqualTo(expected);
+{% endif %}
+    }
+{% endfor %}
+{% if test_methods | length == 0 %}
+
+    @Test
+    @DisplayName("should exist")
+    void shouldExist() {
+{% if subject_class %}
+        assertThat(subject).isNotNull();
+{% else %}
+        // Given
+        // TODO: set up preconditions
+
+        // When
+        // TODO: invoke the method under test
+
+        // Then
+        // TODO: verify results with AssertJ
+        // assertThat(actual).isEqualTo(expected);
+{% endif %}
+    }
+
+    @Test
+    @DisplayName("should handle null input gracefully")
+    void shouldHandleNullInput() {
+        // Given
+        // TODO: prepare null or edge-case input
+
+        // When / Then
+        assertThatNullPointerException()
+                .isThrownBy(
+                        () -> {
+                            // TODO: invoke with null
+                        });
+    }
+{% endif %}
+}

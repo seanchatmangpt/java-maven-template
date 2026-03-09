@@ -1,0 +1,109 @@
+{# Repository (Generic) — Abstract data access behind a generic interface #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Repository"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  entity_type: "T"
+  id_type: "ID"
+  extra_query_methods: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Predicate;
+
+/**
+ * {{ javadoc | default(value="Generic repository interface for data access abstraction.") }}
+ *
+ * <p>BEFORE (legacy): Concrete DAO per entity with copy-pasted CRUD.
+ * <p>AFTER (modern): Generic interface + sealed Result for error handling.
+ *
+ * @param <{{ entity_type }}> the entity type
+ * @param <{{ id_type }}> the identifier type
+ */
+public interface {{ name }}<{{ entity_type }}, {{ id_type }}> {
+
+    // =========================================================================
+    // CRUD operations
+    // =========================================================================
+
+    /**
+     * Finds an entity by its identifier.
+     */
+    Optional<{{ entity_type }}> findById({{ id_type }} id);
+
+    /**
+     * Returns all entities.
+     */
+    List<{{ entity_type }}> findAll();
+
+    /**
+     * Saves an entity (insert or update).
+     *
+     * @return the saved entity (may have generated fields like id)
+     */
+    {{ entity_type }} save({{ entity_type }} entity);
+
+    /**
+     * Saves all entities in batch.
+     */
+    List<{{ entity_type }}> saveAll(Collection<{{ entity_type }}> entities);
+
+    /**
+     * Deletes an entity by its identifier.
+     *
+     * @return true if an entity was deleted
+     */
+    boolean deleteById({{ id_type }} id);
+
+    /**
+     * Checks if an entity exists with the given identifier.
+     */
+    boolean existsById({{ id_type }} id);
+
+    /**
+     * Returns the total count of entities.
+     */
+    long count();
+
+    // =========================================================================
+    // Query methods with default implementations
+    // =========================================================================
+
+    /**
+     * Finds all entities matching a predicate.
+     */
+    default List<{{ entity_type }}> findAll(Predicate<{{ entity_type }}> filter) {
+        return findAll().stream().filter(filter).toList();
+    }
+
+    /**
+     * Finds the first entity matching a predicate.
+     */
+    default Optional<{{ entity_type }}> findFirst(Predicate<{{ entity_type }}> filter) {
+        return findAll().stream().filter(filter).findFirst();
+    }
+
+    /**
+     * Deletes all entities matching a predicate.
+     *
+     * @return count of deleted entities
+     */
+    default long deleteAll(Predicate<{{ entity_type }}> filter) {
+        var toDelete = findAll(filter);
+        // Subclasses should override for efficiency
+        return toDelete.size();
+    }
+{% for method in extra_query_methods %}
+
+    {{ method.signature }};
+{% endfor %}
+}

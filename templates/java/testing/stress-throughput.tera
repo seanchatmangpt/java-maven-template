@@ -1,0 +1,187 @@
+{# Stress Test: Throughput — Queue/mailbox flood to find OOM threshold and measure ops/sec #}
+---
+to: "{{ output_dir | default(value='src/test/java') }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyServiceStressTest"
+  package: "org.acme.test"
+  subject_class: "MyService"
+  queue_type: "LinkedBlockingQueue<String>"
+  submit_method: "offer"
+  capacity_hint: 100_000
+  throughput_floor_ops_per_sec: 10_000
+---
+package {{ package }};
+
+import static org.awaitility.Awaitility.await;
+
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.constraints.IntRange;
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+/**
+ * Armstrong Throughput Stress Test — {{ subject_class }}.
+ *
+ * <h2>Breaking points under investigation</h2>
+ * <ol>
+ *   <li><b>Queue flood</b> — submit {{ capacity_hint }} items; verify all processed before heap OOM.
+ *   <li><b>Throughput floor</b> — measure ops/sec; assert ≥ {{ throughput_floor_ops_per_sec }}.
+ *   <li><b>Shutdown under load</b> — stop while items in flight; verify graceful drain.
+ *   <li><b>Property: no loss</b> — for any N ∈ [1, 10_000], submitted == processed.
+ * </ol>
+ *
+ * <p>TODO: Replace the placeholder queue below with the actual {{ subject_class }} instance.
+ */
+@Timeout(30)
+class {{ name }} implements WithAssertions {
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    // TODO: replace with actual {{ subject_class }} construction
+    private static {{ queue_type }} newQueue() {
+        return new LinkedBlockingQueue<>();
+    }
+
+    // ── Test 1: queue flood — all submitted items processed ────────────────────
+
+    @Test
+    void queueFlood_{{ capacity_hint }}_allProcessed() throws Exception {
+        var queue = newQueue();
+        int total = {{ capacity_hint }};
+        var processed = new AtomicLong();
+        var latch = new CountDownLatch(total);
+
+        // Producer — flood the queue
+        var producer = Thread.ofVirtual().start(() -> {
+            for (int i = 0; i < total; i++) {
+                // TODO: replace with actual submission API, e.g. subject.{{ submit_method }}(item)
+                queue.offer("item-" + i);
+            }
+        });
+
+        // Consumer — drain and count
+        var consumer = Thread.ofVirtual().start(() -> {
+            long count = 0;
+            while (count < total) {
+                try {
+                    var item = queue.poll(100, TimeUnit.MILLISECONDS);
+                    if (item != null) {
+                        count++;
+                        processed.incrementAndGet();
+                        latch.countDown();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+
+        assertThat(latch.await(25, TimeUnit.SECONDS))
+                .as("All %d items should be processed within 25s", total)
+                .isTrue();
+        assertThat(processed.get()).isEqualTo(total);
+        producer.join(5_000);
+        consumer.interrupt();
+    }
+
+    // ── Test 2: throughput floor ───────────────────────────────────────────────
+
+    @Test
+    void throughput_atLeast_{{ throughput_floor_ops_per_sec }}_opsPerSecond() throws Exception {
+        var queue = newQueue();
+        int warmup = 1_000;
+        int measure = 50_000;
+        var counter = new AtomicLong();
+
+        // Warmup
+        for (int i = 0; i < warmup; i++) queue.offer("w" + i);
+        for (int i = 0; i < warmup; i++) queue.poll();
+
+        // Measure
+        long start = System.nanoTime();
+        for (int i = 0; i < measure; i++) {
+            queue.offer("m" + i);
+            queue.poll();
+            counter.incrementAndGet();
+        }
+        long elapsedNs = System.nanoTime() - start;
+        double opsPerSec = counter.get() / (elapsedNs / 1_000_000_000.0);
+
+        assertThat(opsPerSec)
+                .as("Throughput must be ≥ {{ throughput_floor_ops_per_sec }} ops/sec, was %.0f", opsPerSec)
+                .isGreaterThanOrEqualTo({{ throughput_floor_ops_per_sec }});
+    }
+
+    // ── Test 3: shutdown under load — graceful drain ───────────────────────────
+
+    @Test
+    void shutdown_underLoad_drainsGracefully() throws Exception {
+        var queue = newQueue();
+        var stop = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var submitted = new AtomicLong();
+        var drained = new AtomicLong();
+
+        var producer = Thread.ofVirtual().start(() -> {
+            while (!stop.get()) {
+                queue.offer("item");
+                submitted.incrementAndGet();
+            }
+        });
+
+        // Let it run briefly
+        Thread.sleep(50);
+        stop.set(true);
+        producer.join(2_000);
+
+        // Now drain everything remaining
+        String item;
+        while ((item = queue.poll()) != null) {
+            drained.incrementAndGet();
+        }
+
+        // After stop: nothing lost in queue
+        assertThat(queue).isEmpty();
+    }
+
+    // ── Property: no message loss for any burst size ───────────────────────────
+
+    @Property(tries = 30)
+    void property_noMessageLoss(@ForAll @IntRange(min = 1, max = 5_000) int n) throws Exception {
+        var queue = newQueue();
+        var latch = new CountDownLatch(n);
+        var processed = new AtomicLong();
+
+        var consumer = Thread.ofVirtual().start(() -> {
+            long count = 0;
+            while (count < n) {
+                try {
+                    var item = queue.poll(200, TimeUnit.MILLISECONDS);
+                    if (item != null) {
+                        count++;
+                        processed.incrementAndGet();
+                        latch.countDown();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+
+        for (int i = 0; i < n; i++) queue.offer("p" + i);
+
+        assertThat(latch.await(10, TimeUnit.SECONDS))
+                .as("All %d items should be processed", n)
+                .isTrue();
+        assertThat(processed.get()).isEqualTo(n);
+        consumer.interrupt();
+    }
+}

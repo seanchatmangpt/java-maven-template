@@ -1,0 +1,82 @@
+{# module-info.java generation template. Produces a module declaration with
+   configurable requires (including transitive and static), exports, opens,
+   uses, and provides directives. #}
+---
+to: "{{ output_dir }}/module-info.java"
+vars:
+  name: "org.acme"
+  output_dir: "src/main/java"
+  requires: []
+  requires_transitive: []
+  requires_static: []
+  exports: []
+  opens: []
+  uses: []
+  provides: []
+---
+/**
+ * Module declaration for {@code {{ name }}}.
+ *
+ * <p>This module descriptor declares the module's dependencies, exported packages,
+ * and service bindings. The Java Platform Module System (JPMS) enforces strong
+ * encapsulation: only explicitly exported packages are accessible to other modules.
+ *
+ * <h2>Directive summary</h2>
+ * <ul>
+ *   <li>{@code requires} — declares a dependency on another module</li>
+ *   <li>{@code requires transitive} — dependency is propagated to downstream modules</li>
+ *   <li>{@code requires static} — compile-time-only dependency (optional at runtime)</li>
+ *   <li>{@code exports} — makes a package accessible to all other modules</li>
+ *   <li>{@code opens} — allows deep reflection on a package at runtime</li>
+ *   <li>{@code uses} — declares that this module consumes a service via ServiceLoader</li>
+ *   <li>{@code provides ... with} — registers a service implementation</li>
+ * </ul>
+ */
+module {{ name }} {
+
+    // =========================================================================
+    // Required modules
+    // =========================================================================
+
+    {% for req in requires %}
+    requires {{ req }};
+    {% endfor %}
+
+    // Transitive dependencies — re-exported to modules that require this module
+    {% for req in requires_transitive %}
+    requires transitive {{ req }};
+    {% endfor %}
+
+    // Static (compile-time only) dependencies — optional at runtime
+    {% for req in requires_static %}
+    requires static {{ req }};
+    {% endfor %}
+
+    // =========================================================================
+    // Exported packages — accessible to all modules
+    // =========================================================================
+
+    {% for exp in exports %}
+    exports {{ exp }};
+    {% endfor %}
+
+    // =========================================================================
+    // Opened packages — accessible via reflection at runtime
+    // =========================================================================
+
+    {% for open in opens %}
+    opens {{ open }};
+    {% endfor %}
+
+    // =========================================================================
+    // Service consumption (uses) and provision (provides)
+    // =========================================================================
+
+    {% for use in uses %}
+    uses {{ use }};
+    {% endfor %}
+
+    {% for provide in provides %}
+    provides {{ provide.service }} with {{ provide.impl }};
+    {% endfor %}
+}

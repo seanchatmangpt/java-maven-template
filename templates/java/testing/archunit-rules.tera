@@ -1,0 +1,242 @@
+{# ArchUnit Architecture Rules — Generates architecture tests enforcing layer dependencies, naming conventions, package rules, and annotation constraints for Java 26 projects #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}ArchitectureTest.java"
+vars:
+  name: "MyApp"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  base_package: "org.acme"
+  layers: []
+  naming_rules: []
+  annotation_rules: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
+import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.library.Architectures;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
+import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_ACCESS_STANDARD_STREAMS;
+import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_THROW_GENERIC_EXCEPTIONS;
+import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_USE_JAVA_UTIL_LOGGING;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@DisplayName("{{ name }} — architecture rules")
+class {{ name }}ArchitectureTest {
+
+    private static JavaClasses classes;
+
+    @BeforeAll
+    static void importClasses() {
+        classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("{{ base_package }}");
+    }
+
+    // ── Layer dependency rules ───────────────────────────────────────────
+
+    @Nested
+    @DisplayName("layer dependencies")
+    class LayerDependencies {
+{% if layers | length > 0 %}
+
+        @Test
+        @DisplayName("should enforce layered architecture")
+        void shouldEnforceLayeredArchitecture() {
+            Architectures.LayeredArchitecture architecture = layeredArchitecture()
+                    .consideringAllDependencies()
+{% for layer in layers %}
+                    .layer("{{ layer.name }}").definedBy("{{ layer.package }}..")
+{% endfor %}
+{% for layer in layers %}
+{% if layer.may_access is defined %}
+                    .whereLayer("{{ layer.name }}").mayOnlyAccessLayers({% for target in layer.may_access %}"{{ target }}"{% if not loop.last %}, {% endif %}{% endfor %})
+{% endif %}
+{% if layer.may_not_be_accessed is defined and layer.may_not_be_accessed %}
+                    .whereLayer("{{ layer.name }}").mayNotBeAccessedByAnyLayer()
+{% endif %}
+{% endfor %}
+                    ;
+
+            architecture.check(classes);
+        }
+{% else %}
+
+        @Test
+        @DisplayName("should enforce layered architecture")
+        void shouldEnforceLayeredArchitecture() {
+            layeredArchitecture()
+                    .consideringAllDependencies()
+                    .layer("API").definedBy("{{ base_package }}.api..")
+                    .layer("Service").definedBy("{{ base_package }}.service..")
+                    .layer("Domain").definedBy("{{ base_package }}.domain..")
+                    .layer("Persistence").definedBy("{{ base_package }}.persistence..")
+                    .whereLayer("API").mayNotBeAccessedByAnyLayer()
+                    .whereLayer("Service").mayOnlyBeAccessedByLayers("API")
+                    .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Persistence")
+                    .whereLayer("Persistence").mayOnlyBeAccessedByLayers("Service")
+                    .check(classes);
+        }
+
+        @Test
+        @DisplayName("domain should not depend on infrastructure")
+        void domainShouldNotDependOnInfrastructure() {
+            noClasses()
+                    .that().resideInAPackage("{{ base_package }}.domain..")
+                    .should().dependOnClassesThat()
+                    .resideInAnyPackage(
+                            "{{ base_package }}.persistence..",
+                            "{{ base_package }}.api..")
+                    .check(classes);
+        }
+{% endif %}
+    }
+
+    // ── Naming conventions ───────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("naming conventions")
+    class NamingConventions {
+{% if naming_rules | length > 0 %}
+{% for rule in naming_rules %}
+
+        @Test
+        @DisplayName("{{ rule.display_name }}")
+        void {{ rule.name }}() {
+            {{ rule.body }}
+        }
+{% endfor %}
+{% else %}
+
+        @Test
+        @DisplayName("interfaces should not have I prefix")
+        void interfacesShouldNotHaveIPrefix() {
+            noClasses()
+                    .that().areInterfaces()
+                    .should().haveSimpleNameStartingWith("I")
+                    .check(classes);
+        }
+
+        @Test
+        @DisplayName("implementations should have descriptive names")
+        void implementationsShouldHaveDescriptiveNames() {
+            noClasses()
+                    .that().areNotInterfaces()
+                    .and().areNotEnums()
+                    .and().areNotRecords()
+                    .should().haveSimpleNameEndingWith("Impl")
+                    .check(classes);
+        }
+
+        @Test
+        @DisplayName("records should not have Dto suffix")
+        void recordsShouldNotUseDtoSuffix() {
+            noClasses()
+                    .that().areRecords()
+                    .should().haveSimpleNameEndingWith("Dto")
+                    .because("records are value objects, not DTOs — use descriptive names instead")
+                    .check(classes);
+        }
+{% endif %}
+    }
+
+    // ── Package dependency checks ────────────────────────────────────────
+
+    @Nested
+    @DisplayName("package dependencies")
+    class PackageDependencies {
+
+        @Test
+        @DisplayName("should not have cyclic dependencies between packages")
+        void shouldNotHaveCyclicDependencies() {
+            com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices()
+                    .matching("{{ base_package }}.(*)..")
+                    .should().beFreeOfCycles()
+                    .check(classes);
+        }
+
+        @Test
+        @DisplayName("should not access internal packages from outside")
+        void shouldNotAccessInternalPackages() {
+            noClasses()
+                    .that().resideOutsideOfPackage("..internal..")
+                    .should().dependOnClassesThat()
+                    .resideInAPackage("..internal..")
+                    .because("internal packages are implementation details")
+                    .check(classes);
+        }
+    }
+
+    // ── Annotation rules ─────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("annotation rules")
+    class AnnotationRules {
+{% if annotation_rules | length > 0 %}
+{% for rule in annotation_rules %}
+
+        @Test
+        @DisplayName("{{ rule.display_name }}")
+        void {{ rule.name }}() {
+            {{ rule.body }}
+        }
+{% endfor %}
+{% else %}
+
+        @Test
+        @DisplayName("sealed interfaces should be in domain package")
+        void sealedInterfacesShouldBeInDomain() {
+            classes()
+                    .that().areInterfaces()
+                    .and().haveModifier(com.tngtech.archunit.core.domain.JavaModifier.SEALED)
+                    .should().resideInAPackage("{{ base_package }}.domain..")
+                    .because("sealed types model domain concepts")
+                    .check(classes);
+        }
+{% endif %}
+    }
+
+    // ── General coding rules ─────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("general coding rules")
+    class GeneralCodingRules {
+
+        @Test
+        @DisplayName("should not use System.out or System.err")
+        void shouldNotAccessStandardStreams() {
+            NO_CLASSES_SHOULD_ACCESS_STANDARD_STREAMS.check(classes);
+        }
+
+        @Test
+        @DisplayName("should not throw generic exceptions")
+        void shouldNotThrowGenericExceptions() {
+            NO_CLASSES_SHOULD_THROW_GENERIC_EXCEPTIONS.check(classes);
+        }
+
+        @Test
+        @DisplayName("should not use java.util.logging")
+        void shouldNotUseJavaUtilLogging() {
+            NO_CLASSES_SHOULD_USE_JAVA_UTIL_LOGGING.check(classes);
+        }
+    }
+}

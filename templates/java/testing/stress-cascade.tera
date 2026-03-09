@@ -1,0 +1,174 @@
+{# Stress Test: Cascade — listener/observer broadcast storm, crash isolation, concurrent add/remove #}
+---
+to: "{{ output_dir | default(value='src/test/java') }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyServiceCascadeStressTest"
+  package: "org.acme.test"
+  subject_class: "MyService"
+  listener_type: "Runnable"
+  handler_count: 1_000
+  broadcast_deadline_ms: 2_000
+---
+package {{ package }};
+
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.constraints.IntRange;
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+/**
+ * Armstrong Cascade Stress Test — {{ subject_class }}.
+ *
+ * <h2>Breaking points under investigation</h2>
+ * <ol>
+ *   <li><b>Broadcast storm</b> — {{ handler_count }} handlers; notify must complete within {{ broadcast_deadline_ms }} ms.
+ *   <li><b>Crash isolation</b> — one crashing handler must not kill the manager or other handlers.
+ *   <li><b>Concurrent add/remove during notify</b> — no ConcurrentModificationException.
+ *   <li><b>Property: exact delivery count for any N handlers</b>.
+ * </ol>
+ *
+ * <p>TODO: Replace CopyOnWriteArrayList below with the actual {{ subject_class }} handler registry.
+ */
+@Timeout(30)
+class {{ name }} implements WithAssertions {
+
+    private static final int HANDLER_COUNT = {{ handler_count }};
+    private static final long BROADCAST_DEADLINE_MS = {{ broadcast_deadline_ms }};
+
+    // ── Simple event bus stand-in (replace with actual {{ subject_class }}) ────
+
+    record EventBus(CopyOnWriteArrayList<Runnable> handlers) {
+        EventBus() { this(new CopyOnWriteArrayList<>()); }
+
+        void addHandler(Runnable h) { handlers.add(h); }
+        void removeHandler(Runnable h) { handlers.remove(h); }
+
+        void notify(Object event) {
+            for (var h : handlers) {
+                try { h.run(); }
+                catch (Exception ignored) { /* isolate crashes */ }
+            }
+        }
+    }
+
+    // ── Test 1: broadcast storm — N handlers, within deadline ─────────────────
+
+    @Test
+    void syncBroadcast_{{ handler_count }}_handlers_completesWithinDeadline() {
+        // TODO: replace with actual {{ subject_class }} construction
+        var bus = new EventBus();
+        var received = new AtomicInteger(0);
+
+        for (int i = 0; i < HANDLER_COUNT; i++) {
+            bus.addHandler(received::incrementAndGet);
+        }
+
+        long start = System.currentTimeMillis();
+        bus.notify("stress-event");
+        long elapsed = System.currentTimeMillis() - start;
+
+        assertThat(received.get())
+                .as("All %d handlers must receive the event", HANDLER_COUNT)
+                .isEqualTo(HANDLER_COUNT);
+
+        assertThat(elapsed)
+                .as("Broadcast to %d handlers must complete within %d ms, took %d ms",
+                        HANDLER_COUNT, BROADCAST_DEADLINE_MS, elapsed)
+                .isLessThanOrEqualTo(BROADCAST_DEADLINE_MS);
+    }
+
+    // ── Test 2: crashing handler does not kill the manager ────────────────────
+
+    @Test
+    void crashingHandler_doesNotKillManager() {
+        var bus = new EventBus();
+        var goodCount = new AtomicInteger(0);
+
+        // One crashing handler at index 0
+        bus.addHandler(() -> { throw new RuntimeException("intentional crash"); });
+
+        // 99 good handlers
+        for (int i = 0; i < 99; i++) {
+            bus.addHandler(goodCount::incrementAndGet);
+        }
+
+        assertThatCode(() -> bus.notify("event"))
+                .as("Notify must not throw even if a handler crashes")
+                .doesNotThrowAnyException();
+
+        assertThat(goodCount.get())
+                .as("All 99 good handlers must still receive the event")
+                .isEqualTo(99);
+    }
+
+    // ── Test 3: concurrent add/remove during notify — no CME ──────────────────
+
+    @Test
+    void concurrentAddRemove_duringNotify_noConcurrentModificationException() throws Exception {
+        var bus = new EventBus();
+        var errors = new AtomicReference<Throwable>();
+        var notifyCount = new AtomicInteger(0);
+        var stop = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        // Pre-populate
+        for (int i = 0; i < 100; i++) bus.addHandler(() -> {});
+
+        // Notifier thread
+        var notifier = Thread.ofVirtual().start(() -> {
+            while (!stop.get() && errors.get() == null) {
+                try { bus.notify("event"); notifyCount.incrementAndGet(); }
+                catch (Throwable e) { errors.set(e); }
+            }
+        });
+
+        // Mutator threads — add and remove handlers concurrently with notify
+        var done = new CountDownLatch(4);
+        for (int t = 0; t < 4; t++) {
+            Thread.ofVirtual().start(() -> {
+                try {
+                    for (int i = 0; i < 500; i++) {
+                        Runnable h = () -> {};
+                        bus.addHandler(h);
+                        Thread.yield();
+                        bus.removeHandler(h);
+                    }
+                } catch (Throwable e) {
+                    errors.set(e);
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+
+        assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        stop.set(true);
+        notifier.join(2_000);
+
+        if (errors.get() != null) {
+            fail("ConcurrentModificationException or other error: " + errors.get());
+        }
+        assertThat(notifyCount.get()).isGreaterThan(0);
+    }
+
+    // ── Property: exact delivery count for any N handlers ─────────────────────
+
+    @Property(tries = 30)
+    void property_exactDeliveryCount(@ForAll @IntRange(min = 1, max = 500) int n) {
+        var bus = new EventBus();
+        var received = new AtomicInteger(0);
+
+        for (int i = 0; i < n; i++) bus.addHandler(received::incrementAndGet);
+        bus.notify("event");
+
+        assertThat(received.get())
+                .as("With %d handlers, must deliver exactly %d events", n, n)
+                .isEqualTo(n);
+    }
+}

@@ -1,0 +1,345 @@
+{# Proper Encapsulation — Replace reflection-based field access with module system boundaries, records for data exposure, and proper API design for Java 26 #}
+{# Before: setAccessible(true), Field.get/set, bypassing encapsulation → After: module exports, record accessors, sealed interface APIs #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Encapsulation"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  module_name: "org.acme"
+  exported_packages: []
+  data_records: []
+  service_interfaces: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.UnaryOperator;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% else %}
+/**
+ * Encapsulation patterns for Java 26 — proper API design without reflection.
+ *
+ * <h2>Migration guide (Before / After)</h2>
+ * <pre>
+ * BEFORE (reflection-based, fragile):
+ *   Field field = obj.getClass().getDeclaredField("name");
+ *   field.setAccessible(true);                              // bypasses encapsulation
+ *   String value = (String) field.get(obj);                 // unsafe cast
+ *   field.set(obj, "new value");                            // mutates private state
+ *
+ * AFTER (proper API, module-safe):
+ *   String value = obj.name();                              // record accessor
+ *   var updated = obj.withName("new value");                // immutable copy
+ *   var data = obj.toSnapshot();                            // explicit DTO
+ * </pre>
+ *
+ * <h2>Module system boundaries</h2>
+ * <pre>
+ * // module-info.java
+ * module {{ module_name }} {
+ *     // Only export public API packages
+{% for pkg in exported_packages %}
+ *     exports {{ pkg }};
+{% endfor %}
+{% if exported_packages | length == 0 %}
+ *     exports {{ package }}.api;
+ *     // Internal packages are NOT exported — inaccessible to other modules
+ *     // {{ package }}.internal is encapsulated by default
+{% endif %}
+ * }
+ * </pre>
+ */
+{% endif %}
+public final class {{ name }} {
+
+    private {{ name }}() {
+        // utility class — demonstrates encapsulation patterns
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Pattern 1: Records for data exposure (instead of reflection)
+    // ═══════════════════════════════════════════════════════════════════════
+{% for record in data_records %}
+
+    /**
+     * Immutable data carrier for {{ record.name }}.
+     */
+    public record {{ record.name }}(
+{% for field in record.fields %}
+            {{ field.type }} {{ field.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+    ) {
+{% if record.has_validation is defined and record.has_validation %}
+        public {{ record.name }} {
+{% for field in record.fields %}
+{% if field.nullable is undefined or not field.nullable %}
+            Objects.requireNonNull({{ field.name }}, "{{ field.name }} must not be null");
+{% endif %}
+{% endfor %}
+        }
+{% endif %}
+
+        /** Creates a modified copy (wither pattern). */
+{% for field in record.fields %}
+        public {{ record.name }} with{{ field.name | capitalize }}({{ field.type }} {{ field.name }}) {
+            return new {{ record.name }}({% for f in record.fields %}{% if f.name == field.name %}{{ field.name }}{% else %}this.{{ f.name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %});
+        }
+{% endfor %}
+    }
+{% endfor %}
+{% if data_records | length == 0 %}
+
+    // ── Record as public API (replaces reflection-based field access) ────
+
+    /**
+     * BEFORE (reflection — fragile, module-hostile):
+     * <pre>
+     *   Field f = user.getClass().getDeclaredField("email");
+     *   f.setAccessible(true);
+     *   String email = (String) f.get(user);
+     * </pre>
+     *
+     * AFTER (record accessor — type-safe, module-friendly):
+     * <pre>
+     *   String email = user.email();
+     *   var updated = user.withEmail("new@example.com");
+     * </pre>
+     */
+    public record UserSnapshot(String name, String email, List<String> roles) {
+
+        public UserSnapshot {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(email, "email must not be null");
+            roles = roles != null ? List.copyOf(roles) : List.of();
+        }
+
+        /** Wither: creates a copy with a different name. */
+        public UserSnapshot withName(String name) {
+            return new UserSnapshot(name, this.email, this.roles);
+        }
+
+        /** Wither: creates a copy with a different email. */
+        public UserSnapshot withEmail(String email) {
+            return new UserSnapshot(this.name, email, this.roles);
+        }
+
+        /** Wither: creates a copy with different roles. */
+        public UserSnapshot withRoles(List<String> roles) {
+            return new UserSnapshot(this.name, this.email, roles);
+        }
+    }
+{% endif %}
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Pattern 2: Sealed interface for controlled extension
+    // ═══════════════════════════════════════════════════════════════════════
+{% for iface in service_interfaces %}
+
+    public sealed interface {{ iface.name }} {
+{% for method in iface.methods %}
+        {{ method.signature }};
+{% endfor %}
+
+{% for impl in iface.implementations %}
+        record {{ impl.name }}({{ impl.params }}) implements {{ iface.name }} {
+{% for method in iface.methods %}
+            @Override
+            public {{ method.return_type }} {{ method.name }}({{ method.params }}) {
+                {{ method.body }}
+            }
+{% endfor %}
+        }
+{% endfor %}
+    }
+{% endfor %}
+{% if service_interfaces | length == 0 %}
+
+    /**
+     * BEFORE (open class hierarchy with reflection-based dispatch):
+     * <pre>
+     *   // Anyone can subclass, reflection needed to discover implementations
+     *   Method m = handler.getClass().getMethod("handle", Request.class);
+     *   m.setAccessible(true);
+     *   m.invoke(handler, request);
+     * </pre>
+     *
+     * AFTER (sealed interface with exhaustive switch):
+     * <pre>
+     *   // Compiler enforces all cases are handled — no reflection needed
+     *   return switch (permission) {
+     *       case Read r    -&gt; handleRead(r);
+     *       case Write w   -&gt; handleWrite(w);
+     *       case Admin a   -&gt; handleAdmin(a);
+     *   };
+     * </pre>
+     */
+    public sealed interface Permission {
+
+        String resource();
+
+        record Read(String resource) implements Permission {
+            public Read {
+                Objects.requireNonNull(resource, "resource must not be null");
+            }
+        }
+
+        record Write(String resource, String owner) implements Permission {
+            public Write {
+                Objects.requireNonNull(resource, "resource must not be null");
+                Objects.requireNonNull(owner, "owner must not be null");
+            }
+        }
+
+        record Admin(String resource, String reason) implements Permission {
+            public Admin {
+                Objects.requireNonNull(resource, "resource must not be null");
+                Objects.requireNonNull(reason, "reason must not be null");
+            }
+        }
+    }
+
+    /**
+     * Exhaustive switch over sealed permission types — no reflection, no instanceof chains.
+     */
+    public static String describePermission(Permission permission) {
+        return switch (permission) {
+            case Permission.Read r -> "Read access to " + r.resource();
+            case Permission.Write w -> "Write access to " + w.resource() + " by " + w.owner();
+            case Permission.Admin a ->
+                    "Admin access to " + a.resource() + " (reason: " + a.reason() + ")";
+        };
+    }
+{% endif %}
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Pattern 3: Encapsulated mutable state with immutable views
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * BEFORE (exposing internal collections via reflection):
+     * <pre>
+     *   Field f = registry.getClass().getDeclaredField("entries");
+     *   f.setAccessible(true);
+     *   List&lt;String&gt; entries = (List&lt;String&gt;) f.get(registry);
+     *   entries.add("injected");  // mutates internal state!
+     * </pre>
+     *
+     * AFTER (defensive copies and unmodifiable views):
+     */
+    public static final class Registry<T> {
+
+        private final List<T> entries = new java.util.ArrayList<>();
+        private final Map<String, T> index = new java.util.HashMap<>();
+
+        /** Adds an entry. The internal collection is never exposed. */
+        public void register(String key, T value) {
+            Objects.requireNonNull(key, "key must not be null");
+            Objects.requireNonNull(value, "value must not be null");
+            entries.add(value);
+            index.put(key, value);
+        }
+
+        /** Returns an unmodifiable view — callers cannot mutate internal state. */
+        public List<T> entries() {
+            return Collections.unmodifiableList(entries);
+        }
+
+        /** Returns an unmodifiable view of the index. */
+        public Map<String, T> index() {
+            return Collections.unmodifiableMap(index);
+        }
+
+        /** Safe lookup — returns Optional instead of nullable. */
+        public Optional<T> find(String key) {
+            return Optional.ofNullable(index.get(key));
+        }
+
+        /** Snapshot as an immutable record (no reference to mutable internals). */
+        public record Snapshot<T>(List<T> entries, Map<String, T> index) {
+            public Snapshot {
+                entries = List.copyOf(entries);
+                index = Map.copyOf(index);
+            }
+        }
+
+        /** Creates an immutable snapshot — safe to pass across module boundaries. */
+        public Snapshot<T> snapshot() {
+            return new Snapshot<>(entries, index);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Pattern 4: Functional transformation instead of mutating private fields
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * BEFORE (mutating private fields via reflection):
+     * <pre>
+     *   Field f = config.getClass().getDeclaredField("timeout");
+     *   f.setAccessible(true);
+     *   f.setInt(config, 5000);
+     * </pre>
+     *
+     * AFTER (immutable record with functional transformation):
+     */
+    public record AppConfig(String host, int port, int timeoutMs, boolean debug) {
+
+        public AppConfig {
+            Objects.requireNonNull(host, "host must not be null");
+            if (port <= 0 || port > 65535) {
+                throw new IllegalArgumentException("port must be between 1 and 65535");
+            }
+            if (timeoutMs < 0) {
+                throw new IllegalArgumentException("timeoutMs must be non-negative");
+            }
+        }
+
+        /** Default configuration. */
+        public static AppConfig defaults() {
+            return new AppConfig("localhost", 8080, 30_000, false);
+        }
+
+        /** Functional transformation — returns a new config with modifications applied. */
+        public AppConfig transform(UnaryOperator<Builder> modifier) {
+            return modifier.apply(new Builder(this)).build();
+        }
+
+        public static final class Builder {
+            private String host;
+            private int port;
+            private int timeoutMs;
+            private boolean debug;
+
+            private Builder(AppConfig config) {
+                this.host = config.host;
+                this.port = config.port;
+                this.timeoutMs = config.timeoutMs;
+                this.debug = config.debug;
+            }
+
+            public Builder host(String host) { this.host = host; return this; }
+            public Builder port(int port) { this.port = port; return this; }
+            public Builder timeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; return this; }
+            public Builder debug(boolean debug) { this.debug = debug; return this; }
+
+            public AppConfig build() {
+                return new AppConfig(host, port, timeoutMs, debug);
+            }
+        }
+    }
+}

@@ -1,0 +1,112 @@
+{# Property-Based Testing (jqwik) — Generates property-based tests with @Property, @ForAll, arbitrary providers, and statistical testing for Java 26 #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Properties.java"
+vars:
+  name: "MyClass"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  subject_class: ""
+  properties: []
+  arbitrary_providers: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.List;
+
+import org.assertj.core.api.WithAssertions;
+
+import net.jqwik.api.*;
+import net.jqwik.api.constraints.*;
+import net.jqwik.api.statistics.Histogram;
+import net.jqwik.api.statistics.Statistics;
+import net.jqwik.api.statistics.StatisticsReport;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+class {{ name }}Properties implements WithAssertions {
+{% for property in properties %}
+
+    @Property
+    void {{ property.name }}({{ property.params }}) {
+        {{ property.body }}
+    }
+{% endfor %}
+{% if properties | length == 0 %}
+
+    // ── Basic property: invariant holds for all generated values ─────────
+
+    @Property(tries = 1000)
+    void absoluteValueIsNeverNegative(@ForAll int value) {
+        assertThat(Math.abs((long) value)).isGreaterThanOrEqualTo(0);
+    }
+
+    // ── String properties with constraints ──────────────────────────────
+
+    @Property
+    void stringLengthIsNonNegative(@ForAll @StringLength(max = 1000) String s) {
+        assertThat(s.length()).isGreaterThanOrEqualTo(0);
+    }
+
+    @Property
+    void trimmedStringIsNoLongerThanOriginal(@ForAll @StringLength(max = 500) String s) {
+        assertThat(s.trim().length()).isLessThanOrEqualTo(s.length());
+    }
+
+    // ── Collection properties ───────────────────────────────────────────
+
+    @Property
+    void reverseTwiceIsIdentity(@ForAll List<@IntRange(min = -1000, max = 1000) Integer> list) {
+        var reversed = new java.util.ArrayList<>(list);
+        java.util.Collections.reverse(reversed);
+        java.util.Collections.reverse(reversed);
+        assertThat(reversed).isEqualTo(list);
+    }
+
+    @Property
+    void sortedListIsSorted(@ForAll @Size(max = 100) List<@IntRange(min = -1000, max = 1000) Integer> list) {
+        var sorted = list.stream().sorted().toList();
+        for (int i = 1; i < sorted.size(); i++) {
+            assertThat(sorted.get(i)).isGreaterThanOrEqualTo(sorted.get(i - 1));
+        }
+    }
+
+    // ── Statistical testing — verify distribution of generated data ─────
+
+    @Property(tries = 500)
+    @StatisticsReport(format = Histogram.class)
+    void valuesAreWellDistributed(@ForAll @IntRange(min = 0, max = 100) int value) {
+        Statistics.label("range")
+                .collect(
+                        value < 25 ? "0-24"
+                                : value < 50 ? "25-49"
+                                        : value < 75 ? "50-74" : "75-100");
+    }
+
+    // ── Custom @Provide arbitrary ───────────────────────────────────────
+
+    @Property
+    void customArbitraryProperty(@ForAll("positiveEvenIntegers") int value) {
+        assertThat(value).isPositive().isEven();
+    }
+
+    @Provide
+    Arbitrary<Integer> positiveEvenIntegers() {
+        return Arbitraries.integers().between(2, 10_000).filter(n -> n % 2 == 0);
+    }
+{% endif %}
+{% for provider in arbitrary_providers %}
+
+    @Provide
+    Arbitrary<{{ provider.type }}> {{ provider.name }}() {
+        {{ provider.body }}
+    }
+{% endfor %}
+}

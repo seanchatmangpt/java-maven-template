@@ -1,0 +1,156 @@
+{# Optional chain — Converts null-check chains to Optional pipelines #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "OptionalPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  custom_chains: []
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+
+/**
+ * Optional chain patterns — replaces null checks with {@link Optional} pipelines.
+ *
+ * <h2>Migration rules:</h2>
+ * <ul>
+ *     <li>{@code if (x != null)} → {@code Optional.ofNullable(x).ifPresent(...)}</li>
+ *     <li>{@code x != null ? x.foo() : default} → {@code Optional.ofNullable(x).map(X::foo).orElse(default)}</li>
+ *     <li>{@code if (x != null && x.y() != null && x.y().z() != null)} → {@code flatMap} chain</li>
+ *     <li>{@code return x != null ? x : computeDefault()} → {@code Optional.ofNullable(x).orElseGet(this::computeDefault)}</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Simple null check → Optional
+    // BEFORE: if (value != null) { return value.toString(); } return "";
+    // AFTER:
+    // =========================================================================
+    public static String safeToString(Object value) {
+        return Optional.ofNullable(value)
+                .map(Object::toString)
+                .orElse("");
+    }
+
+    // =========================================================================
+    // PATTERN 2: Nested null checks → flatMap chain
+    // BEFORE: if (order != null) {
+    //             Customer c = order.customer();
+    //             if (c != null) {
+    //                 Address a = c.address();
+    //                 if (a != null) { return a.city(); }
+    //             }
+    //         }
+    //         return "Unknown";
+    // AFTER:
+    // =========================================================================
+    public static <A, B, C> Optional<C> deepAccess(
+            A root,
+            Function<A, B> step1,
+            Function<B, C> step2) {
+        return Optional.ofNullable(root)
+                .map(step1)
+                .map(step2);
+    }
+
+    public static <A, B, C, D> Optional<D> deepAccess(
+            A root,
+            Function<A, B> step1,
+            Function<B, C> step2,
+            Function<C, D> step3) {
+        return Optional.ofNullable(root)
+                .map(step1)
+                .map(step2)
+                .map(step3);
+    }
+
+    // =========================================================================
+    // PATTERN 3: Null ternary → orElse/orElseGet
+    // BEFORE: String name = user != null ? user.name() : "Anonymous";
+    // AFTER:
+    // =========================================================================
+    public static <T, R> R mapOrDefault(T value, Function<T, R> mapper, R defaultValue) {
+        return Optional.ofNullable(value)
+                .map(mapper)
+                .orElse(defaultValue);
+    }
+
+    public static <T, R> R mapOrCompute(T value, Function<T, R> mapper, Supplier<R> defaultSupplier) {
+        return Optional.ofNullable(value)
+                .map(mapper)
+                .orElseGet(defaultSupplier);
+    }
+
+    // =========================================================================
+    // PATTERN 4: Null check with exception → orElseThrow
+    // BEFORE: if (value == null) throw new IllegalArgumentException("...");
+    // AFTER:
+    // =========================================================================
+    public static <T> T requirePresent(T value, String message) {
+        return Optional.ofNullable(value)
+                .orElseThrow(() -> new IllegalArgumentException(message));
+    }
+
+    // =========================================================================
+    // PATTERN 5: Conditional action → ifPresent/ifPresentOrElse
+    // BEFORE: if (value != null) { process(value); } else { handleAbsent(); }
+    // AFTER:
+    // =========================================================================
+    public static <T> void actOnPresence(T value, java.util.function.Consumer<T> action, Runnable absent) {
+        Optional.ofNullable(value).ifPresentOrElse(action, absent);
+    }
+
+    // =========================================================================
+    // PATTERN 6: Filter + null → Optional.filter
+    // BEFORE: if (value != null && isValid(value)) { ... }
+    // AFTER:
+    // =========================================================================
+    public static <T> Optional<T> filterNullable(T value, Predicate<T> predicate) {
+        return Optional.ofNullable(value).filter(predicate);
+    }
+
+    // =========================================================================
+    // PATTERN 7: Multiple nullable sources → Stream.of + findFirst
+    // BEFORE: if (a != null) return a; if (b != null) return b; return c;
+    // AFTER:
+    // =========================================================================
+    @SafeVarargs
+    public static <T> Optional<T> firstNonNull(T... values) {
+        return Stream.of(values)
+                .filter(java.util.Objects::nonNull)
+                .findFirst();
+    }
+
+    @SafeVarargs
+    public static <T> Optional<T> firstPresent(Supplier<Optional<T>>... suppliers) {
+        return Stream.of(suppliers)
+                .map(Supplier::get)
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+
+    // =========================================================================
+    // PATTERN 8: Optional as stream element — flatMap with Optional.stream()
+    // BEFORE: list.stream().filter(x -> x.opt() != null).map(x -> x.opt())
+    // AFTER:
+    // =========================================================================
+    public static <T, R> Stream<R> flatMapOptional(Stream<T> stream, Function<T, Optional<R>> mapper) {
+        return stream.map(mapper).flatMap(Optional::stream);
+    }
+{% for chain in custom_chains %}
+
+    {{ chain.body }}
+{% endfor %}
+}

@@ -1,0 +1,125 @@
+{# State Machine (Sealed Classes + Switch) — Finite state machine with exhaustive transitions #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyStateMachine"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  state_name: "State"
+  event_name: "Event"
+  states: []
+  events: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public final class {{ name }} {
+
+    // =========================================================================
+    // States — sealed hierarchy ensures exhaustive matching
+    // =========================================================================
+
+    public sealed interface {{ state_name }}
+            permits {% for state in states %}{{ state_name }}.{{ state.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+{% for state in states %}
+
+        record {{ state.name }}({% for field in state.fields | default(value=[]) %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) implements {{ state_name }} {}
+{% endfor %}
+    }
+
+    // =========================================================================
+    // Events — sealed hierarchy of all possible inputs
+    // =========================================================================
+
+    public sealed interface {{ event_name }}
+            permits {% for event in events %}{{ event_name }}.{{ event.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+{% for event in events %}
+
+        record {{ event.name }}({% for field in event.fields | default(value=[]) %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) implements {{ event_name }} {}
+{% endfor %}
+    }
+
+    // =========================================================================
+    // Transition result — either a new state or a rejection
+    // =========================================================================
+
+    public sealed interface TransitionResult
+            permits TransitionResult.Transitioned, TransitionResult.Rejected {
+
+        record Transitioned({{ state_name }} newState) implements TransitionResult {}
+        record Rejected({{ state_name }} currentState, {{ event_name }} event, String reason) implements TransitionResult {}
+    }
+
+    // =========================================================================
+    // Transition function — the heart of the state machine
+    // =========================================================================
+
+    /**
+     * Computes the next state given the current state and an event.
+     *
+     * <p>The compiler guarantees exhaustiveness — adding a new state or event
+     * forces all transition cases to be updated.
+     */
+    public static TransitionResult transition({{ state_name }} state, {{ event_name }} event) {
+        return switch (state) {
+{% for state in states %}
+            case {{ state_name }}.{{ state.name }}{% if state.fields is defined and state.fields | length > 0 %}({% for f in state.fields %}var {{ f.name }}{% if not loop.last %}, {% endif %}{% endfor %}){% else %} s{% endif %} -> switch (event) {
+{% for transition in state.transitions | default(value=[]) %}
+                case {{ event_name }}.{{ transition.event }}{% if transition.event_fields is defined %}({% for f in transition.event_fields %}var {{ f }}{% if not loop.last %}, {% endif %}{% endfor %}){% else %} e{% endif %} ->
+                    new TransitionResult.Transitioned({{ transition.next_state }});
+{% endfor %}
+{% if state.default_rejection is defined %}
+                default -> new TransitionResult.Rejected(state, event, "{{ state.default_rejection }}");
+{% endif %}
+            };
+{% endfor %}
+        };
+    }
+
+    // =========================================================================
+    // Machine instance — holds current state, applies events
+    // =========================================================================
+
+    private {{ state_name }} currentState;
+
+    public {{ name }}({{ state_name }} initialState) {
+        this.currentState = Objects.requireNonNull(initialState);
+    }
+
+    /**
+     * Applies an event and transitions to the next state.
+     *
+     * @return the transition result
+     */
+    public TransitionResult apply({{ event_name }} event) {
+        var result = transition(currentState, event);
+        if (result instanceof TransitionResult.Transitioned(var newState)) {
+            this.currentState = newState;
+        }
+        return result;
+    }
+
+    /**
+     * Returns the current state.
+     */
+    public {{ state_name }} currentState() {
+        return currentState;
+    }
+
+    /**
+     * Checks if the machine is in a specific state type.
+     */
+    public boolean isIn(Class<? extends {{ state_name }}> stateType) {
+        return stateType.isInstance(currentState);
+    }
+}

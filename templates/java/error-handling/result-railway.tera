@@ -1,0 +1,380 @@
+{# Complete Result<T,E> sealed type implementing railway-oriented programming #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Result"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+/**
+ * A sealed Result type implementing railway-oriented programming.
+ *
+ * <p>Provides a type-safe alternative to exceptions for representing operations that can succeed
+ * or fail. Supports {@code map}, {@code flatMap}, {@code fold}, {@code recover}, {@code peek},
+ * and conversion operations.
+ *
+ * <p>Usage:
+ * <pre>{@code
+ * Result<User, String> result = Result.of(() -> parseUser(json))
+ *     .mapError(Exception::getMessage)
+ *     .flatMap(user -> validateAge(user))
+ *     .peek(user -> log.info("Valid user: {}", user));
+ *
+ * String message = result.fold(
+ *     user -> "Welcome, " + user.name(),
+ *     error -> "Error: " + error
+ * );
+ * }</pre>
+ *
+ * @param <T> the success value type
+ * @param <E> the error value type
+ */
+public sealed interface {{ name }}<T, E> permits {{ name }}.Success, {{ name }}.Failure {
+
+    // ========================================================================
+    // Variants — Success and Failure as records
+    // ========================================================================
+
+    /**
+     * Represents a successful result containing a value.
+     */
+    record Success<T, E>(T value) implements {{ name }}<T, E> {}
+
+    /**
+     * Represents a failed result containing an error.
+     */
+    record Failure<T, E>(E error) implements {{ name }}<T, E> {}
+
+    // ========================================================================
+    // Factory methods
+    // ========================================================================
+
+    /**
+     * Creates a successful result wrapping the given value.
+     */
+    static <T, E> {{ name }}<T, E> success(T value) {
+        return new Success<>(value);
+    }
+
+    /**
+     * Creates a failed result wrapping the given error.
+     */
+    static <T, E> {{ name }}<T, E> failure(E error) {
+        return new Failure<>(error);
+    }
+
+    /**
+     * Wraps a throwing supplier into a Result.
+     *
+     * <p>BEFORE: Manual try-catch with multiple paths.
+     * <pre>{@code
+     * String content;
+     * try {
+     *     content = Files.readString(path);
+     * } catch (IOException e) {
+     *     return handleError(e);
+     * }
+     * }</pre>
+     *
+     * <p>AFTER: Declarative wrapping.
+     * <pre>{@code
+     * Result<String, IOException> content = Result.of(() -> Files.readString(path));
+     * }</pre>
+     */
+    static <T, E extends Exception> {{ name }}<T, E> of(ThrowingSupplier<T, E> supplier) {
+        try {
+            return success(supplier.get());
+        } catch (Exception e) {
+            @SuppressWarnings("unchecked")
+            E error = (E) e;
+            return failure(error);
+        }
+    }
+
+    // ========================================================================
+    // Predicates — isSuccess() and isFailure()
+    // ========================================================================
+
+    /**
+     * Returns {@code true} if this result is a success.
+     */
+    default boolean isSuccess() {
+        return this instanceof Success<T, E>;
+    }
+
+    /**
+     * Returns {@code true} if this result is a failure.
+     */
+    default boolean isFailure() {
+        return this instanceof Failure<T, E>;
+    }
+
+    // ========================================================================
+    // map() — Transform the success value
+    // ========================================================================
+
+    /**
+     * Transforms the success value using the given function. Failures pass through unchanged.
+     *
+     * <p>BEFORE: Manual unwrapping.
+     * <pre>{@code
+     * if (result.isSuccess()) {
+     *     return new Success(transform(result.value()));
+     * }
+     * return result;
+     * }</pre>
+     *
+     * <p>AFTER: Railway-style mapping.
+     * <pre>{@code
+     * result.map(value -> transform(value));
+     * }</pre>
+     */
+    default <U> {{ name }}<U, E> map(Function<? super T, ? extends U> mapper) {
+        return switch (this) {
+            case Success<T, E>(var value) -> new Success<>(mapper.apply(value));
+            case Failure<T, E>(var error) -> new Failure<>(error);
+        };
+    }
+
+    // ========================================================================
+    // mapError() — Transform the error value
+    // ========================================================================
+
+    /**
+     * Transforms the error value using the given function. Successes pass through unchanged.
+     *
+     * <p>Useful for converting between error types in a pipeline:
+     * <pre>{@code
+     * Result<User, String> result = parseUser(json)
+     *     .mapError(Exception::getMessage);
+     * }</pre>
+     */
+    default <F> {{ name }}<T, F> mapError(Function<? super E, ? extends F> mapper) {
+        return switch (this) {
+            case Success<T, E>(var value) -> new Success<>(value);
+            case Failure<T, E>(var error) -> new Failure<>(mapper.apply(error));
+        };
+    }
+
+    // ========================================================================
+    // flatMap() — Chain operations that return Result
+    // ========================================================================
+
+    /**
+     * Chains an operation that itself returns a Result. Failures short-circuit.
+     *
+     * <p>BEFORE: Nested if-checks.
+     * <pre>{@code
+     * Result<User, String> userResult = findUser(id);
+     * if (userResult.isFailure()) return userResult;
+     * Result<Order, String> orderResult = findOrder(userResult.value());
+     * if (orderResult.isFailure()) return orderResult;
+     * return process(orderResult.value());
+     * }</pre>
+     *
+     * <p>AFTER: Railway pipeline.
+     * <pre>{@code
+     * findUser(id)
+     *     .flatMap(user -> findOrder(user))
+     *     .flatMap(order -> process(order));
+     * }</pre>
+     */
+    default <U> {{ name }}<U, E> flatMap(Function<? super T, ? extends {{ name }}<U, E>> mapper) {
+        return switch (this) {
+            case Success<T, E>(var value) -> mapper.apply(value);
+            case Failure<T, E>(var error) -> new Failure<>(error);
+        };
+    }
+
+    // ========================================================================
+    // fold() — Terminal pattern matching
+    // ========================================================================
+
+    /**
+     * Pattern-matches on the result, applying the appropriate function.
+     *
+     * <p>BEFORE: Switch or if-else for extraction.
+     * <pre>{@code
+     * String message;
+     * if (result instanceof Success<String, String> s) {
+     *     message = "Got: " + s.value();
+     * } else {
+     *     message = "Error: " + ((Failure<String, String>) result).error();
+     * }
+     * }</pre>
+     *
+     * <p>AFTER: Exhaustive fold.
+     * <pre>{@code
+     * String message = result.fold(
+     *     value -> "Got: " + value,
+     *     error -> "Error: " + error
+     * );
+     * }</pre>
+     */
+    default <U> U fold(
+            Function<? super T, ? extends U> onSuccess,
+            Function<? super E, ? extends U> onFailure) {
+        return switch (this) {
+            case Success<T, E>(var value) -> onSuccess.apply(value);
+            case Failure<T, E>(var error) -> onFailure.apply(error);
+        };
+    }
+
+    // ========================================================================
+    // recover() — Error recovery with fallback value
+    // ========================================================================
+
+    /**
+     * Recovers from a failure by applying the given function to produce a fallback value.
+     *
+     * <p>BEFORE: Explicit check.
+     * <pre>{@code
+     * T value;
+     * if (result.isSuccess()) {
+     *     value = result.value();
+     * } else {
+     *     value = computeDefault(result.error());
+     * }
+     * }</pre>
+     *
+     * <p>AFTER: Declarative recovery.
+     * <pre>{@code
+     * T value = result.recover(error -> computeDefault(error));
+     * }</pre>
+     */
+    default T recover(Function<? super E, ? extends T> recovery) {
+        return switch (this) {
+            case Success<T, E>(var value) -> value;
+            case Failure<T, E>(var error) -> recovery.apply(error);
+        };
+    }
+
+    // ========================================================================
+    // recoverWith() — Error recovery with alternative Result
+    // ========================================================================
+
+    /**
+     * Recovers from a failure by producing an alternative Result.
+     *
+     * <p>Useful for fallback chains:
+     * <pre>{@code
+     * Result<Config, String> config = loadFromFile(path)
+     *     .recoverWith(err -> loadFromEnv())
+     *     .recoverWith(err -> Result.success(Config.defaults()));
+     * }</pre>
+     */
+    default {{ name }}<T, E> recoverWith(
+            Function<? super E, ? extends {{ name }}<T, E>> recovery) {
+        return switch (this) {
+            case Success<T, E> s -> s;
+            case Failure<T, E>(var error) -> recovery.apply(error);
+        };
+    }
+
+    // ========================================================================
+    // peek() and peekError() — Side effects
+    // ========================================================================
+
+    /**
+     * Performs a side effect on the success value without altering the result.
+     *
+     * <pre>{@code
+     * result.peek(user -> log.info("Found user: {}", user))
+     *       .map(User::email);
+     * }</pre>
+     */
+    default {{ name }}<T, E> peek(Consumer<? super T> consumer) {
+        if (this instanceof Success<T, E>(var value)) {
+            consumer.accept(value);
+        }
+        return this;
+    }
+
+    /**
+     * Performs a side effect on the error value without altering the result.
+     *
+     * <pre>{@code
+     * result.peekError(err -> log.warn("Operation failed: {}", err))
+     *       .recover(err -> defaultValue);
+     * }</pre>
+     */
+    default {{ name }}<T, E> peekError(Consumer<? super E> consumer) {
+        if (this instanceof Failure<T, E>(var error)) {
+            consumer.accept(error);
+        }
+        return this;
+    }
+
+    // ========================================================================
+    // orElse(), orElseGet(), orElseThrow() — Value extraction
+    // ========================================================================
+
+    /**
+     * Returns the success value or throws a RuntimeException wrapping the error.
+     *
+     * <p>Use as a terminal operation when failure is truly exceptional:
+     * <pre>{@code
+     * User user = findUser(id).orElseThrow();
+     * }</pre>
+     */
+    default T orElseThrow() {
+        return switch (this) {
+            case Success<T, E>(var value) -> value;
+            case Failure<T, E>(var error) -> {
+                if (error instanceof Exception e) {
+                    throw new RuntimeException(e);
+                }
+                throw new RuntimeException("Result failed with error: " + error);
+            }
+        };
+    }
+
+    /**
+     * Returns the success value or the provided default.
+     *
+     * <pre>{@code
+     * String name = findUser(id).map(User::name).orElse("anonymous");
+     * }</pre>
+     */
+    default T orElse(T defaultValue) {
+        return switch (this) {
+            case Success<T, E>(var value) -> value;
+            case Failure<T, E> ignored -> defaultValue;
+        };
+    }
+
+    /**
+     * Returns the success value or computes a default lazily.
+     *
+     * <pre>{@code
+     * Config config = loadConfig(path).orElseGet(Config::defaults);
+     * }</pre>
+     */
+    default T orElseGet(Supplier<? extends T> supplier) {
+        return switch (this) {
+            case Success<T, E>(var value) -> value;
+            case Failure<T, E> ignored -> supplier.get();
+        };
+    }
+
+    // ========================================================================
+    // ThrowingSupplier — Functional interface for of()
+    // ========================================================================
+
+    /**
+     * A supplier that may throw a checked exception.
+     *
+     * @param <T> the result type
+     * @param <E> the exception type
+     */
+    @FunctionalInterface
+    interface ThrowingSupplier<T, E extends Exception> {
+        T get() throws E;
+    }
+}

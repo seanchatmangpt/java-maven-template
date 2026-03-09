@@ -1,0 +1,365 @@
+{# NIO.2 Files API migration guide. Demonstrates Path.of(), Files.readString(),
+   Files.writeString(), Files.walk(), Files.find(), Files.lines(), and
+   try-with-resources for streams. Replaces legacy java.io.File usage. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "Nio2FilesExamples"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.CopyOption;
+import java.nio.file.FileVisitOption;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Instant;
+import java.util.List;
+import java.util.function.BiPredicate;
+import java.util.stream.Stream;
+
+/**
+ * NIO.2 {@link Files} API examples.
+ *
+ * <h2>Before — java.io.File</h2>
+ * <pre>{@code
+ * // Reading a file
+ * File file = new File("/path/to/file.txt");
+ * StringBuilder sb = new StringBuilder();
+ * try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+ *     String line;
+ *     while ((line = br.readLine()) != null) {
+ *         sb.append(line).append("\n");
+ *     }
+ * }
+ * String content = sb.toString();
+ *
+ * // Writing a file
+ * try (BufferedWriter bw = new BufferedWriter(new FileWriter(file))) {
+ *     bw.write("Hello, World!");
+ * }
+ *
+ * // Listing files recursively
+ * void listFiles(File dir) {
+ *     File[] files = dir.listFiles();
+ *     if (files != null) {
+ *         for (File f : files) {
+ *             if (f.isDirectory()) {
+ *                 listFiles(f); // manual recursion
+ *             } else {
+ *                 System.out.println(f.getAbsolutePath());
+ *             }
+ *         }
+ *     }
+ * }
+ *
+ * // Copying a file
+ * try (InputStream in = new FileInputStream(src);
+ *      OutputStream out = new FileOutputStream(dest)) {
+ *     byte[] buf = new byte[8192];
+ *     int len;
+ *     while ((len = in.read(buf)) > 0) {
+ *         out.write(buf, 0, len);
+ *     }
+ * }
+ *
+ * // Checking existence — race-condition prone
+ * if (file.exists()) {
+ *     // file might be deleted between check and use
+ * }
+ * }</pre>
+ *
+ * <h2>After — java.nio.file</h2>
+ * <pre>{@code
+ * String content = Files.readString(Path.of("file.txt"));
+ * Files.writeString(Path.of("file.txt"), "Hello, World!");
+ * Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING);
+ *
+ * try (var stream = Files.walk(dir)) {
+ *     stream.filter(Files::isRegularFile).forEach(System.out::println);
+ * }
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // -------------------------------------------------------------------------
+    // Path creation
+    // -------------------------------------------------------------------------
+
+    /** Creates a {@link Path} from string segments. */
+    public static Path path(String first, String... more) {
+        return Path.of(first, more);
+    }
+
+    /** Resolves a child path under a parent directory. */
+    public static Path resolve(Path parent, String child) {
+        return parent.resolve(child);
+    }
+
+    // -------------------------------------------------------------------------
+    // Reading files
+    // -------------------------------------------------------------------------
+
+    /**
+     * Reads an entire file into a string (Java 11+).
+     *
+     * @param path the file to read
+     * @return the file contents as a UTF-8 string
+     * @throws IOException if an I/O error occurs
+     */
+    public static String readString(Path path) throws IOException {
+        return Files.readString(path, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Reads all lines from a file into a list.
+     *
+     * @param path the file to read
+     * @return an unmodifiable list of lines
+     * @throws IOException if an I/O error occurs
+     */
+    public static List<String> readAllLines(Path path) throws IOException {
+        return Files.readAllLines(path, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Lazily streams lines from a file — must be used with try-with-resources.
+     *
+     * <p>Unlike {@link #readAllLines}, this does not load the entire file into memory.
+     *
+     * @param path the file to stream
+     * @return a lazily-populated stream of lines
+     * @throws IOException if an I/O error occurs
+     */
+    public static Stream<String> lines(Path path) throws IOException {
+        return Files.lines(path, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Counts non-blank lines in a file using a lazy stream.
+     *
+     * @param path the file to analyze
+     * @return the number of non-blank lines
+     * @throws IOException if an I/O error occurs
+     */
+    public static long countNonBlankLines(Path path) throws IOException {
+        try (Stream<String> stream = Files.lines(path)) {
+            return stream.filter(line -> !line.isBlank()).count();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Writing files
+    // -------------------------------------------------------------------------
+
+    /**
+     * Writes a string to a file, creating it if needed (Java 11+).
+     *
+     * @param path    the file to write
+     * @param content the string content
+     * @throws IOException if an I/O error occurs
+     */
+    public static void writeString(Path path, String content) throws IOException {
+        Files.writeString(path, content, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Appends a string to an existing file, creating it if needed.
+     *
+     * @param path    the file to append to
+     * @param content the string to append
+     * @throws IOException if an I/O error occurs
+     */
+    public static void appendString(Path path, String content) throws IOException {
+        Files.writeString(
+                path,
+                content,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND);
+    }
+
+    /**
+     * Writes lines to a file.
+     *
+     * @param path  the file to write
+     * @param lines the lines to write
+     * @throws IOException if an I/O error occurs
+     */
+    public static void writeLines(Path path, Iterable<String> lines) throws IOException {
+        Files.write(path, lines, StandardCharsets.UTF_8);
+    }
+
+    // -------------------------------------------------------------------------
+    // Directory traversal
+    // -------------------------------------------------------------------------
+
+    /**
+     * Walks a directory tree, returning all regular files.
+     *
+     * <p><b>Must</b> be used with try-with-resources to close the underlying
+     * directory stream.
+     *
+     * @param root the starting directory
+     * @return a stream of regular file paths
+     * @throws IOException if an I/O error occurs
+     */
+    public static Stream<Path> walkFiles(Path root) throws IOException {
+        return Files.walk(root).filter(Files::isRegularFile);
+    }
+
+    /**
+     * Walks a directory tree up to {@code maxDepth} levels.
+     *
+     * @param root     the starting directory
+     * @param maxDepth the maximum depth to traverse
+     * @return a stream of paths
+     * @throws IOException if an I/O error occurs
+     */
+    public static Stream<Path> walkFiles(Path root, int maxDepth) throws IOException {
+        return Files.walk(root, maxDepth).filter(Files::isRegularFile);
+    }
+
+    /**
+     * Finds files matching a predicate using {@link Files#find}.
+     *
+     * @param root     the starting directory
+     * @param maxDepth the maximum depth
+     * @param matcher  a predicate on path and attributes
+     * @return a stream of matching paths
+     * @throws IOException if an I/O error occurs
+     */
+    public static Stream<Path> find(
+            Path root, int maxDepth, BiPredicate<Path, BasicFileAttributes> matcher)
+            throws IOException {
+        return Files.find(root, maxDepth, matcher);
+    }
+
+    /**
+     * Finds all files with the given extension under a directory.
+     *
+     * @param root      the starting directory
+     * @param extension the file extension (e.g., {@code ".java"})
+     * @return a list of matching paths
+     * @throws IOException if an I/O error occurs
+     */
+    public static List<Path> findByExtension(Path root, String extension) throws IOException {
+        try (Stream<Path> stream =
+                Files.find(
+                        root,
+                        Integer.MAX_VALUE,
+                        (path, attrs) ->
+                                attrs.isRegularFile()
+                                        && path.toString().endsWith(extension))) {
+            return stream.toList();
+        }
+    }
+
+    /**
+     * Finds files modified after the given instant.
+     *
+     * @param root  the starting directory
+     * @param after only include files modified after this instant
+     * @return a list of recently modified file paths
+     * @throws IOException if an I/O error occurs
+     */
+    public static List<Path> findModifiedAfter(Path root, Instant after) throws IOException {
+        try (Stream<Path> stream =
+                Files.find(
+                        root,
+                        Integer.MAX_VALUE,
+                        (path, attrs) ->
+                                attrs.isRegularFile()
+                                        && attrs.lastModifiedTime().toInstant().isAfter(after))) {
+            return stream.toList();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Copy, move, delete
+    // -------------------------------------------------------------------------
+
+    /**
+     * Copies a file, replacing the target if it exists.
+     *
+     * @param source the source file
+     * @param target the target file
+     * @throws IOException if an I/O error occurs
+     */
+    public static void copy(Path source, Path target) throws IOException {
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /**
+     * Moves (renames) a file atomically if possible.
+     *
+     * @param source the source file
+     * @param target the target file
+     * @throws IOException if an I/O error occurs
+     */
+    public static void move(Path source, Path target) throws IOException {
+        Files.move(
+                source,
+                target,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    /**
+     * Deletes a file if it exists (no exception if absent).
+     *
+     * @param path the file to delete
+     * @return {@code true} if the file was deleted
+     * @throws IOException if an I/O error occurs
+     */
+    public static boolean deleteIfExists(Path path) throws IOException {
+        return Files.deleteIfExists(path);
+    }
+
+    /**
+     * Creates directories including any missing parents.
+     *
+     * @param dir the directory path to create
+     * @return the created directory path
+     * @throws IOException if an I/O error occurs
+     */
+    public static Path mkdirs(Path dir) throws IOException {
+        return Files.createDirectories(dir);
+    }
+
+    // -------------------------------------------------------------------------
+    // Temporary files and directories
+    // -------------------------------------------------------------------------
+
+    /**
+     * Creates a temporary file in the default temp directory.
+     *
+     * @param prefix the filename prefix
+     * @param suffix the filename suffix (e.g., {@code ".txt"})
+     * @return the path to the new temporary file
+     * @throws IOException if an I/O error occurs
+     */
+    public static Path tempFile(String prefix, String suffix) throws IOException {
+        return Files.createTempFile(prefix, suffix);
+    }
+
+    /**
+     * Creates a temporary directory in the default temp location.
+     *
+     * @param prefix the directory name prefix
+     * @return the path to the new temporary directory
+     * @throws IOException if an I/O error occurs
+     */
+    public static Path tempDir(String prefix) throws IOException {
+        return Files.createTempDirectory(prefix);
+    }
+}

@@ -1,0 +1,356 @@
+{# Concurrent gatherers — Gatherers.mapConcurrent() for bounded parallel I/O in streams (Java 25+) #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "ConcurrentGathererPatterns"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  imports: []
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Gatherers;
+import java.util.stream.Stream;
+
+/**
+ * Concurrent gatherer patterns using {@link Gatherers#mapConcurrent(int, Function)} (Java 25+).
+ *
+ * <p>{@code mapConcurrent} is a built-in gatherer that maps stream elements
+ * concurrently using virtual threads, with a configurable concurrency limit.
+ * It preserves encounter order and provides bounded concurrency — unlike
+ * {@code parallelStream()} which uses the shared {@code ForkJoinPool} and
+ * offers no concurrency control.
+ *
+ * <h2>Why mapConcurrent over parallelStream?</h2>
+ * <ul>
+ *     <li>Bounded concurrency — you control exactly how many tasks run at once</li>
+ *     <li>Virtual threads — ideal for I/O-bound work (HTTP, database, file I/O)</li>
+ *     <li>Order preserved — results come back in stream encounter order</li>
+ *     <li>No shared pool contention — does not use the common ForkJoinPool</li>
+ *     <li>Composable — chains with other stream operations and gatherers</li>
+ * </ul>
+ *
+ * <h2>Key rules:</h2>
+ * <ul>
+ *     <li>Use for I/O-bound operations, not CPU-bound computation</li>
+ *     <li>Set {@code maxConcurrency} based on the target service's capacity</li>
+ *     <li>The mapping function must be thread-safe</li>
+ *     <li>Exceptions in the mapper propagate to the terminal operation</li>
+ * </ul>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // =========================================================================
+    // PATTERN 1: Basic concurrent mapping
+    // BEFORE (parallelStream):
+    //     List<R> results = items.parallelStream()
+    //             .map(item -> slowIoOperation(item)) // uses shared ForkJoinPool
+    //             .toList();                           // no concurrency control
+    // AFTER (mapConcurrent — bounded, virtual threads):
+    // =========================================================================
+
+    /**
+     * Maps items concurrently with a bounded number of virtual threads.
+     * Results are returned in the same order as the input.
+     *
+     * @param <T>            the input type
+     * @param <R>            the result type
+     * @param items          the items to process
+     * @param maxConcurrency the maximum number of concurrent virtual threads
+     * @param mapper         the mapping function (must be thread-safe)
+     * @return mapped results in input order
+     */
+    public static <T, R> List<R> mapConcurrent(
+            List<T> items, int maxConcurrency, Function<T, R> mapper) {
+
+        return items.stream()
+                .gather(Gatherers.mapConcurrent(maxConcurrency, mapper))
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 2: HTTP client — concurrent requests with bounded concurrency
+    // BEFORE (parallelStream + HttpClient):
+    //     List<String> bodies = urls.parallelStream()
+    //             .map(url -> httpClient.send(
+    //                     HttpRequest.newBuilder(URI.create(url)).build(),
+    //                     HttpResponse.BodyHandlers.ofString()).body())
+    //             .toList();
+    //     // Problems: uncontrolled concurrency, shared ForkJoinPool,
+    //     // can overwhelm the target server
+    // AFTER (mapConcurrent — controlled concurrency):
+    // =========================================================================
+
+    /**
+     * Fetches multiple URLs concurrently with bounded concurrency.
+     * Limits the number of simultaneous HTTP connections to avoid
+     * overwhelming the target server.
+     *
+     * @param urls           the URLs to fetch
+     * @param maxConcurrency the maximum number of simultaneous requests
+     * @param client         the HTTP client to use
+     * @return list of response bodies in input order
+     */
+    public static List<String> fetchAllUrls(
+            List<String> urls, int maxConcurrency, HttpClient client) {
+
+        return urls.stream()
+                .gather(Gatherers.mapConcurrent(maxConcurrency, url -> {
+                    try {
+                        var request = HttpRequest.newBuilder(URI.create(url))
+                                .timeout(Duration.ofSeconds(30))
+                                .GET()
+                                .build();
+                        return client
+                                .send(request, HttpResponse.BodyHandlers.ofString())
+                                .body();
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to fetch: " + url, e);
+                    }
+                }))
+                .toList();
+    }
+
+    /**
+     * Fetches URLs and returns results wrapped in Optional to handle failures
+     * gracefully without aborting the entire stream.
+     *
+     * @param urls           the URLs to fetch
+     * @param maxConcurrency the maximum number of simultaneous requests
+     * @param client         the HTTP client to use
+     * @return list of Optional response bodies (empty on failure) in input order
+     */
+    public static List<Optional<String>> fetchAllUrlsSafe(
+            List<String> urls, int maxConcurrency, HttpClient client) {
+
+        return urls.stream()
+                .gather(Gatherers.mapConcurrent(maxConcurrency, url -> {
+                    try {
+                        var request = HttpRequest.newBuilder(URI.create(url))
+                                .timeout(Duration.ofSeconds(30))
+                                .GET()
+                                .build();
+                        return Optional.of(
+                                client.send(request, HttpResponse.BodyHandlers.ofString())
+                                        .body());
+                    } catch (Exception e) {
+                        return Optional.<String>empty();
+                    }
+                }))
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 3: Database query fan-out
+    // BEFORE (sequential):
+    //     List<Result> results = ids.stream()
+    //             .map(id -> database.findById(id)) // one at a time, slow
+    //             .flatMap(Optional::stream)
+    //             .toList();
+    // BEFORE (parallelStream):
+    //     List<Result> results = ids.parallelStream()
+    //             .map(id -> database.findById(id)) // uncontrolled connections
+    //             .flatMap(Optional::stream)         // can exhaust connection pool
+    //             .toList();
+    // AFTER (mapConcurrent — matches connection pool size):
+    // =========================================================================
+
+    /**
+     * Queries a database concurrently for multiple IDs, with concurrency
+     * bounded to match the connection pool size.
+     *
+     * @param <ID>     the ID type
+     * @param <T>      the entity type
+     * @param ids      the IDs to look up
+     * @param poolSize the database connection pool size (max concurrency)
+     * @param finder   the lookup function (e.g., {@code repository::findById})
+     * @return list of found entities (missing IDs are excluded)
+     */
+    public static <ID, T> List<T> fanOutQuery(
+            List<ID> ids, int poolSize, Function<ID, Optional<T>> finder) {
+
+        return ids.stream()
+                .gather(Gatherers.mapConcurrent(poolSize, finder))
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
+    /**
+     * Queries a database concurrently, returning all results including
+     * empty optionals so the caller can correlate results with input IDs.
+     *
+     * @param <ID>     the ID type
+     * @param <T>      the entity type
+     * @param ids      the IDs to look up
+     * @param poolSize the database connection pool size (max concurrency)
+     * @param finder   the lookup function
+     * @return list of Optional results in input order
+     */
+    public static <ID, T> List<Optional<T>> fanOutQueryKeepOrder(
+            List<ID> ids, int poolSize, Function<ID, Optional<T>> finder) {
+
+        return ids.stream()
+                .gather(Gatherers.mapConcurrent(poolSize, finder))
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 4: Pipeline — chaining mapConcurrent with other stream ops
+    // BEFORE:
+    //     items.parallelStream()
+    //             .filter(predicate)
+    //             .map(expensiveIoOp)
+    //             .filter(result -> result != null)
+    //             .toList();
+    // AFTER (filter → mapConcurrent → filter — composable pipeline):
+    // =========================================================================
+
+    /**
+     * Demonstrates chaining {@code mapConcurrent} within a larger stream
+     * pipeline. Sequential operations (filter, map) run on the calling
+     * thread; only the I/O-bound mapping runs concurrently.
+     *
+     * @param <T>            the input type
+     * @param <R>            the result type
+     * @param items          the items to process
+     * @param maxConcurrency the concurrency limit for the I/O step
+     * @param preFilter      filter applied before the concurrent step
+     * @param ioMapper       the I/O-bound mapping function
+     * @param postFilter     filter applied after the concurrent step
+     * @return filtered and mapped results
+     */
+    public static <T, R> List<R> concurrentPipeline(
+            List<T> items,
+            int maxConcurrency,
+            java.util.function.Predicate<T> preFilter,
+            Function<T, R> ioMapper,
+            java.util.function.Predicate<R> postFilter) {
+
+        return items.stream()
+                .filter(preFilter)                                        // sequential
+                .gather(Gatherers.mapConcurrent(maxConcurrency, ioMapper)) // concurrent I/O
+                .filter(postFilter)                                        // sequential
+                .toList();
+    }
+
+    // =========================================================================
+    // PATTERN 5: Concurrent mapping with transformation and aggregation
+    // BEFORE:
+    //     int total = items.parallelStream()
+    //             .mapToInt(item -> fetchScore(item))
+    //             .sum();
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Maps items concurrently and reduces the results. Useful for
+     * aggregating data from multiple I/O sources.
+     *
+     * @param <T>            the input type
+     * @param items          the items to process
+     * @param maxConcurrency the concurrency limit
+     * @param scorer         the I/O-bound scoring function
+     * @return the sum of all scores
+     */
+    public static <T> int concurrentSum(
+            List<T> items, int maxConcurrency, Function<T, Integer> scorer) {
+
+        return items.stream()
+                .gather(Gatherers.mapConcurrent(maxConcurrency, scorer))
+                .reduce(0, Integer::sum);
+    }
+
+    // =========================================================================
+    // PATTERN 6: Streaming large datasets with bounded concurrency
+    // BEFORE (collect all then process):
+    //     List<Item> all = fetchAllItems(); // OOM risk for large datasets
+    //     all.parallelStream().map(process).toList();
+    // AFTER (lazy stream + mapConcurrent):
+    // =========================================================================
+
+    /**
+     * Processes a lazily-generated stream of items with bounded concurrent
+     * I/O. Items are pulled from the source on demand, so the full dataset
+     * never needs to be in memory at once.
+     *
+     * @param <T>            the input type
+     * @param <R>            the result type
+     * @param source         a lazy stream of items (e.g., from a paginated API)
+     * @param maxConcurrency the concurrency limit
+     * @param mapper         the I/O-bound mapping function
+     * @return stream of mapped results (lazy, bounded concurrency)
+     */
+    public static <T, R> Stream<R> mapConcurrentLazy(
+            Stream<T> source, int maxConcurrency, Function<T, R> mapper) {
+
+        return source.gather(Gatherers.mapConcurrent(maxConcurrency, mapper));
+    }
+
+    // =========================================================================
+    // PATTERN 7: Service health check — concurrent ping with timeout
+    // BEFORE:
+    //     Map<String, Boolean> health = new HashMap<>();
+    //     for (String endpoint : endpoints) {
+    //         health.put(endpoint, ping(endpoint)); // sequential, slow
+    //     }
+    // AFTER:
+    // =========================================================================
+
+    /**
+     * Result of a health check for a single service endpoint.
+     *
+     * @param endpoint the service URL
+     * @param healthy  {@code true} if the endpoint responded successfully
+     * @param latencyMs response time in milliseconds, or -1 if unhealthy
+     */
+    public record HealthResult(String endpoint, boolean healthy, long latencyMs) {}
+
+    /**
+     * Pings multiple service endpoints concurrently to check health.
+     *
+     * @param endpoints      the service URLs to check
+     * @param maxConcurrency the maximum number of simultaneous checks
+     * @param client         the HTTP client to use
+     * @param timeout        the per-request timeout
+     * @return list of health results in input order
+     */
+    public static List<HealthResult> checkHealth(
+            List<String> endpoints,
+            int maxConcurrency,
+            HttpClient client,
+            Duration timeout) {
+
+        return endpoints.stream()
+                .gather(Gatherers.mapConcurrent(maxConcurrency, endpoint -> {
+                    long start = System.nanoTime();
+                    try {
+                        var request = HttpRequest.newBuilder(URI.create(endpoint))
+                                .timeout(timeout)
+                                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                                .build();
+                        var response = client.send(
+                                request, HttpResponse.BodyHandlers.discarding());
+                        long elapsed = (System.nanoTime() - start) / 1_000_000;
+                        return new HealthResult(
+                                endpoint,
+                                response.statusCode() >= 200 && response.statusCode() < 400,
+                                elapsed);
+                    } catch (Exception e) {
+                        return new HealthResult(endpoint, false, -1);
+                    }
+                }))
+                .toList();
+    }
+}

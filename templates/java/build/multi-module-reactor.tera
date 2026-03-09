@@ -1,0 +1,69 @@
+{# Multi-module Maven reactor — Advanced multi-module build configuration #}
+---
+to: "pom.xml"
+vars:
+  group_id: "org.acme"
+  artifact_id: "parent"
+  version: "1.0-SNAPSHOT"
+  java_version: "26"
+  modules: []
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Multi-module Maven Reactor Configuration
+
+    Build commands:
+        ./mvnw verify                    # Build all modules
+        ./mvnw verify -pl core           # Build only 'core' module
+        ./mvnw verify -pl api -am        # Build 'api' and its dependencies
+        ./mvnw verify -pl !integration   # Build everything except 'integration'
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>{{ group_id }}</groupId>
+    <artifactId>{{ artifact_id }}</artifactId>
+    <version>{{ version }}</version>
+    <packaging>pom</packaging>
+
+    <properties>
+        <maven.compiler.release>{{ java_version }}</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <modules>
+{% for mod in modules %}
+        <module>{{ mod.name }}</module>
+{% endfor %}
+    </modules>
+
+    <!--
+        Module layout:
+{% for mod in modules %}
+        {{ mod.name }}/
+            src/main/java/module-info.java    ({{ mod.module_name | default(value=group_id ~ "." ~ mod.name) }})
+            pom.xml
+{% endfor %}
+
+        Each module declares dependencies on sibling modules via
+        <dependency> with ${project.groupId}/${project.version}.
+    -->
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.1</version>
+                    <configuration>
+                        <compilerArgs>
+                            <arg>--enable-preview</arg>
+                        </compilerArgs>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

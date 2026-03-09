@@ -1,0 +1,80 @@
+{# DTO / Value Object (Record) — Immutable data transfer objects using records #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyDTO"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  components: []
+  from_entity_method: false
+  to_entity_method: false
+  entity_name: ""
+  entity_package: ""
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+{% if entity_name and entity_package %}
+import {{ entity_package }}.{{ entity_name }};
+{% endif %}
+import java.util.Objects;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% else %}
+/**
+ * Data transfer record — immutable by design, no boilerplate.
+ *
+ * <p>BEFORE (legacy): POJO with private fields, getters, setters, equals, hashCode, toString.
+ * <p>AFTER (modern): Record with auto-generated accessors, equals, hashCode, toString.
+ */
+{% endif %}
+public record {{ name }}(
+{% for comp in components %}
+        {{ comp.type }} {{ comp.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+) {
+
+    /**
+     * Compact constructor with validation.
+     */
+    public {{ name }} {
+{% for comp in components %}
+{% if comp.nullable is undefined or not comp.nullable %}
+        Objects.requireNonNull({{ comp.name }}, "{{ comp.name }} must not be null");
+{% endif %}
+{% if comp.validation is defined %}
+        {{ comp.validation }}
+{% endif %}
+{% endfor %}
+    }
+{% if from_entity_method and entity_name %}
+
+    /**
+     * Converts a domain entity to this DTO.
+     */
+    public static {{ name }} fromEntity({{ entity_name }} entity) {
+        return new {{ name }}(
+{% for comp in components %}
+                entity.{{ comp.accessor | default(value=comp.name) }}(){% if not loop.last %},{% endif %}
+
+{% endfor %}
+        );
+    }
+{% endif %}
+{% if to_entity_method and entity_name %}
+
+    /**
+     * Converts this DTO to a domain entity.
+     */
+    public {{ entity_name }} toEntity() {
+        return new {{ entity_name }}({% for comp in components %}{{ comp.name }}{% if not loop.last %}, {% endif %}{% endfor %});
+    }
+{% endif %}
+}

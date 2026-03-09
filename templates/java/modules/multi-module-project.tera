@@ -1,0 +1,208 @@
+{# Multi-module Maven project layout. Generates a parent POM with module
+   directories, each containing its own module-info.java and inter-module
+   dependencies. #}
+---
+to: "{{ output_dir }}/pom.xml"
+vars:
+  name: "acme-parent"
+  output_dir: "."
+  group_id: "org.acme"
+  artifact_id: "acme-parent"
+  version: "1.0.0-SNAPSHOT"
+  java_version: "25"
+  modules:
+    - name: "acme-api"
+      module_name: "org.acme.api"
+      packages:
+        - "org.acme.api"
+      dependencies: []
+    - name: "acme-core"
+      module_name: "org.acme.core"
+      packages:
+        - "org.acme.core"
+        - "org.acme.core.internal"
+      dependencies:
+        - "acme-api"
+    - name: "acme-app"
+      module_name: "org.acme.app"
+      packages:
+        - "org.acme.app"
+      dependencies:
+        - "acme-api"
+        - "acme-core"
+---
+{# ============================================================================
+   Parent POM
+   ============================================================================ #}
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>{{ group_id }}</groupId>
+    <artifactId>{{ artifact_id }}</artifactId>
+    <version>{{ version }}</version>
+    <packaging>pom</packaging>
+
+    <name>{{ name }}</name>
+    <description>Multi-module JPMS project</description>
+
+    <properties>
+        <maven.compiler.release>{{ java_version }}</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <junit.version>5.11.4</junit.version>
+    </properties>
+
+    <!-- ===================================================================
+         Module declarations
+         =================================================================== -->
+    <modules>
+        {% for mod in modules %}
+        <module>{{ mod.name }}</module>
+        {% endfor %}
+    </modules>
+
+    <!-- ===================================================================
+         Shared dependency management
+         =================================================================== -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- Inter-module dependencies -->
+            {% for mod in modules %}
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>{{ mod.name }}</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            {% endfor %}
+
+            <!-- Testing -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- ===================================================================
+         Shared build configuration
+         =================================================================== -->
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.0</version>
+                    <configuration>
+                        <release>{{ java_version }}</release>
+                        <compilerArgs>
+                            <arg>--enable-preview</arg>
+                        </compilerArgs>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.2</version>
+                    <configuration>
+                        <argLine>--enable-preview</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>3.5.2</version>
+                    <configuration>
+                        <argLine>--enable-preview</argLine>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
+
+{# ============================================================================
+   Per-module POM and module-info.java files
+
+   In practice, a template engine would generate separate files. Below is the
+   content for each module as documentation. Use the companion module-info.tera
+   template to generate individual module-info.java files.
+   ============================================================================ #}
+
+{# --- Module POMs --------------------------------------------------------- #}
+{% for mod in modules %}
+{#
+   File: {{ mod.name }}/pom.xml
+
+   <?xml version="1.0" encoding="UTF-8"?>
+   <project xmlns="http://maven.apache.org/POM/4.0.0"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                                https://maven.apache.org/xsd/maven-4.0.0.xsd">
+       <modelVersion>4.0.0</modelVersion>
+
+       <parent>
+           <groupId>{{ group_id }}</groupId>
+           <artifactId>{{ artifact_id }}</artifactId>
+           <version>{{ version }}</version>
+       </parent>
+
+       <artifactId>{{ mod.name }}</artifactId>
+
+       <dependencies>
+           {% for dep in mod.dependencies %}
+           <dependency>
+               <groupId>${project.groupId}</groupId>
+               <artifactId>{{ dep }}</artifactId>
+           </dependency>
+           {% endfor %}
+
+           <dependency>
+               <groupId>org.junit.jupiter</groupId>
+               <artifactId>junit-jupiter</artifactId>
+               <scope>test</scope>
+           </dependency>
+       </dependencies>
+   </project>
+#}
+
+{#
+   File: {{ mod.name }}/src/main/java/module-info.java
+
+   module {{ mod.module_name }} {
+       {% for dep in mod.dependencies %}
+       {% for m in modules %}{% if m.name == dep %}requires {{ m.module_name }};{% endif %}{% endfor %}
+       {% endfor %}
+
+       {% for pkg in mod.packages %}
+       exports {{ pkg }};
+       {% endfor %}
+   }
+#}
+{% endfor %}
+
+{# ============================================================================
+   Directory structure reference:
+
+   {{ artifact_id }}/
+   ├── pom.xml                              ← parent POM (this file)
+   {% for mod in modules %}
+   ├── {{ mod.name }}/
+   │   ├── pom.xml
+   │   └── src/
+   │       ├── main/java/
+   │       │   ├── module-info.java
+   │       │   {% for pkg in mod.packages %}
+   │       │   └── {{ pkg | replace(from='.', to='/') }}/
+   │       │       └── (source files)
+   │       │   {% endfor %}
+   │       └── test/java/
+   │           └── (test files)
+   {% endfor %}
+   ============================================================================ #}

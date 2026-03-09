@@ -1,0 +1,123 @@
+{# Surefire + Failsafe Test Plugin Configuration — Surefire for *Test.java, Failsafe for *IT.java, parallel execution, and --enable-preview for Java 26 #}
+---
+to: "{{ output_dir }}/test-plugins.xml"
+vars:
+  name: "surefire-failsafe"
+  package: "org.acme"
+  output_dir: "."
+  surefire_version: "3.5.3"
+  java_version: "26"
+  parallel_mode: "all"
+  thread_count: "4"
+  fork_count: "1C"
+  reuse_forks: true
+  enable_preview: true
+  additional_surefire_args: []
+  additional_failsafe_args: []
+---
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Test Plugin Configuration: Surefire + Failsafe
+
+     Surefire: runs unit tests (*Test.java, *Properties.java) during `test` phase
+     Failsafe: runs integration tests (*IT.java) during `verify` phase
+
+     Commands:
+       ./mvnw test                          — Run unit tests only
+       ./mvnw verify                        — Run unit + integration tests
+       ./mvnw test -Dtest=MathsTest         — Run a single test class
+       ./mvnw verify -Dit.test=MathsIT      — Run a single integration test
+
+     Add these plugin blocks to your pom.xml <build><plugins> section.
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+<!-- ── Surefire: unit tests (*Test.java) ──────────────────────────────── -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-surefire-plugin</artifactId>
+    <version>{{ surefire_version }}</version>
+    <configuration>
+{% if enable_preview %}
+        <!-- Java {{ java_version }} preview features -->
+        <argLine>--enable-preview</argLine>
+{% endif %}
+
+        <!-- Test file patterns -->
+        <includes>
+            <include>**/*Test.java</include>
+            <include>**/*Properties.java</include>
+        </includes>
+        <excludes>
+            <exclude>**/*IT.java</exclude>
+        </excludes>
+
+        <!-- Parallel execution: JUnit 5 handles parallelism via
+             junit-platform.properties (see below), but Surefire
+             can also fork multiple JVMs for isolation. -->
+        <forkCount>{{ fork_count }}</forkCount>
+        <reuseForks>{{ reuse_forks }}</reuseForks>
+
+        <!-- System properties passed to test JVM -->
+        <systemPropertyVariables>
+            <junit.jupiter.execution.parallel.enabled>true</junit.jupiter.execution.parallel.enabled>
+            <junit.jupiter.execution.parallel.mode.default>concurrent</junit.jupiter.execution.parallel.mode.default>
+            <junit.jupiter.execution.parallel.mode.classes.default>concurrent</junit.jupiter.execution.parallel.mode.classes.default>
+        </systemPropertyVariables>
+{% for arg in additional_surefire_args %}
+        {{ arg }}
+{% endfor %}
+    </configuration>
+</plugin>
+
+<!-- ── Failsafe: integration tests (*IT.java) ────────────────────────── -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-failsafe-plugin</artifactId>
+    <version>{{ surefire_version }}</version>
+    <configuration>
+{% if enable_preview %}
+        <!-- Java {{ java_version }} preview features -->
+        <argLine>--enable-preview</argLine>
+{% endif %}
+
+        <!-- Integration test file patterns -->
+        <includes>
+            <include>**/*IT.java</include>
+        </includes>
+
+        <!-- Integration tests typically run sequentially for resource isolation -->
+        <forkCount>1</forkCount>
+        <reuseForks>true</reuseForks>
+
+        <!-- Fail the build if any integration test fails -->
+        <summaryFile>${project.build.directory}/failsafe-reports/failsafe-summary.xml</summaryFile>
+{% for arg in additional_failsafe_args %}
+        {{ arg }}
+{% endfor %}
+    </configuration>
+    <executions>
+        <execution>
+            <goals>
+                <goal>integration-test</goal>
+                <goal>verify</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     JUnit 5 Parallel Execution Configuration
+
+     File: src/test/resources/junit-platform.properties
+
+     junit.jupiter.execution.parallel.enabled=true
+     junit.jupiter.execution.parallel.mode.default=concurrent
+     junit.jupiter.execution.parallel.mode.classes.default=concurrent
+     junit.jupiter.execution.parallel.config.strategy=dynamic
+     junit.jupiter.execution.parallel.config.dynamic.factor=1
+     junit.jupiter.execution.parallel.config.dynamic.max-pool-size-factor=2
+
+     This enables full parallel execution:
+     - Both test methods and test classes run concurrently
+     - Dynamic strategy adjusts parallelism to available CPUs
+     - Thread pool scales up to 2x the number of processors
+     ═══════════════════════════════════════════════════════════════════════ -->

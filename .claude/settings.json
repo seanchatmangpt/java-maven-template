@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(./mvnw *)",
+      "Bash(mvnd *)",
       "Bash(git *)",
       "Bash(./dx.sh *)",
       "Bash(./dx-standalone.sh *)",
@@ -9,13 +10,17 @@
       "Bash(./deploy.sh *)"
     ]
   },
+  "env": {
+    "JAVA_HOME": "/usr/lib/jvm/graalvm-community-openjdk-25.0.2+10.1",
+    "PATH": "/usr/lib/jvm/graalvm-community-openjdk-25.0.2+10.1/bin:/root/.mvnd/mvnd-2.0.0-rc-3/bin:/usr/local/bin:${PATH}"
+  },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "echo '=== Git Status ===' && git status --short && echo '' && echo '=== Current Branch ===' && git branch --show-current && echo '' && echo '=== Recent Commits ===' && git log --oneline -5 && echo '' && echo '=== Java Version ===' && java -version 2>&1"
+            "command": "bash .claude/setup.sh && echo '' && echo '=== Git Status ===' && git status --short && echo '' && echo '=== Current Branch ===' && git branch --show-current && echo '' && echo '=== Recent Commits ===' && git log --oneline -5 && echo '' && echo '=== Java ===' && java -version 2>&1 && echo '' && echo '=== mvnd ===' && (mvnd --version 2>&1 | head -1 || echo 'mvnd not in PATH')"
           }
         ]
       }

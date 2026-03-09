@@ -1,0 +1,297 @@
+{# Adapter pattern using records and default methods. Replaces verbose adapter
+   classes with a lightweight record wrapping the adaptee and a target interface
+   whose default methods perform the adaptation logic. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MediaPlayerAdapters"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.time.Duration;
+import java.util.Objects;
+
+/**
+ * Adapter pattern using records + default methods.
+ *
+ * <h2>Before — adapter class with manual delegation</h2>
+ * <pre>{@code
+ * // The target interface our system uses
+ * public interface MediaPlayer {
+ *     void play(String filename);
+ *     void pause();
+ *     void stop();
+ *     Duration currentPosition();
+ *     Duration totalDuration();
+ *     double volume();
+ *     void setVolume(double level);
+ * }
+ *
+ * // Legacy third-party library
+ * public class VlcEngine {
+ *     public void vlcPlay(String path, int startMs) { ... }
+ *     public void vlcPause() { ... }
+ *     public void vlcStop() { ... }
+ *     public int vlcGetPositionMs() { ... }
+ *     public int vlcGetDurationMs() { ... }
+ *     public float vlcGetVolume() { ... }
+ *     public void vlcSetVolume(float vol) { ... }
+ * }
+ *
+ * // Verbose adapter class with boilerplate delegation
+ * public class VlcAdapter implements MediaPlayer {
+ *     private final VlcEngine engine;
+ *
+ *     public VlcAdapter(VlcEngine engine) {
+ *         this.engine = Objects.requireNonNull(engine);
+ *     }
+ *
+ *     @Override public void play(String filename) { engine.vlcPlay(filename, 0); }
+ *     @Override public void pause() { engine.vlcPause(); }
+ *     @Override public void stop() { engine.vlcStop(); }
+ *     @Override public Duration currentPosition() {
+ *         return Duration.ofMillis(engine.vlcGetPositionMs());
+ *     }
+ *     @Override public Duration totalDuration() {
+ *         return Duration.ofMillis(engine.vlcGetDurationMs());
+ *     }
+ *     @Override public double volume() { return engine.vlcGetVolume(); }
+ *     @Override public void setVolume(double level) { engine.vlcSetVolume((float) level); }
+ * }
+ *
+ * // Same boilerplate repeated for every new engine...
+ * }</pre>
+ *
+ * <h2>After — record adapters with default method adaptation</h2>
+ * <pre>{@code
+ * MediaPlayer vlc = new VlcPlayerAdapter(new VlcEngine());
+ * MediaPlayer ffmpeg = new FfmpegPlayerAdapter(new FfmpegEngine());
+ *
+ * vlc.play("song.mp3");
+ * System.out.println(vlc.currentPosition());
+ * System.out.println(vlc.formattedPosition()); // default method: "01:23 / 04:56"
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // -------------------------------------------------------------------------
+    // Target interface — with default helper methods
+    // -------------------------------------------------------------------------
+
+    /**
+     * Unified media player interface that our application code programs against.
+     *
+     * <p>Default methods provide common derived behavior so adapters only need
+     * to implement the core operations.
+     */
+    public interface MediaPlayer {
+
+        /** Starts playback of the given file. */
+        void play(String filename);
+
+        /** Pauses playback. */
+        void pause();
+
+        /** Stops playback and resets position. */
+        void stop();
+
+        /** Returns the current playback position. */
+        Duration currentPosition();
+
+        /** Returns the total duration of the loaded media. */
+        Duration totalDuration();
+
+        /** Returns the current volume level (0.0 to 1.0). */
+        double volume();
+
+        /** Sets the volume level (0.0 to 1.0). */
+        void setVolume(double level);
+
+        // ----- Default convenience methods — shared across all adapters -----
+
+        /** Returns a human-readable position string like {@code "01:23 / 04:56"}. */
+        default String formattedPosition() {
+            return formatDuration(currentPosition()) + " / " + formatDuration(totalDuration());
+        }
+
+        /** Returns the playback progress as a percentage (0.0 to 100.0). */
+        default double progressPercent() {
+            long total = totalDuration().toMillis();
+            if (total == 0) return 0.0;
+            return (currentPosition().toMillis() * 100.0) / total;
+        }
+
+        /** Returns {@code true} if playback has reached the end. */
+        default boolean isFinished() {
+            return currentPosition().compareTo(totalDuration()) >= 0
+                    && totalDuration().toMillis() > 0;
+        }
+
+        /** Mutes the player (sets volume to 0). */
+        default void mute() {
+            setVolume(0.0);
+        }
+
+        private static String formatDuration(Duration d) {
+            long minutes = d.toMinutes();
+            long seconds = d.toSecondsPart();
+            return String.format("%02d:%02d", minutes, seconds);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Adaptees — third-party or legacy APIs
+    // -------------------------------------------------------------------------
+
+    /** Simulated legacy VLC engine with a non-standard API. */
+    public static class VlcEngine {
+        public void vlcPlay(String path, int startMs) {}
+
+        public void vlcPause() {}
+
+        public void vlcStop() {}
+
+        public int vlcGetPositionMs() {
+            return 0;
+        }
+
+        public int vlcGetDurationMs() {
+            return 0;
+        }
+
+        public float vlcGetVolume() {
+            return 1.0f;
+        }
+
+        public void vlcSetVolume(float vol) {}
+    }
+
+    /** Simulated FFmpeg-based engine with yet another different API. */
+    public static class FfmpegEngine {
+        public void startPlayback(String file) {}
+
+        public void pausePlayback() {}
+
+        public void stopPlayback() {}
+
+        public long positionMicros() {
+            return 0L;
+        }
+
+        public long durationMicros() {
+            return 0L;
+        }
+
+        public int volumePercent() {
+            return 100;
+        }
+
+        public void volumePercent(int pct) {}
+    }
+
+    // -------------------------------------------------------------------------
+    // Record-based adapters — minimal, immutable, with automatic equals/hashCode
+    // -------------------------------------------------------------------------
+
+    /**
+     * Adapts a {@link VlcEngine} to the {@link MediaPlayer} interface.
+     *
+     * <p>The record's single component holds the adaptee. All delegation is
+     * implemented in the interface methods; default methods from {@link MediaPlayer}
+     * are inherited automatically.
+     */
+    public record VlcPlayerAdapter(VlcEngine engine) implements MediaPlayer {
+
+        public VlcPlayerAdapter {
+            Objects.requireNonNull(engine, "engine must not be null");
+        }
+
+        @Override
+        public void play(String filename) {
+            engine.vlcPlay(filename, 0);
+        }
+
+        @Override
+        public void pause() {
+            engine.vlcPause();
+        }
+
+        @Override
+        public void stop() {
+            engine.vlcStop();
+        }
+
+        @Override
+        public Duration currentPosition() {
+            return Duration.ofMillis(engine.vlcGetPositionMs());
+        }
+
+        @Override
+        public Duration totalDuration() {
+            return Duration.ofMillis(engine.vlcGetDurationMs());
+        }
+
+        @Override
+        public double volume() {
+            return engine.vlcGetVolume();
+        }
+
+        @Override
+        public void setVolume(double level) {
+            engine.vlcSetVolume((float) level);
+        }
+    }
+
+    /**
+     * Adapts an {@link FfmpegEngine} to the {@link MediaPlayer} interface.
+     *
+     * <p>Demonstrates that each record adapter maps its specific adaptee API
+     * to the common target; the default methods on {@link MediaPlayer}
+     * just work without any extra code.
+     */
+    public record FfmpegPlayerAdapter(FfmpegEngine engine) implements MediaPlayer {
+
+        public FfmpegPlayerAdapter {
+            Objects.requireNonNull(engine, "engine must not be null");
+        }
+
+        @Override
+        public void play(String filename) {
+            engine.startPlayback(filename);
+        }
+
+        @Override
+        public void pause() {
+            engine.pausePlayback();
+        }
+
+        @Override
+        public void stop() {
+            engine.stopPlayback();
+        }
+
+        @Override
+        public Duration currentPosition() {
+            return Duration.of(engine.positionMicros(), java.time.temporal.ChronoUnit.MICROS);
+        }
+
+        @Override
+        public Duration totalDuration() {
+            return Duration.of(engine.durationMicros(), java.time.temporal.ChronoUnit.MICROS);
+        }
+
+        @Override
+        public double volume() {
+            return engine.volumePercent() / 100.0;
+        }
+
+        @Override
+        public void setVolume(double level) {
+            engine.volumePercent((int) Math.round(level * 100));
+        }
+    }
+}

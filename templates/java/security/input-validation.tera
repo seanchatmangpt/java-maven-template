@@ -1,0 +1,433 @@
+{# Input Validation — Record compact constructors for validation, precondition checks, validation error accumulation, and centralized validation for Java 26 #}
+{# Before: scattered null checks and if-statements throughout methods → After: centralized validation in record compact constructors with error accumulation #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "InputValidation"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  domain_records: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% else %}
+/**
+ * Input validation patterns for Java 26 — centralized in constructors with error accumulation.
+ *
+ * <h2>Migration guide (Before / After)</h2>
+ * <pre>
+ * BEFORE (scattered validation — easy to forget, inconsistent):
+ *   public void processUser(String name, String email, int age) {
+ *       if (name == null) throw new IllegalArgumentException("name is null");
+ *       if (name.isBlank()) throw new IllegalArgumentException("name is blank");
+ *       if (email == null) throw new IllegalArgumentException("email is null");
+ *       if (!email.contains("@")) throw new IllegalArgumentException("bad email");
+ *       if (age &lt; 0 || age &gt; 150) throw new IllegalArgumentException("bad age");
+ *       // ... business logic mixed with validation
+ *   }
+ *
+ * AFTER (centralized in record constructor — always valid by construction):
+ *   record User(String name, Email email, Age age) {
+ *       User {
+ *           Preconditions.requireNonBlank(name, "name");
+ *           // Email and Age are validated value objects — always valid
+ *       }
+ *   }
+ *   // Validation happens once at construction; all downstream code
+ *   // can trust the data is valid.
+ * </pre>
+ */
+{% endif %}
+public final class {{ name }} {
+
+    private {{ name }}() {
+        // utility class
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Precondition checks — reusable validation primitives
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Precondition utilities for compact constructors.
+     */
+    public static final class Preconditions {
+
+        private Preconditions() {}
+
+        /** Requires a non-null, non-blank string. */
+        public static String requireNonBlank(String value, String name) {
+            Objects.requireNonNull(value, name + " must not be null");
+            if (value.isBlank()) {
+                throw new IllegalArgumentException(name + " must not be blank");
+            }
+            return value;
+        }
+
+        /** Requires a value within an inclusive range. */
+        public static int requireInRange(int value, int min, int max, String name) {
+            if (value < min || value > max) {
+                throw new IllegalArgumentException(
+                        "%s must be between %d and %d, got %d".formatted(name, min, max, value));
+            }
+            return value;
+        }
+
+        /** Requires a positive value. */
+        public static int requirePositive(int value, String name) {
+            if (value <= 0) {
+                throw new IllegalArgumentException(name + " must be positive, got " + value);
+            }
+            return value;
+        }
+
+        /** Requires a non-negative value. */
+        public static long requireNonNegative(long value, String name) {
+            if (value < 0) {
+                throw new IllegalArgumentException(name + " must be non-negative, got " + value);
+            }
+            return value;
+        }
+
+        /** Requires the string matches the given pattern. */
+        public static String requireMatches(String value, Pattern pattern, String name) {
+            Objects.requireNonNull(value, name + " must not be null");
+            if (!pattern.matcher(value).matches()) {
+                throw new IllegalArgumentException(
+                        name + " must match pattern " + pattern.pattern());
+            }
+            return value;
+        }
+
+        /** Requires the collection is not null and not empty. */
+        public static <T> List<T> requireNonEmpty(List<T> list, String name) {
+            Objects.requireNonNull(list, name + " must not be null");
+            if (list.isEmpty()) {
+                throw new IllegalArgumentException(name + " must not be empty");
+            }
+            return list;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Record compact constructors for validation
+    // ═══════════════════════════════════════════════════════════════════════
+{% for record in domain_records %}
+
+    /**
+     * Validated domain record: {{ record.name }}.
+     */
+    public record {{ record.name }}(
+{% for field in record.fields %}
+            {{ field.type }} {{ field.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+    ) {
+        public {{ record.name }} {
+{% for field in record.fields %}
+{% if field.validation is defined %}
+            {{ field.validation }}
+{% endif %}
+{% endfor %}
+        }
+    }
+{% endfor %}
+{% if domain_records | length == 0 %}
+
+    /** A non-blank, trimmed string value. Always valid by construction. */
+    public record NonBlankString(String value) {
+        public NonBlankString {
+            Objects.requireNonNull(value, "value must not be null");
+            value = value.strip();
+            if (value.isEmpty()) {
+                throw new IllegalArgumentException("value must not be blank");
+            }
+        }
+    }
+
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
+    /** A validated email address. Always valid by construction. */
+    public record Email(String value) {
+        public Email {
+            Preconditions.requireNonBlank(value, "email");
+            value = value.strip().toLowerCase(java.util.Locale.ROOT);
+            Preconditions.requireMatches(value, EMAIL_PATTERN, "email");
+        }
+    }
+
+    /** A validated age (0-150). Always valid by construction. */
+    public record Age(int value) {
+        public Age {
+            Preconditions.requireInRange(value, 0, 150, "age");
+        }
+    }
+
+    public record PositiveAmount(double value) {
+        public PositiveAmount {
+            if (value <= 0) {
+                throw new IllegalArgumentException("Amount must be positive: " + value);
+            }
+            if (Double.isNaN(value) || Double.isInfinite(value)) {
+                throw new IllegalArgumentException("Amount must be finite: " + value);
+            }
+        }
+    }
+
+    /**
+     * A fully validated user — all fields are guaranteed valid at construction.
+     *
+     * <p>BEFORE (scattered validation):
+     * <pre>
+     *   void createUser(String name, String email, int age) {
+     *       if (name == null || name.isBlank()) throw ...
+     *       if (email == null || !email.contains("@")) throw ...
+     *       if (age &lt; 0 || age &gt; 150) throw ...
+     *   }
+     * </pre>
+     *
+     * <p>AFTER (centralized in record constructor):
+     * <pre>
+     *   var user = new User(
+     *       new NonBlankString("Alice"),
+     *       new Email("alice@example.com"),
+     *       new Age(30)
+     *   );
+     *   // All downstream code can trust the data is valid
+     * </pre>
+     */
+    public record User(NonBlankString name, Email email, Age age, List<String> roles) {
+        public User {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(email, "email must not be null");
+            Objects.requireNonNull(age, "age must not be null");
+            roles = roles != null ? List.copyOf(roles) : List.of();
+        }
+    }
+{% endif %}
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Validation error accumulation — collect all errors, not just the first
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * A validation error with a field name and message.
+     */
+    public record ValidationError(String field, String message) {
+        public ValidationError {
+            Preconditions.requireNonBlank(field, "field");
+            Preconditions.requireNonBlank(message, "message");
+        }
+
+        @Override
+        public String toString() {
+            return field + ": " + message;
+        }
+    }
+
+    /**
+     * Accumulates validation errors and produces a result.
+     *
+     * <p>Usage:
+     * <pre>
+     *   var result = Validator.&lt;UserRecord&gt;of()
+     *       .check("name", name != null &amp;&amp; !name.isBlank(), "must not be blank")
+     *       .check("email", EMAIL_PATTERN.matcher(email).matches(), "must be valid")
+     *       .check("age", age &gt;= 0 &amp;&amp; age &lt;= 150, "must be between 0 and 150")
+     *       .validate(() -&gt; new UserRecord(name, email, age));
+     * </pre>
+     *
+     * @param <T> the type of valid result
+     */
+    public static final class Validator<T> {
+
+        private final List<ValidationError> errors = new ArrayList<>();
+
+        private Validator() {}
+
+        public static <T> Validator<T> of() {
+            return new Validator<>();
+        }
+
+        /** Adds an error if the condition is false. */
+        public Validator<T> check(String field, boolean condition, String message) {
+            if (!condition) {
+                errors.add(new ValidationError(field, message));
+            }
+            return this;
+        }
+
+        /** Adds an error if the predicate fails for the given value. */
+        public <V> Validator<T> check(String field, V value, Predicate<V> predicate, String message) {
+            if (!predicate.test(value)) {
+                errors.add(new ValidationError(field, message));
+            }
+            return this;
+        }
+
+        /** Adds an error if the value is null. */
+        public Validator<T> requireNonNull(String field, Object value) {
+            if (value == null) {
+                errors.add(new ValidationError(field, "must not be null"));
+            }
+            return this;
+        }
+
+        /** Adds an error if the string is null or blank. */
+        public Validator<T> requireNonBlank(String field, String value) {
+            if (value == null || value.isBlank()) {
+                errors.add(new ValidationError(field, "must not be blank"));
+            }
+            return this;
+        }
+
+        /**
+         * If no errors, applies the supplier to produce the valid result.
+         * If errors exist, returns a failure with all accumulated errors.
+         */
+        public ValidationResult<T> validate(java.util.function.Supplier<T> supplier) {
+            if (errors.isEmpty()) {
+                return new ValidationResult.Valid<>(supplier.get());
+            }
+            return new ValidationResult.Invalid<>(Collections.unmodifiableList(errors));
+        }
+
+        /**
+         * Returns the target value if valid, throws if any validation failed.
+         */
+        public T validateOrThrow(java.util.function.Supplier<T> supplier) {
+            if (!errors.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Validation failed: " + errors.stream()
+                                .map(ValidationError::toString)
+                                .collect(java.util.stream.Collectors.joining("; ")));
+            }
+            return supplier.get();
+        }
+
+        /** Returns the accumulated errors (for inspection). */
+        public List<ValidationError> errors() {
+            return Collections.unmodifiableList(errors);
+        }
+    }
+
+    /**
+     * Result of validation — either {@link Valid} with a value, or {@link Invalid} with errors.
+     */
+    public sealed interface ValidationResult<T> {
+
+        /** Returns true if validation passed. */
+        boolean isValid();
+
+        /** Maps the valid value if present. */
+        <U> ValidationResult<U> map(Function<T, U> mapper);
+
+        /** Folds the result to a single value. */
+        <U> U fold(
+                Function<T, U> onValid,
+                Function<List<ValidationError>, U> onInvalid);
+
+        record Valid<T>(T value) implements ValidationResult<T> {
+
+            @Override
+            public boolean isValid() {
+                return true;
+            }
+
+            @Override
+            public <U> ValidationResult<U> map(Function<T, U> mapper) {
+                return new Valid<>(mapper.apply(value));
+            }
+
+            @Override
+            public <U> U fold(
+                    Function<T, U> onValid,
+                    Function<List<ValidationError>, U> onInvalid) {
+                return onValid.apply(value);
+            }
+        }
+
+        record Invalid<T>(List<ValidationError> errors) implements ValidationResult<T> {
+
+            public Invalid {
+                errors = List.copyOf(errors);
+            }
+
+            @Override
+            public boolean isValid() {
+                return false;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <U> ValidationResult<U> map(Function<T, U> mapper) {
+                return (ValidationResult<U>) this;
+            }
+
+            @Override
+            public <U> U fold(
+                    Function<T, U> onValid,
+                    Function<List<ValidationError>, U> onInvalid) {
+                return onInvalid.apply(errors);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Example: Combining patterns
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Demonstrates accumulating validation for a registration request.
+     *
+     * <p>BEFORE (fail-fast, only reports first error):
+     * <pre>
+     *   if (name == null) throw new IllegalArgumentException("name required");
+     *   if (email == null) throw new IllegalArgumentException("email required");
+     *   // User only sees one error at a time — frustrating UX
+     * </pre>
+     *
+     * <p>AFTER (accumulate all errors, report them together):
+     * <pre>
+     *   var result = validateRegistration("", "bad", -1);
+     *   // result.fold(
+     *   //     user -&gt; "Welcome, " + user.name().value(),
+     *   //     errors -&gt; "Fix: " + errors
+     *   // );
+     * </pre>
+     */
+    public static ValidationResult<User> validateRegistration(
+            String name, String email, int age) {
+        return Validator.<User>of()
+                .requireNonBlank("name", name)
+                .check("email", email, e -> e != null && EMAIL_PATTERN.matcher(e).matches(),
+                        "must be a valid email address")
+                .check("age", age >= 0 && age <= 150,
+                        "must be between 0 and 150")
+                .validate(
+                        () ->
+                                new User(
+                                        new NonBlankString(name),
+                                        new Email(email),
+                                        new Age(age),
+                                        List.of()));
+    }
+}

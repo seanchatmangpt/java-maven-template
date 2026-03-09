@@ -1,0 +1,211 @@
+{# Integration Test (Failsafe) — Generates an integration test class with *IT.java naming convention, @Tag("integration"), and resource setup/teardown for Java 26 #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}IT.java"
+vars:
+  name: "MyComponent"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  subject_class: ""
+  resources: []
+  test_methods: []
+  imports: []
+  has_shared_resource: true
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Duration;
+import java.util.concurrent.Executors;
+
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.Timeout;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@Tag("integration")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@Timeout(value = 60)
+@DisplayName("{{ name }} — integration tests")
+class {{ name }}IT implements WithAssertions {
+{% if subject_class %}
+
+    private {{ subject_class }} subject;
+{% endif %}
+{% for resource in resources %}
+    private {{ resource.type }} {{ resource.name }};
+{% endfor %}
+{% if has_shared_resource and resources | length == 0 %}
+    private AutoCloseable sharedResource;
+{% endif %}
+
+    // ── Lifecycle: class-level setup (once before all tests) ─────────────
+
+    @BeforeAll
+    void setUpAll() {
+{% if has_shared_resource and resources | length == 0 %}
+        // TODO: initialize shared expensive resource (connection pool, server, etc.)
+        sharedResource = () -> {}; // placeholder
+{% endif %}
+{% for resource in resources %}
+{% if resource.shared %}
+        {{ resource.name }} = {{ resource.init }};
+{% endif %}
+{% endfor %}
+    }
+
+    @AfterAll
+    void tearDownAll() throws Exception {
+{% if has_shared_resource and resources | length == 0 %}
+        if (sharedResource != null) {
+            sharedResource.close();
+        }
+{% endif %}
+{% for resource in resources %}
+{% if resource.shared and resource.cleanup is defined %}
+        {{ resource.cleanup }}
+{% endif %}
+{% endfor %}
+    }
+
+    // ── Lifecycle: per-test setup ────────────────────────────────────────
+
+    @BeforeEach
+    void setUp(TestInfo testInfo) {
+{% if subject_class %}
+        subject = new {{ subject_class }}();
+{% else %}
+        // TODO: set up per-test state
+{% endif %}
+{% for resource in resources %}
+{% if not resource.shared %}
+        {{ resource.name }} = {{ resource.init }};
+{% endif %}
+{% endfor %}
+    }
+
+    @AfterEach
+    void tearDown() {
+        // TODO: clean up per-test state and resources
+{% for resource in resources %}
+{% if not resource.shared and resource.cleanup is defined %}
+        {{ resource.cleanup }}
+{% endif %}
+{% endfor %}
+    }
+{% for method in test_methods %}
+
+    @Test
+    @DisplayName("{{ method.display_name | default(value=method.name) }}")
+{% if method.timeout is defined %}
+    @Timeout(value = {{ method.timeout }})
+{% endif %}
+    void {{ method.name }}() {
+{% if method.body is defined %}
+        {{ method.body }}
+{% else %}
+        // TODO: implement integration test
+{% endif %}
+    }
+{% endfor %}
+{% if test_methods | length == 0 %}
+
+    // ── Integration tests ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("should initialize and connect successfully")
+    void shouldInitializeAndConnect() {
+{% if subject_class %}
+        assertThat(subject).isNotNull();
+{% else %}
+        // Given
+        // TODO: prepare integration environment
+
+        // When
+        // TODO: invoke the operation that crosses boundaries
+
+        // Then
+        // TODO: verify end-to-end result
+{% endif %}
+    }
+
+    @Test
+    @DisplayName("should handle concurrent requests with virtual threads")
+    void shouldHandleConcurrentRequests() throws Exception {
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = java.util.stream.IntStream.range(0, 10)
+                    .mapToObj(
+                            i ->
+                                    java.util.concurrent.CompletableFuture.runAsync(
+                                            () -> {
+                                                // TODO: perform concurrent operation
+                                                assertThat(Thread.currentThread().isVirtual())
+                                                        .isTrue();
+                                            },
+                                            executor))
+                    .toList();
+
+            java.util.concurrent.CompletableFuture.allOf(
+                            futures.toArray(java.util.concurrent.CompletableFuture[]::new))
+                    .get(Duration.ofSeconds(30).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("should recover from transient failures")
+    void shouldRecoverFromTransientFailures() {
+        // Given a resource that fails intermittently
+        var attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        // When retrying the operation
+        String result = null;
+        for (int i = 0; i < 3; i++) {
+            try {
+                attempts.incrementAndGet();
+                // TODO: invoke potentially failing operation
+                result = "success";
+                break;
+            } catch (Exception e) {
+                if (i == 2) {
+                    fail("Exhausted retries: " + e.getMessage());
+                }
+            }
+        }
+
+        // Then it should eventually succeed
+        assertThat(result).isEqualTo("success");
+    }
+
+    @Test
+    @DisplayName("should clean up resources on failure")
+    @Timeout(value = 10)
+    void shouldCleanUpResourcesOnFailure() {
+        // Given resources that need cleanup
+        var cleaned = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        try {
+            // When an operation fails
+            // TODO: invoke operation that may fail
+        } finally {
+            // Then resources should be cleaned up
+            cleaned.set(true);
+        }
+
+        assertThat(cleaned).isTrue();
+    }
+{% endif %}
+}

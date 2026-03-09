@@ -1,0 +1,172 @@
+{# Stress Test: Timeout Precision — deadline fires within tolerance window under GC pressure #}
+---
+to: "{{ output_dir | default(value='src/test/java') }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyServiceTimeoutStressTest"
+  package: "org.acme.test"
+  subject_class: "MyService"
+  timeout_ms: 100
+  tolerance_multiplier: 5
+  gc_pressure_allocation_mb: 50
+---
+package {{ package }};
+
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.constraints.IntRange;
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+/**
+ * Armstrong Timeout Precision Stress Test — {{ subject_class }}.
+ *
+ * <h2>Breaking points under investigation</h2>
+ * <ol>
+ *   <li><b>Timeout fires within tolerance</b> — deadline {{ timeout_ms }} ms × {{ tolerance_multiplier }}× = {{ timeout_ms * tolerance_multiplier }} ms max.
+ *   <li><b>GC pressure</b> — allocate {{ gc_pressure_allocation_mb }} MB while waiting; timeout must still fire.
+ *   <li><b>Concurrent waiters</b> — 50 simultaneous timeouts; all fire within tolerance.
+ *   <li><b>Property: timeout always ≤ tolerance window</b> — for any deadline in [10, 500] ms.
+ * </ol>
+ *
+ * <p>TODO: Replace CompletableFuture.supplyAsync below with the actual {{ subject_class }} call.
+ */
+@Timeout(30)
+class {{ name }} implements WithAssertions {
+
+    private static final long TIMEOUT_MS = {{ timeout_ms }};
+    private static final long MAX_ALLOWED_MS = TIMEOUT_MS * {{ tolerance_multiplier }};
+
+    // ── Test 1: single timeout fires within tolerance ──────────────────────────
+
+    @Test
+    void timeout_firesWithinTolerance() {
+        long start = System.currentTimeMillis();
+
+        // TODO: replace with actual {{ subject_class }}.callWithTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        var future = CompletableFuture
+                .supplyAsync(() -> {
+                    try { Thread.sleep(10_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    return "never";
+                })
+                .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        assertThatThrownBy(() -> future.join())
+                .hasCauseInstanceOf(TimeoutException.class);
+
+        long elapsed = System.currentTimeMillis() - start;
+        assertThat(elapsed)
+                .as("Timeout should fire within %d ms (tolerance %dx), was %d ms",
+                        MAX_ALLOWED_MS, {{ tolerance_multiplier }}, elapsed)
+                .isLessThanOrEqualTo(MAX_ALLOWED_MS);
+    }
+
+    // ── Test 2: timeout fires under GC pressure ────────────────────────────────
+
+    @Test
+    void timeout_underGcPressure_stillFires() throws Exception {
+        var gcThread = Thread.ofVirtual().start(() -> {
+            // Allocate {{ gc_pressure_allocation_mb }} MB to trigger GC
+            var sink = new java.util.ArrayList<byte[]>();
+            for (int i = 0; i < {{ gc_pressure_allocation_mb }}; i++) {
+                try {
+                    sink.add(new byte[1024 * 1024]); // 1 MB per iteration
+                } catch (OutOfMemoryError ignored) {
+                    break;
+                }
+            }
+            sink.clear(); // allow GC
+        });
+
+        long start = System.currentTimeMillis();
+
+        var future = CompletableFuture
+                .supplyAsync(() -> {
+                    try { Thread.sleep(10_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    return "never";
+                })
+                .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        assertThatThrownBy(() -> future.join())
+                .hasCauseInstanceOf(TimeoutException.class);
+
+        long elapsed = System.currentTimeMillis() - start;
+        assertThat(elapsed)
+                .as("Timeout must fire within %d ms even under GC pressure, was %d ms",
+                        MAX_ALLOWED_MS, elapsed)
+                .isLessThanOrEqualTo(MAX_ALLOWED_MS);
+
+        gcThread.join(5_000);
+    }
+
+    // ── Test 3: 50 concurrent timeouts — all fire in parallel ─────────────────
+
+    @Test
+    void concurrentTimeouts_allFireWithinTolerance() throws Exception {
+        int concurrent = 50;
+        var latch = new CountDownLatch(concurrent);
+        var maxObserved = new AtomicLong(0);
+        var errors = new java.util.concurrent.atomic.AtomicReference<String>();
+
+        for (int i = 0; i < concurrent; i++) {
+            Thread.ofVirtual().start(() -> {
+                long start = System.currentTimeMillis();
+                var future = CompletableFuture
+                        .supplyAsync(() -> {
+                            try { Thread.sleep(10_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                            return "never";
+                        })
+                        .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+                try { future.join(); }
+                catch (Exception ignored) { /* expected timeout */ }
+
+                long elapsed = System.currentTimeMillis() - start;
+                maxObserved.updateAndMax(elapsed);
+                if (elapsed > MAX_ALLOWED_MS) {
+                    errors.compareAndSet(null,
+                            "Timeout took " + elapsed + " ms, expected ≤ " + MAX_ALLOWED_MS);
+                }
+                latch.countDown();
+            });
+        }
+
+        assertThat(latch.await(25, TimeUnit.SECONDS))
+                .as("All %d concurrent timeouts should fire", concurrent)
+                .isTrue();
+        assertThat(errors.get())
+                .as("No timeout should exceed tolerance: %s", errors.get())
+                .isNull();
+    }
+
+    // ── Property: timeout ≤ tolerance for any deadline ────────────────────────
+
+    @Property(tries = 20)
+    void property_timeoutNeverExceedsToleranceWindow(
+            @ForAll @IntRange(min = 10, max = 200) int deadlineMs) {
+        long start = System.currentTimeMillis();
+        long maxAllowed = deadlineMs * {{ tolerance_multiplier }};
+
+        var future = CompletableFuture
+                .supplyAsync(() -> {
+                    try { Thread.sleep(10_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    return "never";
+                })
+                .orTimeout(deadlineMs, TimeUnit.MILLISECONDS);
+
+        assertThatThrownBy(() -> future.join())
+                .hasCauseInstanceOf(TimeoutException.class);
+
+        long elapsed = System.currentTimeMillis() - start;
+        assertThat(elapsed)
+                .as("Timeout(%d ms) should complete within %d ms, was %d ms",
+                        deadlineMs, maxAllowed, elapsed)
+                .isLessThanOrEqualTo(maxAllowed);
+    }
+}

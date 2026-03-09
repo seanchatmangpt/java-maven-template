@@ -1,0 +1,286 @@
+{# Awaitility Async Testing — Generates async test patterns with await().atMost().until(), polling configuration, and condition factories for Java 26 virtual threads #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}AsyncTest.java"
+vars:
+  name: "MyAsync"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  subject_class: ""
+  async_conditions: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.assertj.core.api.WithAssertions;
+import org.awaitility.Awaitility;
+import org.awaitility.core.ConditionFactory;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import static org.awaitility.Awaitility.await;
+import static org.awaitility.Awaitility.fieldIn;
+import static org.awaitility.Awaitility.given;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@DisplayName("{{ name }} — async testing")
+class {{ name }}AsyncTest implements WithAssertions {
+{% if subject_class %}
+
+    private {{ subject_class }} subject;
+
+    @BeforeEach
+    void setUp() {
+        subject = new {{ subject_class }}();
+    }
+{% endif %}
+
+    // ── Condition factory — reusable await configuration ─────────────────
+
+    private static ConditionFactory awaitBriefly() {
+        return await()
+                .atMost(Duration.ofSeconds(5))
+                .pollInterval(Duration.ofMillis(100))
+                .pollDelay(Duration.ofMillis(50));
+    }
+
+    private static ConditionFactory awaitPatiently() {
+        return await()
+                .atMost(Duration.ofSeconds(30))
+                .pollInterval(Duration.ofMillis(500))
+                .pollDelay(Duration.ofMillis(100));
+    }
+{% for condition in async_conditions %}
+
+    @Test
+    @DisplayName("{{ condition.display_name | default(value=condition.name) }}")
+    void {{ condition.name }}() {
+        {{ condition.body }}
+    }
+{% endfor %}
+{% if async_conditions | length == 0 %}
+
+    // ── await().atMost().until() — basic async assertions ────────────────
+
+    @Nested
+    @DisplayName("basic async assertions")
+    class BasicAsyncAssertions {
+
+        @Test
+        @DisplayName("should wait until condition becomes true")
+        void shouldWaitUntilConditionBecomesTrue() {
+            var flag = new AtomicBoolean(false);
+
+            // Simulate async operation completing on a virtual thread
+            Thread.startVirtualThread(
+                    () -> {
+                        try {
+                            Thread.sleep(Duration.ofMillis(200));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        flag.set(true);
+                    });
+
+            awaitBriefly().untilTrue(flag);
+        }
+
+        @Test
+        @DisplayName("should wait until atomic value matches")
+        void shouldWaitUntilAtomicValueMatches() {
+            var counter = new AtomicInteger(0);
+
+            Thread.startVirtualThread(
+                    () -> {
+                        for (int i = 0; i < 10; i++) {
+                            try {
+                                Thread.sleep(Duration.ofMillis(50));
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                            counter.incrementAndGet();
+                        }
+                    });
+
+            awaitBriefly().untilAtomic(counter, org.hamcrest.Matchers.equalTo(10));
+        }
+
+        @Test
+        @DisplayName("should wait until reference is non-null")
+        void shouldWaitUntilReferenceIsNonNull() {
+            var ref = new AtomicReference<String>(null);
+
+            Thread.startVirtualThread(
+                    () -> {
+                        try {
+                            Thread.sleep(Duration.ofMillis(150));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        ref.set("ready");
+                    });
+
+            awaitBriefly()
+                    .untilAsserted(
+                            () -> assertThat(ref.get()).isNotNull().isEqualTo("ready"));
+        }
+    }
+
+    // ── Polling configuration ────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("polling configuration")
+    class PollingConfiguration {
+
+        @Test
+        @DisplayName("should use fixed polling interval")
+        void shouldUseFixedPollingInterval() {
+            var value = new AtomicInteger(0);
+
+            Thread.startVirtualThread(
+                    () -> {
+                        try {
+                            Thread.sleep(Duration.ofMillis(300));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        value.set(42);
+                    });
+
+            await().atMost(Duration.ofSeconds(2))
+                    .pollInterval(Duration.ofMillis(50))
+                    .until(() -> value.get() == 42);
+        }
+
+        @Test
+        @DisplayName("should use Fibonacci polling backoff")
+        void shouldUseFibonacciPolling() {
+            var value = new AtomicBoolean(false);
+
+            Thread.startVirtualThread(
+                    () -> {
+                        try {
+                            Thread.sleep(Duration.ofMillis(500));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        value.set(true);
+                    });
+
+            await().atMost(Duration.ofSeconds(5))
+                    .with()
+                    .pollInterval(
+                            org.awaitility.pollinterval.FibonacciPollInterval
+                                    .fibonacci())
+                    .untilTrue(value);
+        }
+
+        @Test
+        @DisplayName("should ignore specific exceptions during polling")
+        void shouldIgnoreExceptionsDuringPolling() {
+            var attempts = new AtomicInteger(0);
+
+            await().atMost(Duration.ofSeconds(3))
+                    .pollInterval(Duration.ofMillis(100))
+                    .ignoreExceptions()
+                    .until(
+                            () -> {
+                                int attempt = attempts.incrementAndGet();
+                                if (attempt < 5) {
+                                    throw new IllegalStateException("not ready yet");
+                                }
+                                return true;
+                            });
+
+            assertThat(attempts.get()).isGreaterThanOrEqualTo(5);
+        }
+    }
+
+    // ── Condition factories — composable wait conditions ─────────────────
+
+    @Nested
+    @DisplayName("condition factories")
+    class ConditionFactories {
+
+        @Test
+        @DisplayName("should use untilAsserted for AssertJ integration")
+        void shouldUseUntilAssertedForAssertJ() {
+            var results = java.util.Collections.synchronizedList(new java.util.ArrayList<String>());
+
+            Thread.startVirtualThread(
+                    () -> {
+                        for (String item : java.util.List.of("a", "b", "c")) {
+                            try {
+                                Thread.sleep(Duration.ofMillis(100));
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                            results.add(item);
+                        }
+                    });
+
+            awaitBriefly()
+                    .untilAsserted(
+                            () -> assertThat(results).hasSize(3).containsExactly("a", "b", "c"));
+        }
+
+        @Test
+        @DisplayName("should compose CompletableFuture with await")
+        void shouldComposeCompletableFutureWithAwait() {
+            CompletableFuture<String> future =
+                    CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    Thread.sleep(Duration.ofMillis(200));
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                return "done";
+                            },
+                            Executors.newVirtualThreadPerTaskExecutor());
+
+            awaitBriefly().until(future::isDone);
+            assertThat(future.join()).isEqualTo("done");
+        }
+
+        @Test
+        @DisplayName("should use given/when/then pattern")
+        void shouldUseGivenWhenThenPattern() {
+            var state = new AtomicReference<>("initial");
+
+            Thread.startVirtualThread(
+                    () -> {
+                        try {
+                            Thread.sleep(Duration.ofMillis(200));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        state.set("completed");
+                    });
+
+            given().ignoreException(IllegalStateException.class)
+                    .await()
+                    .atMost(Duration.ofSeconds(5))
+                    .untilAsserted(() -> assertThat(state.get()).isEqualTo("completed"));
+        }
+    }
+{% endif %}
+}

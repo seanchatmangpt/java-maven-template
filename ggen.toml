@@ -1,0 +1,25 @@
+[project]
+name = "java-maven-template"
+version = "1.0.0"
+description = "Exhaustive Java 26 code generation templates for universal codebase migration"
+
+[sources]
+ontologies = "schema/"
+queries = "queries/"
+
+[output]
+root = "src/main/java"
+test_root = "src/test/java"
+resources_root = "src/main/resources"
+
+[templates]
+path = "templates/java"
+
+[generation]
+deterministic = true
+format_output = true
+
+[quality_gates]
+validate_ontology = true
+check_compilation = true
+verify_formatting = true

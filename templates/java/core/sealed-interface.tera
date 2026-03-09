@@ -1,0 +1,69 @@
+{# Sealed interface — Generates a sealed interface with permitted record/class subtypes #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "MyType"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  type_parameters: []
+  methods: []
+  permitted_types: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public sealed interface {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.name }}{% if tp.bound is defined %} extends {{ tp.bound }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %}
+
+        permits {% for pt in permitted_types %}{{ name }}.{{ pt.name }}{% if not loop.last %}, {% endif %}{% endfor %} {
+{% for method in methods %}
+
+    {% if method.default_body is defined %}default {% endif %}{{ method.return_type }} {{ method.name }}({% for param in method.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}){% if method.default_body is defined %} {
+        {{ method.default_body }}
+    }{% else %};{% endif %}
+
+{% endfor %}
+{% for pt in permitted_types %}
+
+    {% if pt.kind == "record" %}record {{ pt.name }}({% for comp in pt.components %}{{ comp.type }} {{ comp.name }}{% if not loop.last %}, {% endif %}{% endfor %}) implements {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.actual | default(value=tp.name) }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} {
+{% if pt.methods is defined %}{% for m in pt.methods %}
+        @Override
+        public {{ m.return_type }} {{ m.name }}({% for param in m.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ m.body }}
+        }
+{% endfor %}{% endif %}
+    }{% elif pt.kind == "final_class" %}final class {{ pt.name }} implements {{ name }}{% if type_parameters | length > 0 %}<{% for tp in type_parameters %}{{ tp.actual | default(value=tp.name) }}{% if not loop.last %}, {% endif %}{% endfor %}>{% endif %} {
+{% for field in pt.fields %}
+        private final {{ field.type }} {{ field.name }};
+{% endfor %}
+
+        public {{ pt.name }}({% for field in pt.fields %}{{ field.type }} {{ field.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+{% for field in pt.fields %}
+            this.{{ field.name }} = {{ field.name }};
+{% endfor %}
+        }
+{% for field in pt.fields %}
+
+        public {{ field.type }} {{ field.name }}() {
+            return {{ field.name }};
+        }
+{% endfor %}
+{% if pt.methods is defined %}{% for m in pt.methods %}
+
+        @Override
+        public {{ m.return_type }} {{ m.name }}({% for param in m.params %}{{ param.type }} {{ param.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+            {{ m.body }}
+        }
+{% endfor %}{% endif %}
+    }{% endif %}
+
+{% endfor %}
+}

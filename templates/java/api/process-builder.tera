@@ -1,0 +1,348 @@
+{# ProcessBuilder (Java 9+) migration guide. Demonstrates modern process execution
+   with ProcessBuilder, I/O redirection, ProcessHandle, and pipeline support.
+   Replaces legacy Runtime.exec() usage. #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "ProcessBuilderExamples"
+  package: "org.acme"
+  output_dir: "src/main/java"
+---
+package {{ package }};
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
+
+/**
+ * Modern {@link ProcessBuilder} usage (Java 9+).
+ *
+ * <h2>Before — Runtime.exec()</h2>
+ * <pre>{@code
+ * // Running a command
+ * Runtime runtime = Runtime.getRuntime();
+ * Process proc = runtime.exec("ls -la /tmp");
+ *
+ * // Reading output — must drain stdin/stderr to avoid deadlock
+ * BufferedReader reader = new BufferedReader(
+ *         new InputStreamReader(proc.getInputStream()));
+ * String line;
+ * while ((line = reader.readLine()) != null) {
+ *     System.out.println(line);
+ * }
+ *
+ * // Must also drain stderr in a separate thread!
+ * BufferedReader errReader = new BufferedReader(
+ *         new InputStreamReader(proc.getErrorStream()));
+ * // ... same loop in another thread
+ *
+ * int exitCode = proc.waitFor();
+ *
+ * // No timeout support — process can hang forever
+ * // No easy way to get PID
+ * // No pipeline support
+ * // No redirect to file
+ * // Environment variables require String[] array manipulation
+ * }</pre>
+ *
+ * <h2>After — ProcessBuilder</h2>
+ * <pre>{@code
+ * var result = ProcessBuilderExamples.run("ls", "-la", "/tmp");
+ * System.out.println(result.stdout());
+ *
+ * var timed = ProcessBuilderExamples.runWithTimeout(
+ *         Duration.ofSeconds(10), "make", "build");
+ *
+ * ProcessHandle.current().info().command().ifPresent(System.out::println);
+ * }</pre>
+ */
+public final class {{ name }} {
+
+    private {{ name }}() {}
+
+    // -------------------------------------------------------------------------
+    // Result record
+    // -------------------------------------------------------------------------
+
+    /**
+     * Captures the result of a process execution.
+     *
+     * @param exitCode the process exit code (0 = success)
+     * @param stdout   the captured standard output
+     * @param stderr   the captured standard error
+     */
+    public record ProcessResult(int exitCode, String stdout, String stderr) {
+
+        /** Returns {@code true} if the process exited with code 0. */
+        public boolean isSuccess() {
+            return exitCode == 0;
+        }
+
+        /** Throws if the process exited with a non-zero code. */
+        public ProcessResult requireSuccess() {
+            if (!isSuccess()) {
+                throw new ProcessFailedException(exitCode, stderr);
+            }
+            return this;
+        }
+    }
+
+    /** Exception thrown when a process exits with a non-zero code. */
+    public static final class ProcessFailedException extends RuntimeException {
+
+        private final int exitCode;
+
+        public ProcessFailedException(int exitCode, String stderr) {
+            super("Process exited with code %d: %s".formatted(exitCode, stderr));
+            this.exitCode = exitCode;
+        }
+
+        public int exitCode() {
+            return exitCode;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Basic execution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Runs a command and captures stdout/stderr.
+     *
+     * <p>Merging stderr into stdout avoids the deadlock pitfall of
+     * {@code Runtime.exec()}.
+     *
+     * @param command the command and arguments
+     * @return the process result
+     * @throws IOException          if the process cannot be started
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public static ProcessResult run(String... command) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(false);
+
+        Process process = pb.start();
+
+        // Read stdout and stderr concurrently to prevent deadlock
+        String stdout;
+        String stderr;
+        try (var stdoutStream = process.getInputStream();
+                var stderrStream = process.getErrorStream()) {
+            CompletableFuture<String> stdoutFuture =
+                    CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    return new String(stdoutStream.readAllBytes());
+                                } catch (IOException e) {
+                                    throw new java.io.UncheckedIOException(e);
+                                }
+                            });
+            stderr = new String(stderrStream.readAllBytes());
+            stdout = stdoutFuture.join();
+        }
+
+        int exitCode = process.waitFor();
+        return new ProcessResult(exitCode, stdout, stderr);
+    }
+
+    // -------------------------------------------------------------------------
+    // Execution with timeout
+    // -------------------------------------------------------------------------
+
+    /**
+     * Runs a command with a timeout, destroying the process if it exceeds the limit.
+     *
+     * @param timeout the maximum duration to wait
+     * @param command the command and arguments
+     * @return the process result
+     * @throws IOException          if the process cannot be started
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public static ProcessResult runWithTimeout(Duration timeout, String... command)
+            throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+
+        Process process = pb.start();
+
+        String output;
+        try (var is = process.getInputStream()) {
+            output = new String(is.readAllBytes());
+        }
+
+        boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new ProcessFailedException(-1, "Process timed out after " + timeout);
+        }
+
+        return new ProcessResult(process.exitValue(), output, "");
+    }
+
+    // -------------------------------------------------------------------------
+    // I/O redirection
+    // -------------------------------------------------------------------------
+
+    /**
+     * Runs a command, redirecting stdout and stderr to files.
+     *
+     * @param stdoutFile the file to receive stdout
+     * @param stderrFile the file to receive stderr
+     * @param command    the command and arguments
+     * @return the exit code
+     * @throws IOException          if the process cannot be started
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public static int runRedirected(Path stdoutFile, Path stderrFile, String... command)
+            throws IOException, InterruptedException {
+        ProcessBuilder pb =
+                new ProcessBuilder(command)
+                        .redirectOutput(stdoutFile.toFile())
+                        .redirectError(stderrFile.toFile());
+
+        Process process = pb.start();
+        return process.waitFor();
+    }
+
+    /**
+     * Runs a command with merged stdout + stderr redirected to a single file.
+     *
+     * @param outputFile the file to receive all output
+     * @param command    the command and arguments
+     * @return the exit code
+     * @throws IOException          if the process cannot be started
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public static int runMergedOutput(Path outputFile, String... command)
+            throws IOException, InterruptedException {
+        ProcessBuilder pb =
+                new ProcessBuilder(command)
+                        .redirectErrorStream(true)
+                        .redirectOutput(outputFile.toFile());
+
+        Process process = pb.start();
+        return process.waitFor();
+    }
+
+    /**
+     * Runs a command in a specific working directory with environment variables.
+     *
+     * @param workingDir the working directory
+     * @param env        additional environment variables (merged with inherited env)
+     * @param command    the command and arguments
+     * @return the process result
+     * @throws IOException          if the process cannot be started
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public static ProcessResult runInDir(Path workingDir, Map<String, String> env,
+            String... command) throws IOException, InterruptedException {
+        ProcessBuilder pb =
+                new ProcessBuilder(command)
+                        .directory(workingDir.toFile())
+                        .redirectErrorStream(true);
+
+        pb.environment().putAll(env);
+
+        Process process = pb.start();
+        String output;
+        try (var is = process.getInputStream()) {
+            output = new String(is.readAllBytes());
+        }
+        int exitCode = process.waitFor();
+        return new ProcessResult(exitCode, output, "");
+    }
+
+    // -------------------------------------------------------------------------
+    // ProcessHandle (Java 9+) — inspect running processes
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns information about the current JVM process.
+     *
+     * @return a summary of the current process
+     */
+    public static String currentProcessInfo() {
+        ProcessHandle current = ProcessHandle.current();
+        ProcessHandle.Info info = current.info();
+        return """
+                PID:     %d
+                Command: %s
+                Args:    %s
+                User:    %s
+                Start:   %s
+                CPU:     %s"""
+                .formatted(
+                        current.pid(),
+                        info.command().orElse("unknown"),
+                        info.arguments().map(List::of).orElse(List.of()),
+                        info.user().orElse("unknown"),
+                        info.startInstant().orElse(Instant.EPOCH),
+                        info.totalCpuDuration().orElse(Duration.ZERO));
+    }
+
+    /**
+     * Lists all child processes of the current JVM.
+     *
+     * @return a stream of child process handles
+     */
+    public static Stream<ProcessHandle> children() {
+        return ProcessHandle.current().children();
+    }
+
+    /**
+     * Lists all descendant processes (children, grandchildren, etc.).
+     *
+     * @return a stream of descendant process handles
+     */
+    public static Stream<ProcessHandle> descendants() {
+        return ProcessHandle.current().descendants();
+    }
+
+    /**
+     * Asynchronously waits for a process to terminate.
+     *
+     * @param process the process to monitor
+     * @return a future that completes when the process exits
+     */
+    public static CompletableFuture<ProcessHandle> onExit(Process process) {
+        return process.toHandle().onExit();
+    }
+
+    /**
+     * Destroys a process gracefully, falling back to forcible termination.
+     *
+     * @param process the process to terminate
+     * @param gracePeriod how long to wait before forcible termination
+     * @throws InterruptedException if the thread is interrupted
+     */
+    public static void shutdown(Process process, Duration gracePeriod)
+            throws InterruptedException {
+        process.destroy();
+        if (!process.waitFor(gracePeriod.toMillis(), TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pipeline support (Java 9+)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Starts a pipeline of processes, piping stdout of each to stdin of the next.
+     *
+     * @param builders the process builders forming the pipeline
+     * @return the list of started processes
+     * @throws IOException if any process cannot be started
+     */
+    public static List<Process> pipeline(ProcessBuilder... builders)
+            throws IOException {
+        return ProcessBuilder.startPipeline(List.of(builders));
+    }
+}

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# =============================================================================
+# mvndw — Maven Daemon Wrapper
+# Downloads and runs mvnd (Maven Daemon) for faster builds.
+# Drop-in replacement for ./mvnw with persistent JVM daemon.
+# =============================================================================
+
+set -euo pipefail
+
+MVND_VERSION="${MVND_VERSION:-1.0.2}"
+MVND_HOME="${MVND_HOME:-$HOME/.mvnd}"
+MVND_BIN="$MVND_HOME/mvnd-$MVND_VERSION/bin/mvnd"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+detect_os() {
+    local os
+    case "$(uname -s)" in
+        Linux*)  os="linux";;
+        Darwin*) os="darwin";;
+        MINGW*|CYGWIN*|MSYS*) os="windows";;
+        *) echo -e "${RED}Unsupported OS: $(uname -s)${NC}" >&2; exit 1;;
+    esac
+    echo "$os"
+}
+
+detect_arch() {
+    local arch
+    case "$(uname -m)" in
+        x86_64|amd64) arch="amd64";;
+        aarch64|arm64) arch="aarch64";;
+        *) echo -e "${RED}Unsupported architecture: $(uname -m)${NC}" >&2; exit 1;;
+    esac
+    echo "$arch"
+}
+
+install_mvnd() {
+    local os arch url archive_name
+
+    os="$(detect_os)"
+    arch="$(detect_arch)"
+
+    if [[ "$os" == "windows" ]]; then
+        archive_name="maven-mvnd-$MVND_VERSION-$os-$arch.zip"
+    else
+        archive_name="maven-mvnd-$MVND_VERSION-$os-$arch.tar.gz"
+    fi
+
+    url="https://github.com/apache/maven-mvnd/releases/download/$MVND_VERSION/$archive_name"
+
+    echo -e "${YELLOW}Downloading mvnd $MVND_VERSION...${NC}" >&2
+    echo -e "  URL: $url" >&2
+
+    mkdir -p "$MVND_HOME"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$url" -o "$tmp_dir/$archive_name"
+    elif command -v wget &>/dev/null; then
+        wget -q "$url" -O "$tmp_dir/$archive_name"
+    else
+        echo -e "${RED}Error: curl or wget required to download mvnd${NC}" >&2
+        exit 1
+    fi
+
+    echo -e "${YELLOW}Extracting...${NC}" >&2
+    if [[ "$archive_name" == *.tar.gz ]]; then
+        tar -xzf "$tmp_dir/$archive_name" -C "$MVND_HOME"
+    else
+        unzip -q "$tmp_dir/$archive_name" -d "$MVND_HOME"
+    fi
+
+    # Rename extracted dir to consistent name
+    local extracted_dir
+    extracted_dir="$(find "$MVND_HOME" -maxdepth 1 -name "maven-mvnd-*" -type d | head -1)"
+    if [[ -n "$extracted_dir" && "$extracted_dir" != "$MVND_HOME/mvnd-$MVND_VERSION" ]]; then
+        mv "$extracted_dir" "$MVND_HOME/mvnd-$MVND_VERSION"
+    fi
+
+    rm -rf "$tmp_dir"
+
+    chmod +x "$MVND_BIN"
+    echo -e "${GREEN}mvnd $MVND_VERSION installed to $MVND_HOME${NC}" >&2
+}
+
+# Install if not present
+if [[ ! -x "$MVND_BIN" ]]; then
+    install_mvnd
+fi
+
+# Load daemon.properties from .mvn if present
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ -f "$PROJECT_ROOT/.mvn/daemon.properties" ]]; then
+    export MVND_PROPERTIES_PATH="$PROJECT_ROOT/.mvn/daemon.properties"
+fi
+
+# Delegate to mvnd with all arguments
+exec "$MVND_BIN" "$@"

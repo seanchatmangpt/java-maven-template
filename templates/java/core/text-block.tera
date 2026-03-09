@@ -1,0 +1,45 @@
+{# Text block — Generates multi-line string constants as Java text blocks #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+vars:
+  name: "TextConstants"
+  package: "org.acme"
+  output_dir: "src/main/java"
+  constants: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+public final class {{ name }} {
+
+    private {{ name }}() {} // constants class
+{% for constant in constants %}
+
+    {% if constant.javadoc is defined %}/**
+     * {{ constant.javadoc }}
+     */
+    {% endif %}public static final {{ constant.type | default(value="String") }} {{ constant.name }} = """
+{{ constant.content | indent(prefix="            ") }}
+            """;
+{% endfor %}
+{% for constant in constants %}
+{% if constant.parameterized is defined and constant.parameterized %}
+
+    /**
+     * Returns {{ constant.name }} with format arguments applied.
+     */
+    public static String {{ constant.name | lower }}({% for param in constant.params %}Object {{ param }}{% if not loop.last %}, {% endif %}{% endfor %}) {
+        return {{ constant.name }}.formatted({% for param in constant.params %}{{ param }}{% if not loop.last %}, {% endif %}{% endfor %});
+    }
+{% endif %}
+{% endfor %}
+}

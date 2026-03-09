@@ -1,0 +1,255 @@
+{# Instancio Test Data Generation — Generates tests using Instancio.create(), Instancio.of() with set/generate/supply, and reusable Models for Java 26 #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}DataTest.java"
+vars:
+  name: "MyClass"
+  package: "org.acme"
+  output_dir: "src/test/java"
+  target_class: ""
+  target_fields: []
+  models: []
+  imports: []
+  javadoc: ""
+---
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+import java.util.List;
+
+import org.assertj.core.api.WithAssertions;
+import org.instancio.Instancio;
+import org.instancio.Model;
+import org.instancio.junit.InstancioExtension;
+import org.instancio.junit.InstancioSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+
+import static org.instancio.Select.all;
+import static org.instancio.Select.field;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@ExtendWith(InstancioExtension.class)
+@DisplayName("{{ name }} — test data generation")
+class {{ name }}DataTest implements WithAssertions {
+{% if target_class %}
+
+    // ── Instancio.create() — fully random object ────────────────────────
+
+    @Nested
+    @DisplayName("random instance creation")
+    class RandomCreation {
+
+        @Test
+        @DisplayName("should create a fully populated random instance")
+        void shouldCreateRandomInstance() {
+            var instance = Instancio.create({{ target_class }}.class);
+
+            assertThat(instance).isNotNull();
+        }
+
+        @Test
+        @DisplayName("should create a list of random instances")
+        void shouldCreateRandomList() {
+            List<{{ target_class }}> instances = Instancio.ofList({{ target_class }}.class)
+                    .size(10)
+                    .create();
+
+            assertThat(instances).hasSize(10).doesNotContainNull();
+        }
+    }
+
+    // ── Instancio.of() — customized creation with set/generate/supply ───
+
+    @Nested
+    @DisplayName("customized instance creation")
+    class CustomizedCreation {
+{% for f in target_fields %}
+
+        @Test
+        @DisplayName("should create instance with custom {{ f.name }}")
+        void shouldCreateWithCustom{{ f.name | capitalize }}() {
+            var instance = Instancio.of({{ target_class }}.class)
+                    .set(field({{ target_class }}::{{ f.name }}), {{ f.sample_value }})
+                    .create();
+
+            assertThat(instance.{{ f.name }}()).isEqualTo({{ f.sample_value }});
+        }
+{% endfor %}
+{% if target_fields | length == 0 %}
+
+        @Test
+        @DisplayName("should create instance with overridden String fields")
+        void shouldCreateWithCustomStrings() {
+            var instance = Instancio.of({{ target_class }}.class)
+                    .generate(all(String.class), gen -> gen.string().prefix("test-").length(10))
+                    .create();
+
+            assertThat(instance).isNotNull();
+        }
+
+        @Test
+        @DisplayName("should create instance with supplied values")
+        void shouldCreateWithSuppliedValues() {
+            var instance = Instancio.of({{ target_class }}.class)
+                    .supply(all(String.class), () -> "fixed-value")
+                    .create();
+
+            assertThat(instance).isNotNull();
+        }
+{% endif %}
+    }
+
+    // ── Model — reusable template for consistent test data ──────────────
+
+    @Nested
+    @DisplayName("model-based creation")
+    class ModelBasedCreation {
+
+        private final Model<{{ target_class }}> baseModel =
+                Instancio.of({{ target_class }}.class)
+                        .generate(all(String.class), gen -> gen.string().alphaNumeric().length(5, 20))
+                        .toModel();
+
+        @Test
+        @DisplayName("should create from base model")
+        void shouldCreateFromModel() {
+            var instance = Instancio.of(baseModel).create();
+
+            assertThat(instance).isNotNull();
+        }
+
+        @Test
+        @DisplayName("should override model values for specific test")
+        void shouldOverrideModelValues() {
+            var instance = Instancio.of(baseModel)
+                    .generate(all(String.class), gen -> gen.string().prefix("override-"))
+                    .create();
+
+            assertThat(instance).isNotNull();
+        }
+    }
+
+    // ── @InstancioSource — parameterized test with generated arguments ──
+
+    @ParameterizedTest
+    @InstancioSource
+    @DisplayName("should accept any random instance")
+    void shouldAcceptRandomInstance({{ target_class }} instance) {
+        assertThat(instance).isNotNull();
+    }
+{% else %}
+
+    // ── Instancio.create() — fully random record ────────────────────────
+
+    record SampleRecord(String name, int age, List<String> tags) {}
+
+    @Test
+    @DisplayName("should create a fully populated random record")
+    void shouldCreateRandomRecord() {
+        var record = Instancio.create(SampleRecord.class);
+
+        assertThat(record).isNotNull();
+        assertThat(record.name()).isNotNull();
+        assertThat(record.tags()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("should create a list of random records")
+    void shouldCreateRandomList() {
+        List<SampleRecord> records =
+                Instancio.ofList(SampleRecord.class).size(10).create();
+
+        assertThat(records).hasSize(10).doesNotContainNull();
+    }
+
+    // ── Instancio.of() — customized creation ────────────────────────────
+
+    @Test
+    @DisplayName("should create record with custom field value using set()")
+    void shouldCreateWithSet() {
+        var record = Instancio.of(SampleRecord.class)
+                .set(field(SampleRecord::name), "Alice")
+                .create();
+
+        assertThat(record.name()).isEqualTo("Alice");
+    }
+
+    @Test
+    @DisplayName("should create record with generated field using generate()")
+    void shouldCreateWithGenerate() {
+        var record = Instancio.of(SampleRecord.class)
+                .generate(
+                        field(SampleRecord::age),
+                        gen -> gen.ints().range(18, 65))
+                .generate(
+                        field(SampleRecord::tags),
+                        gen -> gen.collection().size(3))
+                .create();
+
+        assertThat(record.age()).isBetween(18, 65);
+        assertThat(record.tags()).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("should create record with dynamic supplier using supply()")
+    void shouldCreateWithSupply() {
+        var counter = new java.util.concurrent.atomic.AtomicInteger();
+
+        var records = Instancio.ofList(SampleRecord.class)
+                .size(5)
+                .supply(field(SampleRecord::name), () -> "user-" + counter.incrementAndGet())
+                .create();
+
+        assertThat(records).extracting(SampleRecord::name)
+                .containsExactly("user-1", "user-2", "user-3", "user-4", "user-5");
+    }
+
+    // ── Model — reusable template for consistent test data ──────────────
+
+    private static final Model<SampleRecord> BASE_MODEL =
+            Instancio.of(SampleRecord.class)
+                    .set(field(SampleRecord::name), "template-user")
+                    .generate(field(SampleRecord::age), gen -> gen.ints().range(21, 30))
+                    .generate(field(SampleRecord::tags), gen -> gen.collection().size(2))
+                    .toModel();
+
+    @Test
+    @DisplayName("should create from reusable model")
+    void shouldCreateFromModel() {
+        var record = Instancio.of(BASE_MODEL).create();
+
+        assertThat(record.name()).isEqualTo("template-user");
+        assertThat(record.age()).isBetween(21, 30);
+        assertThat(record.tags()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("should override specific model values")
+    void shouldOverrideModelValues() {
+        var record = Instancio.of(BASE_MODEL)
+                .set(field(SampleRecord::name), "overridden")
+                .create();
+
+        assertThat(record.name()).isEqualTo("overridden");
+        assertThat(record.age()).isBetween(21, 30);
+    }
+{% endif %}
+{% for model in models %}
+
+    private static final Model<{{ model.type }}> {{ model.name | upper }}_MODEL =
+            Instancio.of({{ model.type }}.class)
+{% for customization in model.customizations %}
+                    {{ customization }}
+{% endfor %}
+                    .toModel();
+{% endfor %}
+}

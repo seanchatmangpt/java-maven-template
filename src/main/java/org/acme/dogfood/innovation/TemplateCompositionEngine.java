@@ -1,0 +1,307 @@
+package org.acme.dogfood.innovation;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.SequencedMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Template Composition Engine — composes multiple Tera templates into a coherent feature.
+ *
+ * <p>Instead of generating one file at a time, this engine takes a {@link FeatureRecipe} that
+ * chains templates (e.g., record + sealed-interface + strategy + tests) and resolves dependencies
+ * between them, producing a complete, tested feature in one shot.
+ */
+public final class TemplateCompositionEngine {
+
+    /** Reference to a single Tera template with its variable bindings. */
+    public record TemplateRef(String category, String name, Map<String, String> vars) {
+
+        public TemplateRef {
+            Objects.requireNonNull(category, "category must not be null");
+            Objects.requireNonNull(name, "name must not be null");
+            vars = Map.copyOf(vars);
+            if (category.isBlank()) {
+                throw new IllegalArgumentException("category must not be blank");
+            }
+            if (name.isBlank()) {
+                throw new IllegalArgumentException("name must not be blank");
+            }
+        }
+
+        /** Convenience factory with no extra variables. */
+        public static TemplateRef of(String category, String name) {
+            return new TemplateRef(category, name, Map.of());
+        }
+
+        /** Convenience factory with a single variable. */
+        public static TemplateRef of(String category, String name, String key, String value) {
+            return new TemplateRef(category, name, Map.of(key, value));
+        }
+
+        /** Returns the relative path to the .tera file under the templates root. */
+        public String templatePath() {
+            return "java/%s/%s.tera".formatted(category, name);
+        }
+    }
+
+    /**
+     * A recipe for composing multiple templates into a single feature.
+     *
+     * @param name short feature name (e.g. "UserManagement")
+     * @param description human-readable description
+     * @param templates ordered list of templates to compose
+     * @param dependencies inter-template dependencies expressed as "category/name" strings
+     */
+    public record FeatureRecipe(
+            String name,
+            String description,
+            List<TemplateRef> templates,
+            List<String> dependencies) {
+
+        public FeatureRecipe {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(description, "description must not be null");
+            templates = List.copyOf(templates);
+            dependencies = List.copyOf(dependencies);
+            if (name.isBlank()) {
+                throw new IllegalArgumentException("name must not be blank");
+            }
+            if (templates.isEmpty()) {
+                throw new IllegalArgumentException("templates must not be empty");
+            }
+        }
+    }
+
+    /** Outcome of composing a feature recipe. */
+    public sealed interface CompositionResult {
+
+        record Success(
+                String featureName,
+                List<String> generatedFiles,
+                SequencedMap<String, Map<String, String>> resolvedVariables)
+                implements CompositionResult {
+
+            public Success {
+                Objects.requireNonNull(featureName, "featureName must not be null");
+                generatedFiles = List.copyOf(generatedFiles);
+                resolvedVariables = java.util.Collections.unmodifiableSequencedMap(
+                        new LinkedHashMap<>(resolvedVariables));
+            }
+        }
+
+        record Failure(String featureName, List<String> errors) implements CompositionResult {
+
+            public Failure {
+                Objects.requireNonNull(featureName, "featureName must not be null");
+                errors = List.copyOf(errors);
+            }
+        }
+    }
+
+    private final Path templatesRoot;
+
+    /**
+     * Creates an engine rooted at the given templates directory.
+     *
+     * @param templatesRoot path to the directory containing {@code java/} template tree
+     */
+    public TemplateCompositionEngine(Path templatesRoot) {
+        this.templatesRoot = Objects.requireNonNull(templatesRoot, "templatesRoot must not be null");
+    }
+
+    /**
+     * Validates a recipe, resolves variable dependencies, and reports the ordered list of files
+     * that would be generated.
+     */
+    public CompositionResult compose(FeatureRecipe recipe) {
+        var errors = new ArrayList<String>();
+
+        // Phase 1: validate that every referenced template exists on disk
+        for (var ref : recipe.templates()) {
+            var templateFile = templatesRoot.resolve(ref.templatePath());
+            if (!Files.isRegularFile(templateFile)) {
+                errors.add("Template not found: %s (expected at %s)".formatted(
+                        ref.category() + "/" + ref.name(), templateFile));
+            }
+        }
+
+        // Phase 2: validate declared dependencies reference templates in this recipe
+        var templateKeys = recipe.templates().stream()
+                .map(t -> t.category() + "/" + t.name())
+                .collect(Collectors.toSet());
+        for (var dep : recipe.dependencies()) {
+            if (!templateKeys.contains(dep)) {
+                errors.add("Dependency '%s' does not match any template in the recipe".formatted(dep));
+            }
+        }
+
+        if (!errors.isEmpty()) {
+            return new CompositionResult.Failure(recipe.name(), errors);
+        }
+
+        // Phase 3: resolve variables — propagate shared variables across templates
+        var resolvedVars = new LinkedHashMap<String, Map<String, String>>();
+        var sharedContext = new HashMap<String, String>();
+
+        // Seed shared context with all explicit variables from every template
+        for (var ref : recipe.templates()) {
+            sharedContext.putAll(ref.vars());
+        }
+
+        // Build per-template resolved variable maps
+        for (var ref : recipe.templates()) {
+            var merged = new LinkedHashMap<>(sharedContext);
+            merged.putAll(ref.vars()); // template-specific vars win
+            resolvedVars.put(ref.category() + "/" + ref.name(), Map.copyOf(merged));
+        }
+
+        // Phase 4: compute the ordered list of files that would be generated
+        var generatedFiles = recipe.templates().stream()
+                .map(ref -> outputFilePath(ref, sharedContext))
+                .toList();
+
+        return new CompositionResult.Success(recipe.name(), generatedFiles, resolvedVars);
+    }
+
+    // --------------- built-in recipe factories ---------------
+
+    /**
+     * Creates a CRUD feature recipe for the given entity: record + repository + service + DTO +
+     * JUnit test + property-based test + ArchUnit test.
+     */
+    public static FeatureRecipe crudFeature(String entityName) {
+        Objects.requireNonNull(entityName, "entityName must not be null");
+        var pkg = "org.acme.domain";
+        var vars = Map.of("entity_name", entityName, "package", pkg);
+
+        return new FeatureRecipe(
+                entityName + "Crud",
+                "Full CRUD feature for " + entityName
+                        + " with record, repository, service, DTO, and tests",
+                List.of(
+                        new TemplateRef("core", "record", vars),
+                        new TemplateRef("patterns", "repository-generic", vars),
+                        new TemplateRef("patterns", "service-layer", vars),
+                        new TemplateRef("patterns", "dto-record", vars),
+                        new TemplateRef("testing", "junit5-test", vars),
+                        new TemplateRef("testing", "property-based-jqwik", vars),
+                        new TemplateRef("testing", "archunit-rules", vars)),
+                List.of("core/record", "patterns/repository-generic"));
+    }
+
+    /**
+     * Creates a value-object feature recipe: record + builder + validation + JUnit test + property
+     * test.
+     */
+    public static FeatureRecipe valueObjectFeature(String name) {
+        Objects.requireNonNull(name, "name must not be null");
+        var pkg = "org.acme.domain.vo";
+        var vars = Map.of("name", name, "package", pkg);
+
+        return new FeatureRecipe(
+                name + "ValueObject",
+                "Value object " + name + " with record, builder, validation, and tests",
+                List.of(
+                        new TemplateRef("core", "record", vars),
+                        new TemplateRef("patterns", "value-object-record", vars),
+                        new TemplateRef("patterns", "builder-record", vars),
+                        new TemplateRef("testing", "junit5-test", vars),
+                        new TemplateRef("testing", "property-based-jqwik", vars)),
+                List.of("core/record"));
+    }
+
+    /**
+     * Creates a service-layer feature recipe: service + strategy + sealed error type + JUnit test +
+     * integration test + ArchUnit rules.
+     */
+    public static FeatureRecipe serviceLayerFeature(String name) {
+        Objects.requireNonNull(name, "name must not be null");
+        var pkg = "org.acme.service";
+        var vars = Map.of("service_name", name, "package", pkg);
+
+        return new FeatureRecipe(
+                name + "Service",
+                "Service layer for " + name
+                        + " with strategy pattern, sealed error handling, and tests",
+                List.of(
+                        new TemplateRef("patterns", "service-layer", vars),
+                        new TemplateRef("patterns", "strategy-functional", vars),
+                        new TemplateRef("core", "sealed-interface", vars),
+                        new TemplateRef("error-handling", "result-railway", vars),
+                        new TemplateRef("testing", "junit5-test", vars),
+                        new TemplateRef("testing", "integration-test", vars),
+                        new TemplateRef("testing", "archunit-rules", vars)),
+                List.of("patterns/service-layer", "core/sealed-interface"));
+    }
+
+    // --------------- private helpers ---------------
+
+    /**
+     * Derives the output file path for a template reference. The path encodes category and
+     * template name, qualified by entity/service name from variables.
+     */
+    private String outputFilePath(TemplateRef ref, Map<String, String> context) {
+        var qualifiedName = Stream.of("entity_name", "name", "service_name")
+                .filter(context::containsKey)
+                .findFirst()
+                .map(context::get)
+                .orElse("Generated");
+
+        var suffix = deriveSuffix(ref);
+        var pkgPath = context.getOrDefault("package", "org.acme").replace('.', '/');
+
+        return "src/main/java/%s/%s%s.java".formatted(pkgPath, qualifiedName, suffix);
+    }
+
+    /**
+     * Maps a template category/name combination to a meaningful file-name suffix so that multiple
+     * templates composing a feature do not collide.
+     */
+    private String deriveSuffix(TemplateRef ref) {
+        return switch (ref.category()) {
+            case "core" -> switch (ref.name()) {
+                case "record" -> "";
+                case "sealed-interface" -> "Error";
+                case "sealed-class" -> "Type";
+                default -> capitalize(ref.name());
+            };
+            case "patterns" -> switch (ref.name()) {
+                case "repository-generic" -> "Repository";
+                case "service-layer" -> "Service";
+                case "dto-record" -> "Dto";
+                case "value-object-record" -> "Value";
+                case "builder-record" -> "Builder";
+                case "strategy-functional" -> "Strategy";
+                case "factory-sealed" -> "Factory";
+                default -> capitalize(ref.name());
+            };
+            case "testing" -> switch (ref.name()) {
+                case "junit5-test", "junit5-nested", "junit5-parameterized" -> "Test";
+                case "property-based-jqwik" -> "PropertyTest";
+                case "archunit-rules" -> "ArchTest";
+                case "integration-test" -> "IT";
+                case "assertj-assertions" -> "Assertions";
+                case "instancio-data" -> "DataFactory";
+                default -> capitalize(ref.name()) + "Test";
+            };
+            case "error-handling" -> switch (ref.name()) {
+                case "result-railway" -> "Result";
+                default -> capitalize(ref.name());
+            };
+            default -> capitalize(ref.name());
+        };
+    }
+
+    private static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+}
