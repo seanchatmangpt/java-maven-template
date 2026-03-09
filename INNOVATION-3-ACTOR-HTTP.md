@@ -271,9 +271,9 @@ This converts a runtime failure mode (context leak under load) into a compile-ti
 
 ### 6.1 Virtual Thread Cost Per Request
 
-A Java 25 virtual thread costs approximately 1–2 KB of heap at creation (the initial stack chunk). The `LinkedTransferQueue` mailbox used by `Actor` is allocated once at actor construction and adds approximately 48 bytes of object overhead. Total per-request allocation overhead is approximately 2–3 KB, compared to Tomcat's platform thread stack at 512 KB (the default `-Xss` value).
+A Java 25 virtual thread costs approximately 1–2 KB of heap at creation (the initial stack chunk). The `LinkedTransferQueue` mailbox used by `Proc` is allocated once at actor construction and adds approximately 48 bytes of object overhead. Total per-request allocation overhead is approximately 2–3 KB, compared to Tomcat's platform thread stack at 512 KB (the default `-Xss` value).
 
-Message delivery latency through `LinkedTransferQueue.add()` is 50–150 ns under low contention (from the `Actor` class Javadoc, consistent with published JMH benchmarks for MPMC lock-free queues). For a request that processes three messages (`HandleRoute`, `ReadBody`, `WriteResponse`), this adds at most 450 ns of message-passing overhead — negligible against typical handler latency of hundreds of microseconds to milliseconds.
+Message delivery latency through `LinkedTransferQueue.add()` is 50–150 ns under low contention (from the `Proc` class Javadoc, consistent with published JMH benchmarks for MPMC lock-free queues). For a request that processes three messages (`HandleRoute`, `ReadBody`, `WriteResponse`), this adds at most 450 ns of message-passing overhead — negligible against typical handler latency of hundreds of microseconds to milliseconds.
 
 Virtual thread scheduling is performed by the JVM's fork-join pool (default: carrier threads = CPU cores). When the actor's virtual thread blocks on I/O (database call, upstream HTTP), it unmounts from the carrier thread immediately, freeing the carrier for another virtual thread. This is the same scheduling behavior that Netty achieves with non-blocking I/O, but without requiring the developer to structure their code as a chain of callbacks or reactive operators.
 

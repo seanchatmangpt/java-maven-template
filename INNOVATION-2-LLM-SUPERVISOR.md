@@ -158,7 +158,7 @@ BiFunction<ModelState, InferenceMsg, ModelState> gpuShardHandler = (state, msg) 
 
 The handler is a pure function of `(state, message) -> nextState`. Side effects (CUDA calls,
 VRAM allocation) are localized to this function. When `nativeInfer` throws — CUDA OOM, illegal
-memory access, kernel timeout — the exception propagates out of the handler. The `Actor`'s event
+memory access, kernel timeout — the exception propagates out of the handler. The `Proc`'s event
 loop does not catch it. The exception becomes an uncaught exception on the virtual thread, which
 the `Supervisor`'s installed `UncaughtExceptionHandler` converts into a `ChildCrashed` event on
 the supervisor's internal event queue. The supervisor then applies its restart policy.
@@ -376,7 +376,7 @@ A model update (e.g., deploying a new fine-tune) proceeds as follows:
    closes the old `MemorySegment` (releasing VRAM) and begins using the new segment. The handler
    returns `ack.complete(null)` when the swap is complete.
 
-4. **Resume traffic.** The load balancer resumes routing to the updated shards. All `ActorRef`
+4. **Resume traffic.** The load balancer resumes routing to the updated shards. All `ProcRef`
    handles callers hold are unchanged.
 
 The total downtime per shard is zero: the shard serves old-model requests until the moment it
@@ -426,7 +426,7 @@ MemorySegment weightsSegment = cudaMalloc(gpuArena, modelSizeBytes);
 ```
 
 `Arena.ofConfined()` binds the memory segment's lifetime to the thread that allocated it. Since
-each `Actor` runs on a single virtual thread (`Thread.ofVirtual()`), the GPU shard's weights
+each `Proc` runs on a single virtual thread (`Thread.ofVirtual()`), the GPU shard's weights
 segment is confined to that virtual thread. Attempts to access the segment from other threads
 (e.g., a racing call during restart) throw `WrongThreadException` at the Java level, preventing
 use-after-free at the VRAM level.
@@ -464,7 +464,7 @@ without finalizers, and without a separate reference counting scheme.
 ### 6.3 Crash Safety
 
 When an actor crashes mid-inference (CUDA kernel exception propagates out of the handler), the
-`Actor`'s virtual thread terminates. `Arena.ofConfined()` detects thread termination and closes
+`Proc`'s virtual thread terminates. `Arena.ofConfined()` detects thread termination and closes
 the arena, calling the `cudaFree` cleanup action. VRAM is reclaimed even on abnormal exit.
 
 When the `Supervisor` restarts the actor, the state factory function allocates a new `Arena` and
