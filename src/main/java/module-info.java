@@ -7,4 +7,5 @@ module org.acme {
     exports org.acme.dogfood.errorhandling;
     exports org.acme.dogfood.security;
     exports org.acme.dogfood.innovation;
+    exports org.acme.dogfood.mclaren;
 }
