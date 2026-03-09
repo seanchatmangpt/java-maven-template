@@ -1,0 +1,65 @@
+# Azurite - Azure Storage Local Development Environment
+# Emulates Azure Blob, Queue, and Table storage
+
+version: '3.8'
+
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: azurite
+    hostname: azurite
+    ports:
+      - "10000:10000"  # Blob service
+      - "10001:10001"  # Queue service
+      - "10002:10002"  # Table service
+
+    environment:
+      # Custom account (optional, defaults to devstoreaccount1)
+      - AZURITE_ACCOUNTS=devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+
+    volumes:
+      # Persist data
+      - "./data:/data"
+
+    command: >
+      azurite
+      --blobHost 0.0.0.0
+      --queueHost 0.0.0.0
+      --tableHost 0.0.0.0
+      --location /data
+      --debug /data/debug.log
+      --loose
+      --skipApiVersionCheck
+
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    networks:
+      - azurite-network
+
+networks:
+  azurite-network:
+    driver: bridge
+
+# Usage:
+# 1. Start: docker-compose up -d
+# 2. Check logs: docker logs azurite
+# 3. Configure connection string:
+#    export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://localhost:10000/devstoreaccount1;QueueEndpoint=http://localhost:10001/devstoreaccount1;TableEndpoint=http://localhost:10002/devstoreaccount1;"
+#
+# 4. Use with Azure CLI:
+#    az storage container create --name test-container
+#    az storage blob upload --container-name test-container --name file.txt --file local.txt
+#
+# Connection string components:
+# - BlobEndpoint: http://localhost:10000/devstoreaccount1
+# - QueueEndpoint: http://localhost:10001/devstoreaccount1
+# - TableEndpoint: http://localhost:10002/devstoreaccount1
+#
+# Default credentials:
+# - Account Name: devstoreaccount1
+# - Account Key: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==

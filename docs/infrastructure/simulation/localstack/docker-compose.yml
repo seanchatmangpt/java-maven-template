@@ -1,0 +1,78 @@
+# LocalStack - AWS Local Development Environment
+# Emulates AWS services locally for testing
+
+version: '3.8'
+
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    hostname: localstack
+    ports:
+      - "4566:4566"           # LocalStack Gateway (main endpoint)
+      - "4510-4559:4510-4559" # External service ports
+
+    environment:
+      # Services to enable (comma-separated)
+      - SERVICES=s3,ec2,iam,dynamodb,lambda,apigateway,sqs,sns,secretsmanager,kms,cloudformation,cloudwatch,logs
+
+      # Debug mode
+      - DEBUG=1
+
+      # Persistence - save data between restarts
+      - PERSISTENCE=/tmp/localstack/data
+
+      # Default region
+      - AWS_DEFAULT_REGION=us-east-1
+
+      # Disable telemetry
+      - DISABLE_EVENTS=true
+
+      # Lambda executor
+      - LAMBDA_EXECUTOR=local
+
+      # Docker network
+      - HOSTNAME_EXTERNAL=localstack
+
+    volumes:
+      # Persist data
+      - "./volume:/var/lib/localstack"
+      # Docker socket for Lambda execution
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    networks:
+      - localstack-network
+
+networks:
+  localstack-network:
+    driver: bridge
+
+# Usage:
+# 1. Start: docker-compose up -d
+# 2. Check health: curl http://localhost:4566/_localstack/health
+# 3. Configure AWS CLI:
+#    export AWS_ACCESS_KEY_ID=test
+#    export AWS_SECRET_ACCESS_KEY=test
+#    export AWS_DEFAULT_REGION=us-east-1
+# 4. Use with --endpoint-url:
+#    aws --endpoint-url=http://localhost:4566 s3 mb s3://test-bucket
+#
+# Terraform configuration:
+# provider "aws" {
+#   access_key                  = "test"
+#   secret_key                  = "test"
+#   region                      = "us-east-1"
+#   skip_credentials_validation = true
+#   skip_metadata_api_check     = true
+#   skip_requesting_account_id  = true
+#   endpoints {
+#     s3 = "http://localhost:4566"
+#   }
+# }
