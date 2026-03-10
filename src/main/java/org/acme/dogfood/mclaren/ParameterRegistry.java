@@ -66,8 +66,7 @@ public final class ParameterRegistry {
      */
     @SuppressWarnings("unchecked")
     public static Optional<Proc<ParameterDataAccess.State, PdaMsg>> whereis(String identifier) {
-        return ProcessRegistry.whereis(identifier)
-                .map(p -> (Proc<ParameterDataAccess.State, PdaMsg>) p);
+        return ProcessRegistry.<ParameterDataAccess.State, PdaMsg>whereis(identifier);
     }
 
     /**

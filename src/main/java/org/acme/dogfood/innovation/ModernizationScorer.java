@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -114,7 +115,7 @@ public final class ModernizationScorer {
                         "Raw type usage",
                         "Use parameterized types: List<String>",
                         3,
-                        "core/generics"));
+                        "core/stream-pipeline"));
 
         // Legacy: old-style instanceof without pattern variable
         rules.add(
@@ -125,7 +126,7 @@ public final class ModernizationScorer {
                         "instanceof without pattern matching",
                         "Use pattern matching: if (obj instanceof String s)",
                         2,
-                        "core/pattern-matching"));
+                        "core/pattern-matching-switch"));
 
         // Modern: pattern matching instanceof
         rules.add(
@@ -136,7 +137,7 @@ public final class ModernizationScorer {
                         "Pattern matching instanceof",
                         null,
                         2,
-                        "core/pattern-matching"));
+                        "core/pattern-matching-switch"));
 
         // Modern: record declaration
         rules.add(
@@ -158,7 +159,7 @@ public final class ModernizationScorer {
                         "Sealed type",
                         null,
                         3,
-                        "core/sealed-type"));
+                        "core/sealed-types"));
 
         // Modern: switch expression (arrow form)
         rules.add(
@@ -169,7 +170,7 @@ public final class ModernizationScorer {
                         "Switch expression",
                         null,
                         2,
-                        "core/pattern-matching"));
+                        "core/pattern-matching-switch"));
 
         // Modern: var local variable
         rules.add(
@@ -180,7 +181,7 @@ public final class ModernizationScorer {
                         "Local variable type inference (var)",
                         null,
                         1,
-                        "core/var"));
+                        "core/var-inference"));
 
         // Modern: text block
         rules.add(
@@ -329,7 +330,7 @@ public final class ModernizationScorer {
                         "StringBuffer (synchronized)",
                         "Use StringBuilder (unsynchronized, faster)",
                         2,
-                        "api/strings"));
+                        "api/string-methods"));
 
         // Legacy: URL.openConnection / HttpURLConnection
         rules.add(
@@ -340,7 +341,7 @@ public final class ModernizationScorer {
                         "Legacy HttpURLConnection",
                         "Use java.net.http.HttpClient",
                         3,
-                        "api/httpclient"));
+                        "api/http-client"));
 
         // Modern: java.time types
         rules.add(
@@ -363,7 +364,7 @@ public final class ModernizationScorer {
                         "Modern HttpClient",
                         null,
                         3,
-                        "api/httpclient"));
+                        "api/http-client"));
 
         // Legacy: Vector / Hashtable
         rules.add(
@@ -374,7 +375,7 @@ public final class ModernizationScorer {
                         "Legacy synchronized collection",
                         "Use ArrayList, HashMap, or Collections.synchronizedX()",
                         2,
-                        "api/collections"));
+                        "api/collection-factories"));
 
         // ── TESTING ──
 
@@ -503,6 +504,13 @@ public final class ModernizationScorer {
 
     /** Analyze a Java source string and produce a modernization score. */
     public CodebaseScore analyze(String javaSource) {
+        Objects.requireNonNull(javaSource, "javaSource must not be null");
+
+        // Handle empty/blank source gracefully
+        if (javaSource.isBlank()) {
+            return new CodebaseScore(50, List.of(), List.of());
+        }
+
         // Split into lines for line-hint reporting
         String[] lines = javaSource.split("\\R");
 

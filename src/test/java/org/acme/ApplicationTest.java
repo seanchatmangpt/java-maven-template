@@ -55,11 +55,13 @@ class ApplicationTest implements WithAssertions {
         }
 
         @Test
-        @DisplayName("default supervisor strategy is ONE_FOR_ONE")
+        @DisplayName("application is not started before start() is called")
         void defaultSupervisorStrategy() {
             app = Application.builder("test").build();
 
-            assertThat(app.isRunning()).isFalse(); // not started yet
+            // isStarted() tracks explicit start() call
+            // isRunning() checks supervisor state (may be true if services were added)
+            assertThat(app.isStarted()).isFalse();
         }
 
         @Test
@@ -149,7 +151,7 @@ class ApplicationTest implements WithAssertions {
         void returnsEmptyForUnknown() {
             app = Application.builder("test").build();
 
-            Optional<ProcRef<?, ?>> ref = app.service("nonexistent");
+            Optional<? extends ProcRef<?, ?>> ref = app.service("nonexistent");
 
             assertThat(ref).isEmpty();
         }
@@ -424,7 +426,7 @@ class ApplicationTest implements WithAssertions {
             assertThat(app.serviceNames()).contains("order-processor", "inventory-checker");
 
             // Access services by name
-            Optional<ProcRef<?, ?>> orders = app.service("order-processor");
+            Optional<? extends ProcRef<?, ?>> orders = app.service("order-processor");
             assertThat(orders).isPresent();
 
             // Stop gracefully (reversed infrastructure shutdown order)

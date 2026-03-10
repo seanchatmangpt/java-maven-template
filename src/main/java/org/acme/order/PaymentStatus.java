@@ -8,7 +8,10 @@ package org.acme.order;
  */
 
 public sealed interface PaymentStatus
-    permits PaymentStatus.Success, PaymentStatus.Failure {
+    permits PaymentStatus.Pending, PaymentStatus.Success, PaymentStatus.Failure {
+
+    /** Pending variant. */
+    record Pending() implements PaymentStatus {}
 
     /** Successful variant. */
     record Success(String value) implements PaymentStatus {}
@@ -17,6 +20,10 @@ public sealed interface PaymentStatus
     record Failure(String reason) implements PaymentStatus {}
 
     // ── Factory methods ──────────────────────────────────────────────────────
+
+    static PaymentStatus pending() {
+        return new Pending();
+    }
 
     static PaymentStatus success(String value) {
         return new Success(value);
@@ -27,6 +34,10 @@ public sealed interface PaymentStatus
     }
 
     // ── Pattern-matching helpers ─────────────────────────────────────────────
+
+    default boolean isPending() {
+        return this instanceof Pending;
+    }
 
     default boolean isSuccess() {
         return this instanceof Success;

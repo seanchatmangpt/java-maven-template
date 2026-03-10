@@ -512,5 +512,40 @@ class LivingDocGeneratorTest implements WithAssertions {
         void generateMarkdownShouldRejectNull() {
             assertThatNullPointerException().isThrownBy(() -> generator.generateMarkdown(null));
         }
+
+        @Test
+        @DisplayName("handles unbalanced angle brackets in generic types")
+        void handlesUnbalancedBrackets() {
+            // Source with unbalanced generic brackets (malformed but should not crash)
+            var source = """
+                    package org.acme;
+                    public record Container(Map<String, List<Map<Integer, String>>> items) {}
+                    """;
+
+            // Should not throw
+            var elements = generator.parseSource(source);
+            assertThat(elements).isNotEmpty();
+        }
+
+        @Test
+        @DisplayName("handles deeply nested generics")
+        void handlesDeeplyNestedGenerics() {
+            var source = """
+                    package org.acme;
+                    public record Complex(
+                        Map<String, List<Map<Integer, Map<String, Optional<CompletableFuture<String>>>>>> data
+                    ) {}
+                    """;
+
+            var elements = generator.parseSource(source);
+
+            var record = elements.stream()
+                    .filter(e -> e instanceof DocElement.RecordDoc)
+                    .map(e -> (DocElement.RecordDoc) e)
+                    .findFirst()
+                    .orElseThrow();
+
+            assertThat(record.components()).hasSize(1);
+        }
     }
 }

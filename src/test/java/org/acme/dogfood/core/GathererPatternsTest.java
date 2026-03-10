@@ -178,7 +178,9 @@ class GathererPatternsTest implements WithAssertions {
     void groupConsecutiveBy_groupsAdjacentSameKey() {
         var items = List.of(1, 1, 2, 2, 2, 1, 3, 3);
         var groups = items.stream().gather(GathererPatterns.groupConsecutiveBy(i -> i % 2)).toList();
-        assertThat(groups).containsExactly(List.of(1, 1), List.of(2, 2, 2), List.of(1), List.of(3, 3));
+        // 1%2=1, 1%2=1, 2%2=0, 2%2=0, 2%2=0, 1%2=1, 3%2=1, 3%2=1
+        // Groups: [1,1] (mod 1), [2,2,2] (mod 0), [1,3,3] (mod 1)
+        assertThat(groups).containsExactly(List.of(1, 1), List.of(2, 2, 2), List.of(1, 3, 3));
     }
 
     @Test

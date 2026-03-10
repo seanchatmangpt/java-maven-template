@@ -125,7 +125,7 @@ class PatternCorrectnessTest implements WithAssertions {
                     .map(x -> { mapCount.incrementAndGet(); return x + 1; })
                     .map(x -> { mapCount.incrementAndGet(); return x * 2; });
             assertThat(mapCount.get()).isZero();
-            assertThat(result).isInstanceOf(Result.Failure.class);
+            assertThat(result).isInstanceOf(Result.Err.class);
         }
     }
 
@@ -521,7 +521,7 @@ class PatternCorrectnessTest implements WithAssertions {
         @DisplayName("retry: succeeds on first attempt if no exception")
         void successOnFirstAttempt() {
             var result = CrashRecovery.retry(3, () -> "value");
-            assertThat(result).isInstanceOf(Result.Success.class);
+            assertThat(result).isInstanceOf(Result.Ok.class);
             assertThat(result.<String>fold(x -> x, _ -> null)).isEqualTo("value");
         }
 
@@ -533,7 +533,7 @@ class PatternCorrectnessTest implements WithAssertions {
                 if (attempts.incrementAndGet() < 3) throw new RuntimeException("not yet");
                 return "done";
             });
-            assertThat(result).isInstanceOf(Result.Success.class);
+            assertThat(result).isInstanceOf(Result.Ok.class);
         }
 
         @Test
@@ -542,7 +542,7 @@ class PatternCorrectnessTest implements WithAssertions {
             var result = CrashRecovery.retry(3, () -> {
                 throw new RuntimeException("always fails");
             });
-            assertThat(result).isInstanceOf(Result.Failure.class);
+            assertThat(result).isInstanceOf(Result.Err.class);
         }
 
         @Test

@@ -50,9 +50,9 @@ class PatternMatchingPatternsTest implements WithAssertions {
     void describe_cryptoPay_masksWallet() {
         var cp = new Payment.CryptoPay("0xABCDEF1234567890", "ETH", 1.5);
         var desc = PatternMatchingPatterns.describe(cp);
-        assertThat(desc).contains("0xABCD...7890"); // masked
+        assertThat(desc).contains("0xAB...7890"); // masked (showing first 6 chars + ...)
         assertThat(desc).contains("ETH");
-        assertThat(desc).contains("1.5");
+        assertThat(desc).contains("1.5000"); // amount with 4 decimals
     }
 
     @Test

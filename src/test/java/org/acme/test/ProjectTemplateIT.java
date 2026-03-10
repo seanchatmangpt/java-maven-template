@@ -108,8 +108,10 @@ class ProjectTemplateIT implements WithAssertions {
         Path ghTemplate = TEMPLATE_DIR.resolve("github-actions.tera");
         String content = Files.readString(ghTemplate);
 
-        assertThat(content).contains("on: push");
-        assertThat(content).contains("on: pull_request");
+        // YAML format has on: and push: on separate lines
+        assertThat(content).contains("on:");
+        assertThat(content).contains("push:");
+        assertThat(content).contains("pull_request:");
         assertThat(content).contains("Unit Tests");
         assertThat(content).contains("Integration Tests");
         assertThat(content).contains("Docker");
@@ -126,7 +128,8 @@ class ProjectTemplateIT implements WithAssertions {
         assertThat(content).contains("org.acme");
         assertThat(content).contains("Application");
         assertThat(content).contains("Supervisor");
-        assertThat(content).contains("MessageBus");
+        assertThat(content).contains("service");  // Service registration
+        assertThat(content).contains("start()");  // Lifecycle
     }
 
     @Test

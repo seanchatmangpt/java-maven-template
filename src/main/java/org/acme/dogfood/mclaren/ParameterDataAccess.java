@@ -50,7 +50,7 @@ public final class ParameterDataAccess {
     // ---------------------------------------------------------------------------
 
     /** Internal mutable state — never shared across threads. */
-    static final class State {
+    public static final class State {
         final SqlRaceParameter param;
         final SqlRaceChannel channel;
         /** Ring buffer: nanosecond timestamp → {value, status.ordinal()}. */

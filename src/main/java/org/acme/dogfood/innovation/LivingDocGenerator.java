@@ -303,13 +303,23 @@ public final class LivingDocGenerator {
     }
 
     private List<String> splitOnTopLevelCommas(String str) {
+        if (str == null || str.isBlank()) {
+            return List.of();
+        }
+
         List<String> parts = new ArrayList<>();
         int depth = 0;
         int start = 0;
         for (int i = 0; i < str.length(); i++) {
             char c = str.charAt(i);
             if (c == '<') depth++;
-            else if (c == '>') depth--;
+            else if (c == '>') {
+                depth--;
+                // Detect unbalanced brackets - clamp to 0 to prevent negative depth
+                if (depth < 0) {
+                    depth = 0;
+                }
+            }
             else if (c == ',' && depth == 0) {
                 parts.add(str.substring(start, i));
                 start = i + 1;
