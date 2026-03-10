@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ project.name | default(value="app") }}
+  labels:
+    app: {{ project.name | default(value="app") }}
+spec:
+spec:
+  type: LoadBalancer
+  selector:
+    app: {{ project.name | default(value="app") }}
+  ports:
+    - protocol: TCP
+      port: {{ project.port | default(value="8080") }}
+      targetPort: {{ project.port | default(value="8080") }}

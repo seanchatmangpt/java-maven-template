@@ -1,0 +1,152 @@
+{# Routing Slip — Message carries its processing steps #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}RoutingSlip.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Message carries its processing steps for dynamic routing"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Routing Slip pattern using JOTP Proc.
+ * Messages carry their own processing steps for dynamic routing through multiple processors.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 8
+ */
+{% endif %}
+public final class {{ name }}RoutingSlip {
+
+    private final Proc<RoutingState, Object> router;
+    private final java.util.Map<String, java.util.function.BiFunction<{{ message_type }}, RoutingContext, {{ message_type }}>>> processors;
+
+    /** Routing slip attached to a message. */
+    public record Slip(
+            java.util.List<String> steps,
+            int currentStep,
+            {{ message_type }} payload) {}
+
+    /** Context passed to processors. */
+    public record RoutingContext(
+            int currentStep,
+            int totalSteps,
+            java.util.List<String> remainingSteps) {}
+
+    /** State tracking routing log. */
+    public record RoutingState(java.util.List<String> log) {
+        public static RoutingState initial() {
+            return new RoutingState(new java.util.ArrayList<>());
+        }
+    }
+
+    private {{ name }}RoutingSlip(
+            Proc<RoutingState, Object> router,
+            java.util.Map<String, java.util.function.BiFunction<{{ message_type }}, RoutingContext, {{ message_type }}>> processors) {
+        this.router = router;
+        this.processors = processors;
+    }
+
+    /**
+     * Creates a routing slip processor.
+     */
+    public static {{ name }}RoutingSlip create() {
+        var processors = new java.util.HashMap<String, java.util.function.BiFunction<{{ message_type }}, RoutingContext, {{ message_type }}>>();
+
+        var routerRef = new java.util.concurrent.atomic.AtomicReference<Proc<RoutingState, Object>>();
+        var router = new Proc<>(
+                RoutingState.initial(),
+                (RoutingState state, Object msg) -> {
+                    if (msg instanceof Slip slip) {
+                        var newLog = new java.util.ArrayList<>(state.log());
+
+                        if (slip.currentStep() < slip.steps().size()) {
+                            String step = slip.steps().get(slip.currentStep());
+                            var processor = processors.get(step);
+
+                            if (processor != null) {
+                                var ctx = new RoutingContext(
+                                        slip.currentStep(),
+                                        slip.steps().size(),
+                                        slip.steps().subList(slip.currentStep() + 1, slip.steps().size()));
+
+                                var result = processor.apply(slip.payload(), ctx);
+                                newLog.add(step + ":" + extractId(result));
+
+                                // Continue to next step
+                                if (slip.currentStep() + 1 < slip.steps().size()) {
+                                    routerRef.get().tell(new Slip(slip.steps(), slip.currentStep() + 1, result));
+                                }
+                            } else {
+                                newLog.add("unknown:" + step);
+                            }
+                        }
+                        return new RoutingState(newLog);
+                    } else if (msg instanceof QueryState) {
+                        return state;
+                    }
+                    return state;
+                });
+        routerRef.set(router);
+
+        return new {{ name }}RoutingSlip(router, processors);
+    }
+
+    /**
+     * Registers a processor for a step name.
+     *
+     * @param stepName the step name
+     * @param processor the processor function
+     */
+    public void registerProcessor(
+            String stepName,
+            java.util.function.BiFunction<{{ message_type }}, RoutingContext, {{ message_type }}> processor) {
+        processors.put(stepName, processor);
+    }
+
+    /**
+     * Routes a message through the specified steps.
+     *
+     * @param steps the processing steps
+     * @param payload the message payload
+     */
+    public void route(java.util.List<String> steps, {{ message_type }} payload) {
+        router.tell(new Slip(steps, 0, payload));
+    }
+
+    /**
+     * Gets the routing log.
+     *
+     * @return list of routing log entries
+     */
+    public java.util.List<String> getLog() {
+        try {
+            return router.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .log();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query routing log", e);
+        }
+    }
+
+    /**
+     * Stops the routing slip processor.
+     */
+    public void stop() {
+        router.stop();
+    }
+
+    private static String extractId(Object msg) {
+        // Try to extract an ID for logging
+        return msg.getClass().getSimpleName();
+    }
+
+    /** Query message for state retrieval. */
+    record QueryState() {}
+}

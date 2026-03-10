@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.SequencedMap;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Template Composition Engine — composes multiple Tera templates into a coherent feature.
@@ -18,6 +17,9 @@ import java.util.stream.Stream;
  * <p>Instead of generating one file at a time, this engine takes a {@link FeatureRecipe} that
  * chains templates (e.g., record + sealed-interface + strategy + tests) and resolves dependencies
  * between them, producing a complete, tested feature in one shot.
+ *
+ * <p>Supports messaging patterns via {@link #messagingPipeline(String, List)} and
+ * {@link #projectFromTurtle(Path)} for Turtle-driven project generation.
  */
 public final class TemplateCompositionEngine {
 
@@ -242,14 +244,233 @@ public final class TemplateCompositionEngine {
                 List.of("patterns/service-layer", "core/sealed-interface"));
     }
 
+    // --------------- messaging pattern recipes ---------------
+
+    /**
+     * Creates a reliable messaging pipeline: Resequencer -> Content-Based Router -> Dead Letter.
+     *
+     * <p>This is a complete EIP pattern chain for reliable message processing with:
+     * <ul>
+     *   <li>Resequencer - reorders out-of-sequence messages</li>
+     *   <li>Content-Based Router - routes by message content</li>
+     *   <li>Dead Letter Channel - handles failed messages</li>
+     *   <li>Domain Types - canonical message types</li>
+     *   <li>Tests - messaging pattern tests</li>
+     * </ul>
+     *
+     * @param domain the domain name (e.g., "Telemetry", "Order")
+     * @param messageTypes list of message type names
+     */
+    public static FeatureRecipe reliableMessagingPipeline(String domain, List<String> messageTypes) {
+        Objects.requireNonNull(domain, "domain must not be null");
+        Objects.requireNonNull(messageTypes, "messageTypes must not be null");
+        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var vars = Map.of(
+                "name", domain,
+                "package", pkg,
+                "message_type", domain + "Msg");
+
+        return new FeatureRecipe(
+                domain + "ReliableMessaging",
+                "Reliable messaging pipeline for " + domain + " with routing and error handling",
+                List.of(
+                        new TemplateRef("messaging", "domain-types", vars),
+                        new TemplateRef("messaging", "canonical-message", vars),
+                        new TemplateRef("messaging", "resequencer", vars),
+                        new TemplateRef("messaging", "content-based-router", vars),
+                        new TemplateRef("messaging", "dead-letter-channel", vars),
+                        new TemplateRef("messaging", "wire-tap", vars),
+                        new TemplateRef("testing", "messaging-test", vars)),
+                List.of("messaging/domain-types", "messaging/canonical-message"));
+    }
+
+    /**
+     * Creates a complete event-driven messaging system: Message Bus + Pub-Sub + Correlation.
+     *
+     * @param domain the domain name
+     */
+    public static FeatureRecipe eventDrivenMessaging(String domain) {
+        Objects.requireNonNull(domain, "domain must not be null");
+        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var vars = Map.of(
+                "name", domain,
+                "package", pkg,
+                "message_type", domain + "Msg");
+
+        return new FeatureRecipe(
+                domain + "EventDriven",
+                "Event-driven messaging system for " + domain,
+                List.of(
+                        new TemplateRef("messaging", "domain-types", vars),
+                        new TemplateRef("messaging", "message-bus", vars),
+                        new TemplateRef("messaging", "pub-sub", vars),
+                        new TemplateRef("messaging", "correlation-identifier", vars),
+                        new TemplateRef("messaging", "service-activator", vars),
+                        new TemplateRef("testing", "messaging-test", vars)),
+                List.of("messaging/domain-types"));
+    }
+
+    /**
+     * Creates a supervised messaging system with fault tolerance.
+     *
+     * @param domain the domain name
+     */
+    public static FeatureRecipe supervisedMessaging(String domain) {
+        Objects.requireNonNull(domain, "domain must not be null");
+        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var vars = Map.of(
+                "name", domain,
+                "package", pkg,
+                "message_type", domain + "Msg");
+
+        return new FeatureRecipe(
+                domain + "SupervisedMessaging",
+                "Supervised messaging system for " + domain + " with fault tolerance",
+                List.of(
+                        new TemplateRef("messaging", "domain-types", vars),
+                        new TemplateRef("messaging", "supervision-storm", vars),
+                        new TemplateRef("messaging", "dead-letter-channel", vars),
+                        new TemplateRef("messaging", "idempotent-receiver", vars),
+                        new TemplateRef("messaging", "control-bus", vars),
+                        new TemplateRef("testing", "messaging-test", vars)),
+                List.of("messaging/domain-types", "messaging/supervision-storm"));
+    }
+
+    /**
+     * Creates an orchestration messaging system with Process Manager and Scatter-Gather.
+     *
+     * @param domain the domain name
+     */
+    public static FeatureRecipe orchestrationMessaging(String domain) {
+        Objects.requireNonNull(domain, "domain must not be null");
+        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var vars = Map.of(
+                "name", domain,
+                "package", pkg,
+                "message_type", domain + "Msg");
+
+        return new FeatureRecipe(
+                domain + "Orchestration",
+                "Orchestration messaging system for " + domain + " with saga management",
+                List.of(
+                        new TemplateRef("messaging", "domain-types", vars),
+                        new TemplateRef("messaging", "process-manager", vars),
+                        new TemplateRef("messaging", "correlation-identifier", vars),
+                        new TemplateRef("messaging", "routing-slip", vars),
+                        new TemplateRef("messaging", "scatter-gather", vars),
+                        new TemplateRef("testing", "messaging-test", vars)),
+                List.of("messaging/domain-types", "messaging/process-manager"));
+    }
+
+    /**
+     * Creates a messaging feature from a Turtle specification file.
+     *
+     * <p>Reads the Turtle file, extracts patterns, resolves dependencies,
+     * and creates a feature recipe with all required templates.
+     *
+     * @param turtleFile path to the .ttl specification file
+     */
+    public static FeatureRecipe messagingFromTurtle(Path turtleFile) {
+        Objects.requireNonNull(turtleFile, "turtleFile must not be null");
+
+        var patterns = TurtleParser.extractPatterns(turtleFile);
+        var resolved = TurtleParser.resolveDependencies(patterns);
+
+        var templates = new ArrayList<TemplateRef>();
+        var deps = new ArrayList<String>();
+
+        for (var pattern : resolved) {
+            var category = pattern.category() != null ? pattern.category() : "messaging";
+            var templateName = extractTemplateName(pattern.template());
+            var vars = Map.of(
+                    "name", pattern.name().replaceAll("\\s+", ""),
+                    "package", "org.acme.messaging",
+                    "message_type", "Object");
+
+            templates.add(new TemplateRef(category, templateName, vars));
+
+            if (pattern.dependencies() != null && !pattern.dependencies().isEmpty()) {
+                for (var dep : pattern.dependencies()) {
+                    deps.add(category + "/" + dep.toLowerCase().replace("-", ""));
+                }
+            }
+        }
+
+        // Add test template
+        templates.add(new TemplateRef("testing", "messaging-test", Map.of(
+                "name", "Generated",
+                "package", "org.acme.messaging.test")));
+
+        return new FeatureRecipe(
+                "TurtleMessaging",
+                "Messaging system generated from Turtle specification",
+                templates,
+                deps);
+    }
+
+    /**
+     * Creates a complete project from a Turtle specification file.
+     *
+     * <p>Reads the Turtle file, extracts project structure and patterns,
+     * and creates a comprehensive feature recipe for the entire project.
+     *
+     * @param turtleFile path to the .ttl specification file
+     */
+    public static FeatureRecipe projectFromTurtle(Path turtleFile) {
+        Objects.requireNonNull(turtleFile, "turtleFile must not be null");
+
+        var project = TurtleParser.extractProject(turtleFile);
+        var templates = new ArrayList<TemplateRef>();
+        var deps = new ArrayList<String>();
+
+        // Add module-info template
+        templates.add(new TemplateRef("modules", "module-info", Map.of(
+                "module_name", project.name().replace("-", "."),
+                "exports", project.groupId() + "." + project.name())));
+
+        // Add patterns from all modules
+        for (var module : project.modules()) {
+            var pkg = module.packageName() != null ? module.packageName() : project.groupId();
+            var vars = Map.of("package", pkg);
+
+            for (var pattern : module.patterns()) {
+                var templateName = extractTemplateName(pattern.template());
+                templates.add(new TemplateRef("messaging", templateName, vars));
+            }
+        }
+
+        // Add build templates
+        templates.add(new TemplateRef("build", "pom-java26", Map.of(
+                "project_name", project.name(),
+                "group_id", project.groupId(),
+                "version", project.version())));
+
+        return new FeatureRecipe(
+                project.name(),
+                project.description() != null ? project.description() : "Project from Turtle",
+                templates,
+                deps);
+    }
+
     // --------------- private helpers ---------------
+
+    private static String extractTemplateName(String templatePath) {
+        if (templatePath == null) return "unknown";
+        // Extract "template-name" from "messaging/template-name.tera"
+        var parts = templatePath.split("/");
+        if (parts.length >= 2) {
+            var fileName = parts[parts.length - 1];
+            return fileName.replace(".tera", "");
+        }
+        return templatePath.replace(".tera", "");
+    }
 
     /**
      * Derives the output file path for a template reference. The path encodes category and
      * template name, qualified by entity/service name from variables.
      */
     private String outputFilePath(TemplateRef ref, Map<String, String> context) {
-        var qualifiedName = Stream.of("entity_name", "name", "service_name")
+        var qualifiedName = java.util.stream.Stream.of("entity_name", "name", "service_name")
                 .filter(context::containsKey)
                 .findFirst()
                 .map(context::get)
@@ -283,6 +504,27 @@ public final class TemplateCompositionEngine {
                 case "factory-sealed" -> "Factory";
                 default -> capitalize(ref.name());
             };
+            case "messaging" -> switch (ref.name()) {
+                case "message-bus" -> "Bus";
+                case "content-based-router" -> "Router";
+                case "dead-letter-channel" -> "DeadLetter";
+                case "wire-tap" -> "WireTap";
+                case "routing-slip" -> "RoutingSlip";
+                case "process-manager" -> "ProcessManager";
+                case "correlation-identifier" -> "Correlation";
+                case "pub-sub" -> "PubSub";
+                case "scatter-gather" -> "ScatterGather";
+                case "supervision-storm" -> "Supervisor";
+                case "control-bus" -> "ControlBus";
+                case "domain-types" -> "Domain";
+                case "canonical-message" -> "Message";
+                case "resequencer" -> "Resequencer";
+                case "service-activator" -> "Activator";
+                case "idempotent-receiver" -> "Idempotent";
+                case "durable-subscriber" -> "DurableSubscriber";
+                case "datatype-channel" -> "Channel";
+                default -> capitalize(ref.name());
+            };
             case "testing" -> switch (ref.name()) {
                 case "junit5-test", "junit5-nested", "junit5-parameterized" -> "Test";
                 case "property-based-jqwik" -> "PropertyTest";
@@ -290,6 +532,7 @@ public final class TemplateCompositionEngine {
                 case "integration-test" -> "IT";
                 case "assertj-assertions" -> "Assertions";
                 case "instancio-data" -> "DataFactory";
+                case "messaging-test" -> "MessagingTest";
                 default -> capitalize(ref.name()) + "Test";
             };
             case "error-handling" -> switch (ref.name()) {

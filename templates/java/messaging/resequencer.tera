@@ -1,0 +1,174 @@
+{# Resequencer — Reorder out-of-sequence messages using timestamps #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Resequencer.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  timestamp_extractor: "msg -> msg.timestamp().nanos()"
+  javadoc: "Reorders out-of-sequence messages using timestamps"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Resequencer pattern using JOTP Proc.
+ * Reorders out-of-sequence messages based on timestamps or sequence numbers.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 7
+ */
+{% endif %}
+public final class {{ name }}Resequencer {
+
+    private final Proc<ReseqState, Object> resequencer;
+
+    /** State of the resequencer. */
+    public record ReseqState(
+            long nextExpected,
+            java.util.Map<Long, {{ message_type }}> buffer,
+            java.util.List<{{ message_type }}> output,
+            java.util.List<Long> gaps) {
+
+        public static ReseqState initial() {
+            return new ReseqState(0, new java.util.HashMap<>(), new java.util.ArrayList<>(), new java.util.ArrayList<>());
+        }
+    }
+
+    private {{ name }}Resequencer(Proc<ReseqState, Object> proc) {
+        this.resequencer = proc;
+    }
+
+    /**
+     * Creates a resequencer with timestamp extraction.
+     *
+     * @param timestampExtractor function to extract timestamp from message
+     */
+    public static {{ name }}Resequencer create(
+            java.util.function.Function<{{ message_type }}, Long> timestampExtractor) {
+        var proc = new Proc<>(
+                ReseqState.initial(),
+                (ReseqState state, Object msg) -> {
+                    if (msg instanceof {{ message_type }} message) {
+                        long ts = timestampExtractor.apply(message);
+                        var newBuffer = new java.util.HashMap<>(state.buffer());
+                        var newOutput = new java.util.ArrayList<>(state.output());
+                        var newGaps = new java.util.ArrayList<>(state.gaps());
+
+                        newBuffer.put(ts, message);
+
+                        // Emit all ready sequences
+                        long next = state.nextExpected();
+                        while (newBuffer.containsKey(next)) {
+                            newOutput.add(newBuffer.remove(next));
+                            next++;
+                        }
+
+                        return new ReseqState(next, newBuffer, newOutput, newGaps);
+                    } else if (msg instanceof QueryState) {
+                        return state;
+                    }
+                    return state;
+                });
+        return new {{ name }}Resequencer(proc);
+    }
+
+    /**
+     * Creates a resequencer with gap detection.
+     *
+     * @param timestampExtractor function to extract timestamp from message
+     * @param gapThreshold number of messages ahead before gap is detected
+     */
+    public static {{ name }}Resequencer createWithGapDetection(
+            java.util.function.Function<{{ message_type }}, Long> timestampExtractor,
+            int gapThreshold) {
+        var proc = new Proc<>(
+                ReseqState.initial(),
+                (ReseqState state, Object msg) -> {
+                    if (msg instanceof {{ message_type }} message) {
+                        long ts = timestampExtractor.apply(message);
+                        var newBuffer = new java.util.HashMap<>(state.buffer());
+                        var newOutput = new java.util.ArrayList<>(state.output());
+                        var newGaps = new java.util.ArrayList<>(state.gaps());
+
+                        newBuffer.put(ts, message);
+
+                        long next = state.nextExpected();
+                        long highest = newBuffer.keySet().stream().mapToLong(Long::longValue).max().orElse(next);
+
+                        // Emit available sequences
+                        while (newBuffer.containsKey(next)) {
+                            newOutput.add(newBuffer.remove(next));
+                            next++;
+                        }
+
+                        // Gap detection
+                        if (highest - next >= gapThreshold) {
+                            while (!newBuffer.containsKey(next) && next < highest - gapThreshold + 1) {
+                                newGaps.add(next);
+                                next++;
+                            }
+                        }
+
+                        return new ReseqState(next, newBuffer, newOutput, newGaps);
+                    } else if (msg instanceof QueryState) {
+                        return state;
+                    }
+                    return state;
+                });
+        return new {{ name }}Resequencer(proc);
+    }
+
+    /**
+     * Submits a message for resequencing.
+     *
+     * @param message the message to resequence
+     */
+    public void submit({{ message_type }} message) {
+        resequencer.tell(message);
+    }
+
+    /**
+     * Gets the resequenced output.
+     *
+     * @return list of messages in correct order
+     */
+    public java.util.List<{{ message_type }}> getOutput() {
+        try {
+            return resequencer.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .output();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query resequencer output", e);
+        }
+    }
+
+    /**
+     * Gets detected gaps.
+     *
+     * @return list of missing sequence numbers
+     */
+    public java.util.List<Long> getGaps() {
+        try {
+            return resequencer.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .gaps();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query resequencer gaps", e);
+        }
+    }
+
+    /**
+     * Stops the resequencer.
+     */
+    public void stop() {
+        resequencer.stop();
+    }
+
+    /** Query message for state retrieval. */
+    record QueryState() {}
+}

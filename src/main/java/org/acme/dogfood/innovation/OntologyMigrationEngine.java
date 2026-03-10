@@ -367,7 +367,7 @@ public final class OntologyMigrationEngine {
                     "StaticStateToProc",
                     "Static Shared State \u2192 Proc",
                     "static Map/List/Set fields — shared mutable state across threads",
-                    "patterns/actor.tera",
+                    "patterns/actor",
                     Category.CONCURRENCY,
                     1,
                     true);
@@ -377,7 +377,7 @@ public final class OntologyMigrationEngine {
                     "ThreadLocalToScopedValue",
                     "ThreadLocal \u2192 ScopedValue",
                     "ThreadLocal<T> — implicit mutable context that leaks across virtual threads",
-                    "concurrency/scoped-values.tera",
+                    "concurrency/scoped-value",
                     Category.CONCURRENCY,
                     1,
                     true);
@@ -387,7 +387,7 @@ public final class OntologyMigrationEngine {
                     "CatchToCrashRecovery",
                     "Swallowed Catch \u2192 CrashRecovery",
                     "catch block that logs, returns null/false, or is empty — silent failure",
-                    "error-handling/result-railway.tera",
+                    "error-handling/result-railway",
                     Category.ERROR_HANDLING,
                     1,
                     false);

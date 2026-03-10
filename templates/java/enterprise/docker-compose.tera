@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  {{ project.name | default(value="app") }}:
+    image: eclipse-temurin:26-jre-hotspot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "{{ project.port | default(value="8080") }}:8080"
+    environment:
+      - JAVA_OPTS=--enable-preview
+    volumes:
+      - ./data:/app/data
+    command: java --enable-preview -XX:+ShowWarnings -jar /app.jar

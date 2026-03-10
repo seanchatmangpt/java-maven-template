@@ -1,0 +1,92 @@
+{# Datatype Channel — Proc-based type-safe message channel #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Channel.java"
+vars:
+  name: "DataType"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  state_type: "Integer"
+  javadoc: "Type-safe channel for specific message types"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Datatype Channel pattern using JOTP Proc.
+ * Each data type has its own dedicated channel with type-safe message handling.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 3
+ */
+{% endif %}
+public final class {{ name }}Channel {
+
+    private final Proc<{{ state_type }}, {{ message_type }}> proc;
+
+    private {{ name }}Channel(
+            Proc<{{ state_type }}, {{ message_type }}> proc) {
+        this.proc = proc;
+    }
+
+    /**
+     * Creates a new datatype channel with the given handler.
+     *
+     * @param initialState the initial state for the channel processor
+     * @param handler the message handler function
+     */
+    public static {{ name }}Channel create(
+            {{ state_type }} initialState,
+            java.util.function.BiFunction<{{ state_type }}, {{ message_type }}, {{ state_type }}> handler) {
+        var proc = new Proc<>(initialState, handler);
+        return new {{ name }}Channel<>(proc);
+    }
+
+    /**
+     * Sends a message to this channel.
+     * Non-blocking async send.
+     *
+     * @param message the message to send
+     */
+    public void send({{ message_type }} message) {
+        proc.tell(message);
+    }
+
+    /**
+     * Sends a message and waits for the result.
+     *
+     * @param message the message to send
+     * @param timeout the timeout duration
+     * @return the current state after processing
+     */
+    public {{ state_type }} sendAndWait({{ message_type }} message, java.time.Duration timeout)
+            throws Exception {
+        return proc.ask(message).get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Queries the current state of the channel.
+     *
+     * @return the current state
+     */
+    public {{ state_type }} getState() {
+        try {
+            return proc.ask(new QueryState()).get(1, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query channel state", e);
+        }
+    }
+
+    /**
+     * Stops this channel.
+     */
+    public void stop() {
+        proc.stop();
+    }
+
+    /** Query message for state retrieval. */
+    public record QueryState() {}
+}

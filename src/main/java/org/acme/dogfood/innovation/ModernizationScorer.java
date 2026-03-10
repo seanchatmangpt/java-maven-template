@@ -204,7 +204,7 @@ public final class ModernizationScorer {
                         "Manual Thread creation",
                         "Use virtual threads: Thread.ofVirtual().start()",
                         3,
-                        "concurrency/virtual-threads"));
+                        "concurrency/virtual-thread"));
 
         // Legacy: Executors.newFixedThreadPool / newCachedThreadPool
         rules.add(
@@ -215,7 +215,7 @@ public final class ModernizationScorer {
                         "Platform thread pool",
                         "Use Executors.newVirtualThreadPerTaskExecutor()",
                         3,
-                        "concurrency/virtual-threads"));
+                        "concurrency/virtual-thread"));
 
         // Legacy: synchronized block/method
         rules.add(
@@ -226,7 +226,7 @@ public final class ModernizationScorer {
                         "synchronized block",
                         "Use ReentrantLock or virtual-thread-friendly concurrency",
                         2,
-                        "concurrency/structured-concurrency"));
+                        "concurrency/structured-task-scope"));
 
         // Modern: virtual thread factory
         rules.add(
@@ -237,7 +237,7 @@ public final class ModernizationScorer {
                         "Virtual thread usage",
                         null,
                         3,
-                        "concurrency/virtual-threads"));
+                        "concurrency/virtual-thread"));
 
         // Modern: newVirtualThreadPerTaskExecutor
         rules.add(
@@ -248,7 +248,7 @@ public final class ModernizationScorer {
                         "Virtual thread executor",
                         null,
                         3,
-                        "concurrency/virtual-threads"));
+                        "concurrency/virtual-thread"));
 
         // Modern: StructuredTaskScope
         rules.add(
@@ -259,7 +259,7 @@ public final class ModernizationScorer {
                         "Structured concurrency",
                         null,
                         3,
-                        "concurrency/structured-concurrency"));
+                        "concurrency/structured-task-scope"));
 
         // Legacy: ThreadLocal — implicit shared context, should be ScopedValue
         rules.add(
@@ -271,7 +271,7 @@ public final class ModernizationScorer {
                         "Use ScopedValue<T> (Java 21+): structured, bounded, immutable context"
                                 + " — no leak across virtual-thread boundaries",
                         3,
-                        "concurrency/scoped-values"));
+                        "concurrency/scoped-value"));
 
         // Legacy: static Atomic* as shared mutable state
         rules.add(
@@ -294,7 +294,7 @@ public final class ModernizationScorer {
                         "ScopedValue structured context",
                         null,
                         3,
-                        "concurrency/scoped-values"));
+                        "concurrency/scoped-value"));
 
         // ── API ──
 

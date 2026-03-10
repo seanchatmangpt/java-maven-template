@@ -2,69 +2,95 @@ package org.acme;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.LinkedTransferQueue;
-import java.util.function.BiFunction;
-import java.util.function.Supplier;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.function.*;
 
 /**
- * OTP-style supervision tree node.
+ * OTP supervision tree node — hierarchical process supervision with restart strategies.
  *
- * <p>Joe Armstrong: <em>"The key to writing reliable software in Erlang is the ability to organize
- * processes into supervision trees, where supervisors can automatically restart failed
- * children."</em>
+ * <p>Joe Armstrong: "Supervisors are the key to Erlang's fault tolerance. A supervisor's
+ * job is to start, stop, and monitor its children. When a child crashes, the supervisor
+ * decides what to do — restart it, restart all children, or give up."
  *
- * <p>A {@code Supervisor} owns a set of child processes. When a child crashes (its handler throws),
- * the supervisor receives a {@code ChildCrashed} event and restarts it according to the configured
- * {@link Strategy}. Callers hold {@link ProcRef} handles that transparently redirect to the new
- * process after restart — no caller changes needed.
+ * <p>In OTP, supervisors form a tree where the root supervisor starts application-level
+ * supervisors, which in turn start workers. This hierarchical structure ensures that
+ * failures are contained and recovered at the appropriate level.
  *
- * <p>If a child exceeds {@code maxRestarts} within {@code window}, the supervisor terminates itself
- * (Armstrong: the supervisor crashes too, propagating failure up the tree to its own supervisor).
+ * <p>Java 26 mapping:
  *
- * <p>The supervisor is itself a virtual-thread process: its internal event loop runs on a single
- * virtual thread, processing {@link ChildCrashed} and {@link SvShutdown} events from a {@link
- * LinkedTransferQueue}.
+ * <ul>
+ *   <li>OTP {@code supervisor:start_link/2} → {@link #Supervisor(Strategy, int, Duration)}
+ *   <li>OTP {@code supervisor:start_child/2} → {@link #supervise(String, Object, BiFunction)}
+ *   <li>OTP {@code supervisor:terminate_child/2} → stop via {@link ProcRef#stop()}
+ *   <li>OTP {@code supervisor:stop/1} → {@link #shutdown()}
+ * </ul>
+ *
+ * <p><strong>Restart Strategies:</strong>
+ *
+ * <ul>
+ *   <li>{@link Strategy#ONE_FOR_ONE} — Only the crashed child is restarted
+ *   <li>{@link Strategy#ONE_FOR_ALL} — All children are restarted when any crashes
+ *   <li>{@link Strategy#REST_FOR_ONE} — The crashed child and all children started after it are restarted
+ * </ul>
+ *
+ * <p><strong>Restart Intensity:</strong>
+ *
+ * <p>The {@code maxRestarts} and {@code window} parameters implement OTP's "max restarts
+ * in a time window" feature. If a child crashes more than {@code maxRestarts} times within
+ * {@code window}, the supervisor gives up and terminates itself (and by extension, its
+ * entire subtree). This prevents infinite restart loops.
+ *
+ * <p><b>Usage:</b>
+ *
+ * <pre>{@code
+ * var supervisor = new Supervisor(
+ *     Supervisor.Strategy.ONE_FOR_ONE,
+ *     5,
+ *     Duration.ofSeconds(60)
+ * );
+ *
+ * var worker1 = supervisor.supervise("worker-1", initialState1, handler1);
+ * var worker2 = supervisor.supervise("worker-2", initialState2, handler2);
+ *
+ * // To stop the entire supervision tree:
+ * supervisor.shutdown();
+ * }</pre>
+ *
+ * @see Proc
+ * @see ProcRef
+ * @see CrashRecovery
  */
 public final class Supervisor {
-
-    /** Erlang/OTP restart strategies. */
+    /** Restart strategy for supervised children. */
     public enum Strategy {
-        /** Restart only the crashed child, leave all others running. */
+        /** Only the crashed child is restarted. Other children are unaffected. */
         ONE_FOR_ONE,
-        /** When any child crashes, stop and restart ALL children. */
+        /** All children are restarted when any child crashes. */
         ONE_FOR_ALL,
-        /** Restart the crashed child and every child registered after it. */
+        /** The crashed child and all children started after it are restarted. */
         REST_FOR_ONE
     }
 
-    // ── Internal event types ───────────────────────────────────────────────
-    private sealed interface SvEvent permits ChildCrashed, SvShutdown {}
+    private sealed interface SvEvent permits SvEvent_ChildCrashed, SvEvent_Shutdown {}
+    private record SvEvent_ChildCrashed(String id, Throwable cause) implements SvEvent {}
+    private record SvEvent_Shutdown() implements SvEvent {}
 
-    private record ChildCrashed(String id, Throwable cause) implements SvEvent {}
-
-    private record SvShutdown() implements SvEvent {}
-
-    // ── Child bookkeeping (type-erased to support heterogeneous children) ──
     @SuppressWarnings("rawtypes")
     private static final class ChildEntry {
         final String id;
         final Supplier<Object> stateFactory;
-        final BiFunction handler; // BiFunction<Object, Object, Object>
-        volatile ProcRef ref; // ProcRef<Object, Record>
+        final BiFunction handler;
+        volatile ProcRef ref;
         final List<Instant> crashTimes = new ArrayList<>();
         volatile boolean stopping = false;
 
         @SuppressWarnings("unchecked")
         ChildEntry(String id, Supplier<?> stateFactory, BiFunction<?, ?, ?> handler) {
-            this.id = id;
-            this.stateFactory = (Supplier<Object>) stateFactory;
-            this.handler = handler;
+            this.id = id; this.stateFactory = (Supplier<Object>) stateFactory; this.handler = handler;
         }
     }
 
-    // ── Fields ─────────────────────────────────────────────────────────────
     private final Strategy strategy;
     private final int maxRestarts;
     private final Duration window;
@@ -75,40 +101,45 @@ public final class Supervisor {
     private volatile Throwable fatalError = null;
 
     /**
-     * Create and start a supervisor.
+     * Create a supervisor with the given strategy and restart limits.
      *
-     * @param strategy what to restart when a child crashes
-     * @param maxRestarts how many times a child may crash within {@code window} before the
-     *     supervisor itself fails
-     * @param window sliding time window for the restart count
+     * @param strategy restart strategy (ONE_FOR_ONE, ONE_FOR_ALL, or REST_FOR_ONE)
+     * @param maxRestarts maximum number of restarts allowed within the window
+     * @param window time window for counting restarts
      */
     public Supervisor(Strategy strategy, int maxRestarts, Duration window) {
-        this.strategy = strategy;
-        this.maxRestarts = maxRestarts;
-        this.window = window;
+        this.strategy = strategy; this.maxRestarts = maxRestarts; this.window = window;
         this.supervisorThread = Thread.ofVirtual().name("supervisor").start(this::eventLoop);
     }
 
-    /** Convenience constructor with a name (name is used for thread naming only). */
+    /**
+     * Create a named supervisor with the given strategy and restart limits.
+     *
+     * @param name supervisor name (used for thread naming)
+     * @param strategy restart strategy
+     * @param maxRestarts maximum restarts within the window
+     * @param window time window for counting restarts
+     */
     public Supervisor(String name, Strategy strategy, int maxRestarts, Duration window) {
-        this.strategy = strategy;
-        this.maxRestarts = maxRestarts;
-        this.window = window;
-        this.supervisorThread =
-                Thread.ofVirtual().name("supervisor-" + name).start(this::eventLoop);
+        this.strategy = strategy; this.maxRestarts = maxRestarts; this.window = window;
+        this.supervisorThread = Thread.ofVirtual().name("supervisor-" + name).start(this::eventLoop);
     }
 
     /**
-     * Register and start a supervised child process.
+     * Supervise a child process with the given ID, initial state, and handler.
      *
-     * @param id unique child identifier (used for logging and {@link Strategy#REST_FOR_ONE})
-     * @param initialState initial (and reset) state — used on every restart
-     * @param handler {@code (state, message) -> nextState}; may throw to signal a crash
-     * @return stable {@link ProcRef} that survives restarts
+     * <p>The child is started immediately and monitored for crashes. If the child
+     * crashes, the supervisor applies its restart strategy.
+     *
+     * @param id unique identifier for this child (used in restart strategy)
+     * @param initialState initial state for the child process
+     * @param handler message handler for the child process
+     * @return a {@link ProcRef} that transparently redirects to restarted processes
+     * @param <S> state type
+     * @param <M> message type
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public synchronized <S, M> ProcRef<S, M> supervise(
-            String id, S initialState, BiFunction<S, M, S> handler) {
+    public synchronized <S, M> ProcRef<S, M> supervise(String id, S initialState, BiFunction<S, M, S> handler) {
         var entry = new ChildEntry(id, () -> initialState, handler);
         Proc proc = spawnProc(entry, initialState);
         ProcRef ref = new ProcRef<>(proc);
@@ -117,38 +148,35 @@ public final class Supervisor {
         return (ProcRef<S, M>) ref;
     }
 
-    /** Gracefully stop the supervisor and all supervised children. */
+    /**
+     * Gracefully shut down the supervisor and all its children.
+     *
+     * <p>Children are stopped in reverse order of their creation. This method
+     * blocks until all children have terminated.
+     *
+     * @throws InterruptedException if interrupted while waiting for children to stop
+     */
     public void shutdown() throws InterruptedException {
-        events.add(new SvShutdown());
+        events.add(new SvEvent_Shutdown());
         supervisorThread.join();
     }
 
-    /** {@code true} if the supervisor is still active (not crashed or shut down). */
-    public boolean isRunning() {
-        return running;
-    }
+    /** Returns {@code true} if the supervisor is still running. */
+    public boolean isRunning() { return running; }
 
     /**
-     * The exception that caused the supervisor to fail (max restarts exceeded), or {@code null} if
-     * still running.
+     * Returns the fatal error that caused the supervisor to terminate, if any.
+     *
+     * <p>A non-null value indicates the supervisor exceeded its restart limit.
      */
-    public Throwable fatalError() {
-        return fatalError;
-    }
-
-    // ── Private implementation ─────────────────────────────────────────────
+    public Throwable fatalError() { return fatalError; }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Proc spawnProc(ChildEntry entry, Object initialState) {
         Proc proc = new Proc(initialState, entry.handler);
-        // Register a crash callback instead of hijacking setUncaughtExceptionHandler.
-        // This is composable: ProcessLink can also register callbacks on the same process.
-        proc.addCrashCallback(
-                () -> {
-                    if (!entry.stopping) {
-                        events.add(new ChildCrashed(entry.id, proc.lastError));
-                    }
-                });
+        proc.addCrashCallback(() -> {
+            if (!entry.stopping) events.add(new SvEvent_ChildCrashed(entry.id, proc.lastError));
+        });
         return proc;
     }
 
@@ -157,16 +185,11 @@ public final class Supervisor {
             while (running) {
                 SvEvent ev = events.take();
                 switch (ev) {
-                    case ChildCrashed(var id, var cause) -> handleCrash(id, cause);
-                    case SvShutdown() -> {
-                        running = false;
-                        stopAll();
-                    }
+                    case SvEvent_ChildCrashed(var id, var cause) -> handleCrash(id, cause);
+                    case SvEvent_Shutdown() -> { running = false; stopAll(); }
                 }
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -174,17 +197,12 @@ public final class Supervisor {
         ChildEntry entry = find(id);
         if (entry == null || entry.stopping) return;
 
-        // Slide the crash window
         Instant now = Instant.now();
         entry.crashTimes.removeIf(t -> t.isBefore(now.minus(window)));
         entry.crashTimes.add(now);
 
-        // Exceeded threshold → supervisor itself terminates (propagates up the tree)
         if (entry.crashTimes.size() > maxRestarts) {
-            fatalError = cause;
-            running = false;
-            stopAll();
-            return;
+            fatalError = cause; running = false; stopAll(); return;
         }
 
         switch (strategy) {
@@ -197,18 +215,9 @@ public final class Supervisor {
             case REST_FOR_ONE -> {
                 List<ChildEntry> snapshot = List.copyOf(children);
                 boolean found = false;
-                for (ChildEntry c : snapshot) {
-                    if (c == entry) {
-                        found = true;
-                        continue;
-                    }
-                    if (found) stopChild(c);
-                }
+                for (ChildEntry c : snapshot) { if (c == entry) { found = true; continue; } if (found) stopChild(c); }
                 found = false;
-                for (ChildEntry c : snapshot) {
-                    if (c == entry) found = true;
-                    if (found) restartOne(c);
-                }
+                for (ChildEntry c : snapshot) { if (c == entry) found = true; if (found) restartOne(c); }
             }
         }
     }
@@ -217,17 +226,13 @@ public final class Supervisor {
     private void restartOne(ChildEntry entry) {
         Object freshState = entry.stateFactory.get();
         Proc newProc = spawnProc(entry, freshState);
-        entry.stopping = false; // re-enable crash detection before swap
+        entry.stopping = false;
         entry.ref.swap(newProc);
     }
 
     private void stopChild(ChildEntry entry) {
         entry.stopping = true;
-        try {
-            entry.ref.stop();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        try { entry.ref.stop(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     private synchronized void stopAll() {

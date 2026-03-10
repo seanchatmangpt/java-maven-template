@@ -1,0 +1,48 @@
+# =============================================================================
+# Java 26 Development Environment - MAXIMUM PERFORMANCE
+# =============================================================================
+# Usage:
+#   docker compose -f docker-compose.dev.yml build        # Build image
+#   docker compose -f docker-compose.dev.yml run test     # Run all tests
+#   docker compose -f docker-compose.dev.yml run stress   # Run stress tests
+#   docker compose -f docker-compose.dev.yml run shell    # Interactive shell
+# =============================================================================
+
+services:
+  java-dev:
+    image: java26-dev:latest
+    volumes:
+      # Maven cache - PERSISTS between runs (key performance feature)
+      - java26-maven-cache:/root/.m2/repository
+      # Source code
+      - .:/app:cached
+    working_dir: /app
+    environment:
+      - MAVEN_OPTS=-Xmx2g -XX:+UseZGC -XX:+UseStringDeduplication
+    command: ["bash"]
+
+  # Run all unit tests
+  test:
+    extends: java-dev
+    command: ["mvn", "test", "-T", "1.5C"]
+
+  # Run stress tests
+  stress:
+    extends: java-dev
+    command: ["mvn", "test", "-Dtest=AtlasAPIStressTest"]
+
+  # Run integration tests
+  integration:
+    extends: java-dev
+    command: ["mvn", "verify", "-Dit.test=AtlasAllAPIsMessagePatternsIT", "-T", "1.5C"]
+
+  # Interactive shell
+  shell:
+    extends: java-dev
+    stdin_open: true
+    tty: true
+
+volumes:
+  # Maven repository cache - PERSISTS between runs
+  java26-maven-cache:
+    name: java26-maven-cache

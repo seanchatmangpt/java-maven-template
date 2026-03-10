@@ -1,0 +1,17 @@
+# Dockerfile - {{ project.name | default(value="app") }}
+# Generated from Turtle specification
+
+FROM eclipse-temurin:26-jre-hotspot
+
+LABEL maintainer="Generated Application"
+LABEL version="{{ project.version | default(value="1.0.0") }}"
+
+EXPOSE {{ project.port | default(value="8080") }}
+
+ENV JAVA_OPTS="--enable-preview -XX:+ShowWarnings"
+
+COPY target/{{ project.artifactId | default(value="app") }}-{{ project.version | default(value="1.0.0") }}.jar /app.jar
+
+WORKDIR /app
+
+ENTRYPOINT ["java", "--enable-preview", "-XX:+ShowWarnings", "-jar", "/app.jar"]

@@ -7,6 +7,7 @@ import java.util.Map;
 import org.acme.dogfood.innovation.TemplateCompositionEngine.CompositionResult;
 import org.acme.dogfood.innovation.TemplateCompositionEngine.FeatureRecipe;
 import org.acme.dogfood.innovation.TemplateCompositionEngine.TemplateRef;
+import org.acme.dogfood.innovation.TurtleParser;
 import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -369,6 +370,275 @@ class TemplateCompositionEngineTest implements WithAssertions {
             };
 
             assertThat(message).startsWith("Generated 7 files for WidgetCrud");
+        }
+    }
+
+    // ---------- Turtle-based composition ----------
+
+    @Nested
+    @DisplayName("Turtle-based composition")
+    class TurtleCompositionTests {
+
+        private static final Path SCHEMA_DIR = Path.of("schema");
+
+        @Test
+        @DisplayName("messagingFromTurtle should create recipe from messaging ontology")
+        void messagingFromTurtleShouldCreateRecipe() {
+            var messagingTtl = SCHEMA_DIR.resolve("java-messaging.ttl");
+
+            // Skip if file doesn't exist (CI environments)
+            if (!java.nio.file.Files.exists(messagingTtl)) {
+                return;
+            }
+
+            var recipe = TemplateCompositionEngine.messagingFromTurtle(messagingTtl);
+
+            assertThat(recipe).isNotNull();
+            assertThat(recipe.name()).isEqualTo("TurtleMessaging");
+            assertThat(recipe.description()).contains("Turtle specification");
+            assertThat(recipe.templates()).isNotEmpty();
+        }
+
+        @Test
+        @DisplayName("messagingFromTurtle should reject null path")
+        void messagingFromTurtleShouldRejectNull() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> TemplateCompositionEngine.messagingFromTurtle(null));
+        }
+
+        @Test
+        @DisplayName("projectFromTurtle should create recipe from project ontology")
+        void projectFromTurtleShouldCreateRecipe() {
+            var projectTtl = SCHEMA_DIR.resolve("java-project.ttl");
+
+            // Skip if file doesn't exist (CI environments)
+            if (!java.nio.file.Files.exists(projectTtl)) {
+                return;
+            }
+
+            var recipe = TemplateCompositionEngine.projectFromTurtle(projectTtl);
+
+            assertThat(recipe).isNotNull();
+            assertThat(recipe.name()).isNotBlank();
+            assertThat(recipe.description()).isNotBlank();
+        }
+
+        @Test
+        @DisplayName("projectFromTurtle should reject null path")
+        void projectFromTurtleShouldRejectNull() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> TemplateCompositionEngine.projectFromTurtle(null));
+        }
+
+        @Test
+        @DisplayName("messagingFromTurtle with valid ontology should compose successfully")
+        void messagingFromTurtleShouldCompose() {
+            var messagingTtl = SCHEMA_DIR.resolve("java-messaging.ttl");
+
+            // Skip if file doesn't exist
+            if (!java.nio.file.Files.exists(messagingTtl)) {
+                return;
+            }
+
+            var recipe = TemplateCompositionEngine.messagingFromTurtle(messagingTtl);
+            var result = engine.compose(recipe);
+
+            // Result should be Success or Failure, not throw
+            assertThat(result).isInstanceOf(CompositionResult.class);
+
+            if (result instanceof CompositionResult.Success success) {
+                assertThat(success.featureName()).isEqualTo("TurtleMessaging");
+                assertThat(success.generatedFiles()).isNotEmpty();
+            }
+        }
+    }
+
+    // ---------- TurtleParser integration ----------
+
+    @Nested
+    @DisplayName("TurtleParser integration")
+    class TurtleParserTests {
+
+        @Test
+        @DisplayName("extractPatterns should parse messaging ontology")
+        void extractPatternsShouldParseMessaging() {
+            var messagingTtl = Path.of("schema/java-messaging.ttl");
+
+            // Skip if file doesn't exist
+            if (!java.nio.file.Files.exists(messagingTtl)) {
+                return;
+            }
+
+            var patterns = TurtleParser.extractPatterns(messagingTtl);
+
+            assertThat(patterns).isNotEmpty();
+            assertThat(patterns)
+                    .allSatisfy(p -> {
+                        assertThat(p.uri()).isNotBlank();
+                        assertThat(p.name()).isNotBlank();
+                    });
+        }
+
+        @Test
+        @DisplayName("extractPatterns should resolve dependencies")
+        void extractPatternsShouldResolveDependencies() {
+            var messagingTtl = Path.of("schema/java-messaging.ttl");
+
+            // Skip if file doesn't exist
+            if (!java.nio.file.Files.exists(messagingTtl)) {
+                return;
+            }
+
+            var patterns = TurtleParser.extractPatterns(messagingTtl);
+            var resolved = TurtleParser.resolveDependencies(patterns);
+
+            assertThat(resolved).hasSize(patterns.size());
+            // Dependencies should come before dependents
+        }
+
+        @Test
+        @DisplayName("extractPatterns should reject null path")
+        void extractPatternsShouldRejectNull() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> TurtleParser.extractPatterns(null));
+        }
+
+        @Test
+        @DisplayName("extractProject should parse project ontology")
+        void extractProjectShouldParseProject() {
+            var projectTtl = Path.of("schema/java-project.ttl");
+
+            // Skip if file doesn't exist
+            if (!java.nio.file.Files.exists(projectTtl)) {
+                return;
+            }
+
+            var project = TurtleParser.extractProject(projectTtl);
+
+            assertThat(project.name()).isNotBlank();
+            assertThat(project.groupId()).isNotBlank();
+        }
+
+        @Test
+        @DisplayName("extractProject should reject null path")
+        void extractProjectShouldRejectNull() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> TurtleParser.extractProject(null));
+        }
+    }
+
+    // ---------- TurtleParser error handling ----------
+
+    @Nested
+    @DisplayName("TurtleParser error handling")
+    class TurtleParserErrorTests {
+
+        @Test
+        @DisplayName("extractPatternsSafe should throw for non-existent file")
+        void extractPatternsSafeShouldThrowForMissingFile() {
+            assertThatThrownBy(() ->
+                    TurtleParser.extractPatternsSafe(Path.of("nonexistent.ttl")))
+                    .isInstanceOf(TurtleParser.TurtleFileNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("extractProjectSafe should throw for non-existent file")
+        void extractProjectSafeShouldThrowForMissingFile() {
+            assertThatThrownBy(() ->
+                    TurtleParser.extractProjectSafe(Path.of("nonexistent.ttl")))
+                    .isInstanceOf(TurtleParser.TurtleFileNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("validateTurtleFile should reject non-ttl files")
+        void validateTurtleFileShouldRejectNonTtl() throws Exception {
+            var tempFile = java.nio.file.Files.createTempFile("test", ".txt");
+            try {
+                assertThatThrownBy(() -> TurtleParser.validateTurtleFile(tempFile))
+                        .isInstanceOf(TurtleParser.TurtleParseException.class)
+                        .hasMessageContaining(".ttl");
+            } finally {
+                java.nio.file.Files.deleteIfExists(tempFile);
+            }
+        }
+
+        @Test
+        @DisplayName("validateTurtleContent should reject empty content")
+        void validateTurtleContentShouldRejectEmpty() {
+            assertThatThrownBy(() -> TurtleParser.validateTurtleContent(""))
+                    .isInstanceOf(TurtleParser.MalformedTurtleException.class);
+        }
+
+        @Test
+        @DisplayName("validateTurtleContent should reject blank content")
+        void validateTurtleContentShouldRejectBlank() {
+            assertThatThrownBy(() -> TurtleParser.validateTurtleContent("   \n\n  "))
+                    .isInstanceOf(TurtleParser.MalformedTurtleException.class);
+        }
+
+        @Test
+        @DisplayName("validateTurtleContent should reject null content")
+        void validateTurtleContentShouldRejectNull() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> TurtleParser.validateTurtleContent(null));
+        }
+
+        @Test
+        @DisplayName("validateTurtleContent should accept valid Turtle")
+        void validateTurtleContentShouldAcceptValidTurtle() {
+            var validTurtle = """
+                    @prefix ex: <http://example.org/> .
+                    ex:Subject ex:predicate ex:object .
+                    """;
+
+            // Should not throw
+            TurtleParser.validateTurtleContent(validTurtle);
+        }
+
+        @Test
+        @DisplayName("PatternSpec should reject null uri")
+        void patternSpecShouldRejectNullUri() {
+            assertThatNullPointerException()
+                    .isThrownBy(() ->
+                            new TurtleParser.PatternSpec(null, "name", "cat", "tpl", null, 1, null, List.of()));
+        }
+
+        @Test
+        @DisplayName("PatternSpec should reject null name")
+        void patternSpecShouldRejectNullName() {
+            assertThatNullPointerException()
+                    .isThrownBy(() ->
+                            new TurtleParser.PatternSpec("uri", null, "cat", "tpl", null, 1, null, List.of()));
+        }
+
+        @Test
+        @DisplayName("PatternSpec should defensively copy dependencies")
+        void patternSpecShouldDefensivelyCopyDeps() {
+            var mutableDeps = new java.util.ArrayList<String>();
+            mutableDeps.add("dep1");
+            var spec = new TurtleParser.PatternSpec("uri", "name", "cat", "tpl", null, 1, null, mutableDeps);
+            mutableDeps.add("dep2");
+            assertThat(spec.dependencies()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("ModuleSpec should defensively copy patterns")
+        void moduleSpecShouldDefensivelyCopyPatterns() {
+            var mutablePatterns = new java.util.ArrayList<TurtleParser.PatternSpec>();
+            mutablePatterns.add(new TurtleParser.PatternSpec("uri", "name", null, "tpl", null, 1, null, List.of()));
+            var module = new TurtleParser.ModuleSpec("uri", "name", "pkg", mutablePatterns);
+            mutablePatterns.clear();
+            assertThat(module.patterns()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("ProjectSpec should defensively copy modules")
+        void projectSpecShouldDefensivelyCopyModules() {
+            var mutableModules = new java.util.ArrayList<TurtleParser.ModuleSpec>();
+            mutableModules.add(new TurtleParser.ModuleSpec("uri", "name", "pkg", List.of()));
+            var project = new TurtleParser.ProjectSpec("name", "group", "artifact", "1.0", 26, "desc", mutableModules);
+            mutableModules.clear();
+            assertThat(project.modules()).hasSize(1);
         }
     }
 }

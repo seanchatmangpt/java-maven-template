@@ -1,0 +1,194 @@
+{# Idempotent Receiver — Track processed messages to handle duplicates #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Idempotent.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  key_extractor: "msg -> msg.id()"
+  javadoc: "Tracks processed messages to handle duplicates safely"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Idempotent Receiver pattern using JOTP Proc.
+ * Tracks processed message IDs to ensure duplicate messages are handled correctly.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 3
+ */
+{% endif %}
+public final class {{ name }}Idempotent {
+
+    private final Proc<IdempotentState, Object> receiver;
+
+    /** State of the idempotent receiver. */
+    public record IdempotentState(
+            java.util.Set<String> processedKeys,
+            java.util.Map<String, {{ message_type }}> lastMessages,
+            int maxCacheSize) {
+
+        public static IdempotentState initial(int maxSize) {
+            return new IdempotentState(
+                    new java.util.LinkedHashSet<>(),
+                    new java.util.LinkedHashMap<>(),
+                    maxSize);
+        }
+    }
+
+    /** Result of processing a message. */
+    public sealed interface ProcessResult permits ProcessResult.Accepted, ProcessResult.Duplicate {
+        record Accepted({{ message_type }} message) implements ProcessResult {}
+        record Duplicate(String key) implements ProcessResult {}
+    }
+
+    private {{ name }}Idempotent(Proc<IdempotentState, Object> receiver) {
+        this.receiver = receiver;
+    }
+
+    /**
+     * Creates an idempotent receiver.
+     *
+     * @param keyExtractor function to extract unique key from message
+     * @param maxSize maximum number of keys to track
+     */
+    public static {{ name }}Idempotent create(
+            java.util.function.Function<{{ message_type }}, String> keyExtractor,
+            int maxSize) {
+        var proc = new Proc<>(
+                IdempotentState.initial(maxSize),
+                (IdempotentState state, Object msg) -> {
+                    if (msg instanceof {{ message_type }} message) {
+                        var key = keyExtractor.apply(message);
+                        var newProcessed = new java.util.LinkedHashSet<>(state.processedKeys());
+                        var newMessages = new java.util.LinkedHashMap<>(state.lastMessages());
+
+                        if (newProcessed.contains(key)) {
+                            // Duplicate - don't process
+                            return state;
+                        }
+
+                        // Add to processed set
+                        newProcessed.add(key);
+                        newMessages.put(key, message);
+
+                        // Trim to max size (LRU eviction)
+                        while (newProcessed.size() > state.maxCacheSize()) {
+                            var oldest = newProcessed.iterator().next();
+                            newProcessed.remove(oldest);
+                            newMessages.remove(oldest);
+                        }
+
+                        return new IdempotentState(newProcessed, newMessages, state.maxCacheSize());
+                    } else if (msg instanceof QueryState) {
+                        return state;
+                    } else if (msg instanceof ContainsQuery cq) {
+                        return state;
+                    }
+                    return state;
+                });
+        return new {{ name }}Idempotent(proc);
+    }
+
+    /**
+     * Creates an idempotent receiver with nanosecond timestamp keys.
+     *
+     * @param timestampExtractor function to extract timestamp from message
+     * @param maxSize maximum number of keys to track
+     */
+    public static {{ name }}Idempotent createWithTimestamp(
+            java.util.function.Function<{{ message_type }}, Long> timestampExtractor,
+            int maxSize) {
+        return create(msg -> String.valueOf(timestampExtractor.apply(msg)), maxSize);
+    }
+
+    /**
+     * Processes a message, returning whether it was accepted or duplicate.
+     *
+     * @param message the message to process
+     * @param keyExtractor function to extract key
+     * @return the process result
+     */
+    public ProcessResult process({{ message_type }} message, java.util.function.Function<{{ message_type }}, String> keyExtractor) {
+        try {
+            var state = receiver.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            var key = keyExtractor.apply(message);
+
+            if (state.processedKeys().contains(key)) {
+                return new ProcessResult.Duplicate(key);
+            }
+
+            receiver.tell(message);
+            return new ProcessResult.Accepted(message);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to process message", e);
+        }
+    }
+
+    /**
+     * Checks if a key has been processed.
+     *
+     * @param key the key to check
+     * @return true if the key has been processed
+     */
+    public boolean hasProcessed(String key) {
+        try {
+            var state = receiver.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            return state.processedKeys().contains(key);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to check processed key", e);
+        }
+    }
+
+    /**
+     * Gets the count of processed messages.
+     *
+     * @return processed count
+     */
+    public int getProcessedCount() {
+        try {
+            return receiver.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .processedKeys()
+                    .size();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to get processed count", e);
+        }
+    }
+
+    /**
+     * Clears the processed message cache.
+     */
+    public void clear() {
+        try {
+            var state = receiver.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            receiver.tell(new IdempotentState(
+                    new java.util.LinkedHashSet<>(),
+                    new java.util.LinkedHashMap<>(),
+                    state.maxCacheSize()));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to clear idempotent cache", e);
+        }
+    }
+
+    /**
+     * Stops the receiver.
+     */
+    public void stop() {
+        receiver.stop();
+    }
+
+    /** Query message for state retrieval. */
+    record QueryState() {}
+
+    /** Query to check if key exists. */
+    record ContainsQuery(String key) {}
+}

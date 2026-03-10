@@ -1,0 +1,84 @@
+{# Message Bus — EventManager-based centralized message distribution #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Bus.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Centralized message bus using EventManager"
+---
+package {{ package }};
+
+import org.acme.EventManager;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Message Bus pattern implementation using JOTP EventManager.
+ * Provides centralized message distribution to multiple subscribers.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 2
+ */
+{% endif %}
+public final class {{ name }}Bus {
+
+    private final EventManager<{{ message_type }}> eventManager;
+
+    private {{ name }}Bus() {
+        this.eventManager = EventManager.start();
+    }
+
+    /**
+     * Creates and starts a new message bus.
+     */
+    public static {{ name }}Bus start() {
+        return new {{ name }}Bus();
+    }
+
+    /**
+     * Subscribes a handler to receive all messages on this bus.
+     *
+     * @param handler the message handler
+     */
+    public void subscribe(java.util.function.Consumer<{{ message_type }}> handler) {
+        eventManager.addHandler(handler);
+    }
+
+    /**
+     * Publishes a message to all subscribers.
+     * Non-blocking async notification.
+     *
+     * @param message the message to publish
+     */
+    public void publish({{ message_type }} message) {
+        eventManager.notify(message);
+    }
+
+    /**
+     * Publishes a message to all subscribers synchronously.
+     * Blocks until all handlers have processed the message.
+     *
+     * @param message the message to publish
+     */
+    public void publishSync({{ message_type }} message) {
+        eventManager.syncNotify(message);
+    }
+
+    /**
+     * Removes a handler from the bus.
+     *
+     * @param handler the handler to remove
+     */
+    public void unsubscribe(java.util.function.Consumer<{{ message_type }}> handler) {
+        eventManager.deleteHandler(handler);
+    }
+
+    /**
+     * Stops the message bus and releases resources.
+     */
+    public void stop() {
+        eventManager.stop();
+    }
+}
