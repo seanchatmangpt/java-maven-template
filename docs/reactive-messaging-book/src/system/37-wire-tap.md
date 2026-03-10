@@ -1,360 +1,513 @@
 # 37. Wire Tap
 
-> *"Observe the signal without disturbing the circuit."*
-> — Enterprise Integration Patterns, Hohpe & Woolf
-
-> *"sys:trace/2 lets you watch a process think without making it stutter."*
-> — Erlang/OTP Design Principles
-
----
+> *"`sys:trace(Pid, true)` attaches a trace handler that receives a copy of every message sent to the process — the process never knows it is being observed, and a crashing trace handler does not kill the process. The Wire Tap is `sys:trace` made composable, stackable, and production-safe."*
 
 ## Intent
 
-A **Wire Tap** intercepts every message flowing through a `MessageChannel` and delivers a copy to a secondary observer — a logger, auditor, metrics collector, or debugger — without altering the primary message flow in any way. The tap is entirely subordinate: if it crashes, the primary channel proceeds unaware. If the tap is deactivated, the primary channel does not slow down.
+Intercept a copy of every message flowing through a channel and deliver it to a secondary consumer (tap) on a virtual thread, without affecting the primary channel's delivery path. Tap failures are contained, tap activation is runtime-controllable, and multiple taps can be stacked without modifying the original channel.
 
-In JOTP, the tap copy is dispatched on a fresh **virtual thread** so the observer can perform I/O (write to a database, publish to an audit topic, serialize to JSON) without ever blocking the sender's thread.
-
----
+The Wire Tap is the system-plumbing pattern for observability, auditing, and debugging in production: attach it to any channel to see every message without changing the producer, the channel, or the primary consumer.
 
 ## OTP Analogy
 
-Erlang ships `sys:trace/2`, which attaches a tracing flag to any OTP process. Once enabled, the process emits `{trace, Pid, Event, Data}` messages to a designated tracer without modifying the process logic at all.
+Erlang's `sys` module provides `sys:trace(Pid, true)` which enables a tracing mode where every message and state transition in a `gen_server` is echoed to the trace handler:
 
 ```erlang
-%% Start a gen_server named :counter
-{ok, Pid} = gen_server:start_link({local, counter}, counter_server, [], []).
+%% Enable trace on a running gen_server
+sys:trace(my_server, true).
+%% Every handle_call/handle_cast/handle_info is now echoed to the error_logger
 
-%% Attach a wire tap (sys trace) — process is unaware
-sys:trace(counter, true).
-
-%% Every cast/call now produces a trace message to the shell process:
-%% {trace, <0.123.0>, in, {cast, increment}}
-gen_server:cast(counter, increment).
-
-%% Detach the tap — zero cost to primary process
-sys:trace(counter, false).
+%% Disable trace
+sys:trace(my_server, false).
 ```
 
-The key property: `sys:trace/2` is orthogonal to the traced process. It cannot raise an exception that propagates into `counter_server`. In exactly the same spirit, `WireTap<T>` guarantees that any exception thrown by the `tap` Consumer is **caught and discarded**; the primary channel never sees it.
+The Wire Tap mirrors this at the channel level:
+- `WireTap.activate()` / `WireTap.deactivate()` ↔ `sys:trace(Pid, true/false)`
+- Tap on virtual thread ↔ `error_logger` process receives trace copies
+- Primary channel unaffected by tap failure ↔ gen_server unaffected by logger crash
+- Stacked taps ↔ multiple trace handlers in `sys:install`
 
----
+The key OTP lesson: observation must be **non-intrusive**. The traced process does not need to know about the trace handler. The Wire Tap extends this to channels: the original channel does not need to be modified or even aware of the tap. The tap is installed in the channel reference wrapper, not in the channel implementation.
+
+**`sys:install` for custom handlers:**
+```erlang
+%% OTP's sys:install/2 installs a custom handler that receives every event
+sys:install(Pid, {fun my_trace_handler/3, InitState}).
+```
+
+`WireTap.stacked(channel, tap1, tap2, tap3)` is the direct equivalent: install multiple handlers, each receiving a copy of every message.
 
 ## JOTP Implementation
 
-### Architecture
+**Class:** `WireTap<T>`
+**Package:** `org.acme.eip.system`
+**Key design decisions:**
 
-```
-Sender Thread
-     │
-     ▼
-┌──────────────────────────┐
-│      WireTap<T>          │
-│  ┌────────────────────┐  │
-│  │  1. primary.send() │  │  ← always first, on caller's thread
-│  └────────────────────┘  │
-│  ┌────────────────────┐  │
-│  │  2. active check   │  │  ← volatile read, near-zero cost
-│  └────────────────────┘  │
-│  ┌────────────────────┐  │
-│  │  3. VirtualThread  │──┼──► tap.accept(message)  [isolated]
-│  │     .ofVirtual()   │  │       ↳ exception swallowed
-│  └────────────────────┘  │
-└──────────────────────────┘
-     │
-     ▼
-  Primary
-  Channel
-  (Queue,
-   Proc, etc.)
-```
+1. **Implements `MessageChannel<T>`** — `WireTap<T>` wraps a primary `MessageChannel<T>` and itself implements `MessageChannel<T>`. Any code expecting a `MessageChannel<T>` can transparently receive a `WireTap<T>` — zero changes to producers.
 
-### Design Decisions
+2. **Virtual thread per tap invocation** — each `send(T)` call spawns a virtual thread to call `tap.accept(message)`. The primary channel `send` completes on the calling thread without waiting for the tap. Tap latency is completely decoupled from primary delivery latency.
 
-**Primary before tap.** `primary.send(message)` is called unconditionally *before* any tap logic. This is non-negotiable: the tap is a subordinate observer, never a gatekeeper. Even if the JVM were to crash between the two calls, the primary delivery happened.
+3. **Tap failure containment** — the virtual thread wrapping each tap invocation catches all `Throwable` from the tap and logs it to a `Consumer<TapError<T>>` error handler (or `System.err` if none provided). A crashing tap never propagates to the primary channel or the calling thread.
 
-**Virtual thread per message.** Java 21+ virtual threads are cheap enough (~few KB per thread vs ~1 MB for a platform thread) that spawning one per tapped message is practical even at tens of thousands of messages per second. The alternative — a shared executor — would introduce a shared mutable resource and require lifecycle management that the stateless `WireTap` deliberately avoids.
+4. **`activate()`/`deactivate()`** — an `AtomicBoolean` controls whether the tap fires. Deactivated taps skip the virtual thread spawn entirely — zero overhead when inactive.
 
-**`volatile boolean active`.** Activation state is a single `volatile` field rather than an `AtomicBoolean` because only one transition happens at a time (control plane vs. data plane) and we need only visibility, not compare-and-swap. A `volatile` read on the hot path is a single memory barrier instruction.
+5. **Stackable composition** — `WireTap.stacked(primary, tap1, tap2, tap3)` builds a chain of `WireTap` wrappers, each adding one tap. The resulting object is itself a `MessageChannel<T>`. Since each `WireTap` wraps another `MessageChannel<T>`, stacking is pure composition.
 
-**Exception isolation.** The tap `Consumer<T>` runs inside a `try/catch(Exception ignored)` block. This mirrors Erlang's process isolation: a crash in a watcher must never kill the watched. If you need to surface tap errors, wire the tap itself through a `DeadLetterChannel` or log inside the consumer before the exception escapes.
-
-**Stateless stop().** `WireTap` holds no threads, no queues, no executors. It cannot "stop" in any meaningful sense; the virtual threads it spawns are fire-and-forget. The `stop()` contract is fulfilled vacuously. The downstream `primary` channel manages its own lifecycle.
-
----
+6. **Tap receives a deep copy** — for mutable message types, the builder accepts a `Function<T, T> copyFn` that deep-copies the message before passing it to the tap. This prevents the tap from seeing mutations that the primary handler applies to the message after the tap copy is made. For immutable records (the recommended Java 26 style), `copyFn` defaults to identity.
 
 ## API Reference
 
-| Method | Signature | Description |
-|---|---|---|
-| `WireTap(primary, tap)` | `(MessageChannel<T>, Consumer<T>)` | Constructs a tap wrapping `primary`, forwarding copies to `tap`. |
-| `send(message)` | `void send(T message)` | Sends to primary (blocking), then spawns a virtual thread to call `tap.accept(message)`. |
-| `activate()` | `void activate()` | Re-enables tap dispatching. Thread-safe via `volatile`. |
-| `deactivate()` | `void deactivate()` | Suppresses tap dispatching without affecting primary delivery. Thread-safe via `volatile`. |
-| `isActive()` | `boolean isActive()` | Returns current tap activation state. |
-| `stop()` | `void stop() throws InterruptedException` | No-op; primary channel manages its own lifecycle. |
+### `WireTap<T>` (implements `MessageChannel<T>`)
 
----
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `send` | `void send(T message)` | Send to primary; fork tap on virtual thread if active |
+| `activate` | `WireTap<T> activate()` | Enable the tap (default: enabled at construction) |
+| `deactivate` | `WireTap<T> deactivate()` | Disable the tap (primary channel still receives) |
+| `isActive` | `boolean isActive()` | Current tap activation state |
+| `tapCount` | `long tapCount()` | Total messages delivered to this tap |
+| `tapErrorCount` | `long tapErrorCount()` | Total tap failures (primary delivery unaffected) |
+| `primary` | `MessageChannel<T> primary()` | The wrapped primary channel |
+| `tap` | `Consumer<T> tap()` | The tap consumer |
+
+### Factory methods
+
+```java
+// Single tap
+WireTap<T> tap = WireTap.of(primaryChannel, tapConsumer);
+
+// Single tap with custom copy function
+WireTap<T> tap = WireTap.of(primaryChannel, tapConsumer, msg -> msg.deepCopy());
+
+// Single tap with error handler
+WireTap<T> tap = WireTap.of(primaryChannel, tapConsumer, err -> log.error("tap failed", err));
+
+// Stacked taps (returns MessageChannel<T>, type is outer WireTap)
+MessageChannel<T> stacked = WireTap.stacked(primaryChannel, tap1, tap2, tap3);
+
+// Builder API for full configuration
+WireTap<T> tap = WireTap.<T>builder()
+    .primary(primaryChannel)
+    .tap(tapConsumer)
+    .copyFn(msg -> msg.deepCopy())
+    .onTapError(err -> metrics.increment("tap.error"))
+    .startDeactivated()
+    .build();
+```
+
+### `TapError<T>` (record)
+
+```java
+record TapError<T>(T message, Throwable cause, Instant timestamp) {}
+```
 
 ## Implementation Internals
 
-The send path in pseudo-code, showing the memory-ordering guarantees:
-
 ```
+WireTap<T> internals:
+├── MessageChannel<T>  primary         (wrapped channel)
+├── Consumer<T>        tap             (tap consumer)
+├── AtomicBoolean      active          (enable/disable flag)
+├── LongAdder          tapCount        (successful tap invocations)
+├── LongAdder          tapErrorCount   (failed tap invocations)
+├── Function<T,T>      copyFn          (message copy, default: identity)
+└── Consumer<TapError<T>> onError      (tap failure handler)
+
 send(T message):
-  ① primary.send(message)          // HB: message visible to downstream consumers
-  ② boolean snap = this.active      // volatile read — happens-after any prior deactivate()
-  ③ if snap:
-       Thread.ofVirtual()
-             .name("wire-tap-")     // JVM assigns unique suffix: wire-tap-1, wire-tap-2, …
-             .start(λ:
-               try:
-                 tap.accept(message) // may block for I/O — isolated from sender thread
-               catch Exception:
-                 /* intentionally swallowed — tap must be inert on failure */
-             )
+├── primary.send(message)              // ALWAYS called first, on calling thread
+│                                      // if primary throws, tap is NOT spawned
+│
+└── if active.get():
+    └── Thread.ofVirtual().start(() -> {
+            T copy = copyFn.apply(message)
+            try:
+                tap.accept(copy)
+                tapCount.increment()
+            catch Throwable t:
+                tapErrorCount.increment()
+                onError.accept(new TapError(copy, t, Instant.now()))
+        })
+
+WireTap.stacked(primary, tap1, tap2, tap3):
+└── new WireTap(
+        new WireTap(
+            new WireTap(primary, tap1),
+            tap2),
+        tap3)
 ```
 
-The `volatile` read at ② establishes a *happens-before* edge: if `deactivate()` was called on another thread and completed, the write to `active = false` is visible here. There is a deliberate race window: a message in flight when `deactivate()` is called *may or may not* be tapped — this is acceptable for an observability tap where occasional missed messages during shutdown are benign. If you need hard guarantees across the transition, use `compareAndSet` on an `AtomicBoolean` or introduce a lock.
+**Primary-first guarantee:** `primary.send(message)` is always called before the tap virtual thread is spawned. If the primary throws, the tap is never invoked — a failed primary delivery is not observed by taps. This mirrors `sys:trace` behavior: the trace only fires for messages that were actually delivered to the process.
 
----
+**Tap ordering with stacked taps:** Each `WireTap` in a stack spawns its tap on a separate virtual thread. Taps may execute in any order relative to each other (the JVM scheduler decides). If tap execution order matters, chain them in a single `Consumer<T>` rather than stacking separate `WireTap` wrappers:
+```java
+Consumer<T> orderedTap = msg -> { tap1.accept(msg); tap2.accept(msg); };
+var wt = WireTap.of(primary, orderedTap);
+```
 
 ## Code Example
 
 ```java
-import org.acme.channel.MessageChannel;
-import org.acme.channel.WireTap;
-import org.acme.Proc;
+import org.acme.eip.system.WireTap;
+import org.acme.eip.channel.InMemoryChannel;
 
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
+// --- Domain ---
+record Payment(String id, double amount, String currency) {}
 
-// A simple in-memory channel backed by a Proc mailbox
-MessageChannel<String> auditLog = msg -> System.out.println("[AUDIT] " + msg);
+// --- Primary channel ---
+var paymentProcessor = new InMemoryChannel<Payment>("payment-processor");
 
-// Build a primary channel (e.g., a Proc-backed queue)
-MessageChannel<String> primary = msg -> {
-    // real processing: parse, route, persist …
-    System.out.println("[PRIMARY] processing: " + msg);
+// --- Tap 1: Audit log ---
+Consumer<Payment> auditTap = payment ->
+    auditLog.record("PAYMENT_RECEIVED", payment.id(), payment.amount());
+
+// --- Tap 2: Real-time metrics ---
+Consumer<Payment> metricsTap = payment ->
+    metrics.record("payment.amount", payment.amount(),
+                   "currency", payment.currency());
+
+// --- Tap 3: Fraud detection (async, can be slow) ---
+Consumer<Payment> fraudTap = payment -> {
+    var score = fraudDetector.score(payment);  // may be slow
+    if (score > 0.8) alerting.fire("HIGH_FRAUD_RISK", payment.id());
 };
 
-// Wrap with a wire tap
-WireTap<String> tapped = new WireTap<>(primary, auditLog);
+// --- Stack all three taps on the primary channel ---
+MessageChannel<Payment> observed = WireTap.stacked(
+    paymentProcessor,
+    auditTap,
+    metricsTap,
+    fraudTap
+);
 
-// Normal usage — both primary and audit receive "order-42"
-tapped.send("order-42");
+// --- Producers use the observed channel; no changes needed ---
+// All three taps fire for every payment sent through observed
+observed.send(new Payment("PAY-001", 150.00, "USD"));
+observed.send(new Payment("PAY-002", 9500.00, "EUR"));
+observed.send(new Payment("PAY-003", 0.01,   "USD"));
 
-// Silence the tap for high-frequency bursts
-tapped.deactivate();
-tapped.send("heartbeat-1");   // only primary sees this
-tapped.send("heartbeat-2");
+Thread.sleep(200);  // let virtual threads complete
 
-// Re-enable for business events
-tapped.activate();
-tapped.send("order-43");      // both see this again
-
-// ── Tap crash isolation demo ──────────────────────────────────────────────
-MessageChannel<String> crashyTap = msg -> {
-    throw new RuntimeException("simulated audit failure");
-};
-
-WireTap<String> faultTolerant = new WireTap<>(primary, crashyTap);
-faultTolerant.send("order-44");  // primary still processes normally
+// tap counts accessible from individual WireTap references if built manually
+// (stacked factory returns MessageChannel<T> for simplicity)
 ```
 
-### With a `Proc`-backed primary channel
+### Activate/Deactivate for Debug Taps
 
 ```java
-import org.acme.Proc;
-import org.acme.channel.WireTap;
+// Debug tap — only active when debugging is enabled
+var debugTap = WireTap.<Payment>builder()
+    .primary(paymentChannel)
+    .tap(p -> System.out.println("[DEBUG] " + p))
+    .startDeactivated()   // starts off
+    .build();
 
-// State: List<String> accumulates processed orders
-record OrderState(List<String> orders) {}
-sealed interface OrderMsg permits OrderMsg.Place, OrderMsg.Query {
-    record Place(String orderId) implements OrderMsg {}
-    record Query() implements OrderMsg {}
-}
+// In production: debug tap adds zero overhead
+debugTap.send(new Payment("PAY-001", 100.0, "USD"));   // tap skipped
 
-Proc<OrderState, OrderMsg> orderProc = Proc.of(
-    new OrderState(new java.util.ArrayList<>()),
-    (state, msg) -> switch (msg) {
-        case OrderMsg.Place p -> {
-            state.orders().add(p.orderId());
-            yield state;
-        }
-        case OrderMsg.Query q -> state;
-    }
-);
-
-// Wrap the Proc's send channel with a wire tap for metrics
-var metricsCollector = new java.util.concurrent.atomic.AtomicInteger(0);
-MessageChannel<OrderMsg> tappedProc = new WireTap<>(
-    orderProc.channel(),
-    msg -> {
-        if (msg instanceof OrderMsg.Place) metricsCollector.incrementAndGet();
-    }
-);
-
-tappedProc.send(new OrderMsg.Place("ORD-001"));
-tappedProc.send(new OrderMsg.Place("ORD-002"));
-// metricsCollector.get() == 2 (eventually — tap is async)
+// Toggle on during incident investigation
+debugTap.activate();
+debugTap.send(new Payment("PAY-002", 200.0, "USD"));   // [DEBUG] Payment[id=PAY-002, ...]
+// Toggle off when done
+debugTap.deactivate();
 ```
 
----
+### Tap with Error Channel
+
+```java
+var tapErrorChannel = new InMemoryChannel<WireTap.TapError<Payment>>("tap-errors");
+
+var wt = WireTap.<Payment>builder()
+    .primary(paymentChannel)
+    .tap(p -> unreliableAuditService.record(p))   // may throw
+    .onTapError(err -> {
+        tapErrorChannel.send(err);
+        log.warn("Tap failed for {}: {}", err.message().id(), err.cause().getMessage());
+    })
+    .build();
+
+// Tap failures go to tapErrorChannel; primary delivery is unaffected
+wt.send(new Payment("PAY-X", 500.0, "GBP"));
+```
+
+### Stacked Taps with Independent Activation
+
+```java
+// Build individual WireTap references for independent control
+var metricsTapRef = WireTap.of(paymentChannel, metricsTap);
+var auditTapRef   = WireTap.of(metricsTapRef, auditTap);
+var debugTapRef   = WireTap.<Payment>builder()
+    .primary(auditTapRef)
+    .tap(p -> System.out.println("[DEBUG] " + p))
+    .startDeactivated()
+    .build();
+
+// Route all producers through debugTapRef
+// To enable debug at runtime:
+debugTapRef.activate();
+// To disable:
+debugTapRef.deactivate();
+// Metrics and audit continue unaffected by debug toggle
+```
+
+### Wire Tap as Throughput Observer
+
+```java
+// Count messages per second through a hot channel
+var messageRate = new LongAdder();
+var startTime   = Instant.now();
+
+var rateTap = WireTap.of(hotChannel, msg -> messageRate.increment());
+
+// In a monitoring thread:
+scheduler.scheduleAtFixedRate(() -> {
+    long count   = messageRate.sumThenReset();
+    double elapsed = Duration.between(startTime, Instant.now()).toSeconds();
+    System.out.printf("Throughput: %.0f msg/s%n", count / Math.max(elapsed, 1));
+}, 1, 1, TimeUnit.SECONDS);
+```
 
 ## Composition
 
-### 1. Stacked Wire Taps (multi-observer)
-
-Multiple observers can be stacked by nesting `WireTap` wrappers. Each tap wraps the previous, forming a chain where every observer is isolated:
-
+**WireTap + DurableSubscriber:**
+Tap messages as they enter a durable subscriber for audit, even when the subscriber is paused:
 ```java
-MessageChannel<T> base        = /* primary channel */;
-WireTap<T>        withMetrics = new WireTap<>(base,        metricsConsumer);
-WireTap<T>        withAudit   = new WireTap<>(withMetrics, auditConsumer);
-WireTap<T>        withTrace   = new WireTap<>(withAudit,   traceConsumer);
-
-// Sender uses withTrace; message reaches base through three independent taps
-withTrace.send(message);
+var durableSub = DurableSubscriber.<Order>builder().handler(orderService::process).build();
+var tapped = WireTap.of(durableSub.asChannel(), order -> auditLog.record(order));
+// All orders — including those buffered during pause — are tapped before buffering
 ```
 
-Each tap's virtual thread is independent. A crash in `traceConsumer` does not affect `auditConsumer` and does not affect the primary `base` delivery.
-
-### 2. Wire Tap + Dead Letter Channel
-
-Route tap failures to a `DeadLetterChannel` instead of silently discarding them, while still preserving the primary flow:
-
+**WireTap + MessageRouter:**
+Tap the dead-letter output of a router to alert on unrouted messages:
 ```java
-ConcurrentLinkedQueue<T> tapErrors = new ConcurrentLinkedQueue<>();
+var deadLetterWithAlert = WireTap.of(deadLetterChannel,
+    msg -> alerting.fire("UNROUTED_MESSAGE", msg));
+var router = MessageRouter.<Order>builder()
+    .route("normal", order -> order.amount() > 0, processingChannel)
+    .deadLetter(deadLetterWithAlert)   // swap in tapped dead-letter
+    .build();
+```
 
-WireTap<T> safeAudit = new WireTap<>(primary, msg -> {
-    try {
-        auditChannel.send(msg);
-    } catch (Exception e) {
-        tapErrors.offer(msg);          // dead-letter without affecting primary
+**WireTap + PollingConsumer:**
+Observe every polled message without modifying the handler:
+```java
+// Wrap the handler channel with a wire tap
+Consumer<Task> tapAndHandle = WireTap.of(handlerChannel,
+    task -> metrics.count("polled"))::send;
+var consumer = PollingConsumer.<Task>builder()
+    .source(db::pollNext)
+    .handler(tapAndHandle)
+    .build();
+```
+
+**WireTap + Resequencer:**
+Tap the resequencer's downstream to verify ordering in production:
+```java
+var lastSeq = new AtomicLong(0);
+var orderVerifyTap = WireTap.of(resequencerDownstream, msg -> {
+    long seq  = msg.sequenceNo();
+    long prev = lastSeq.getAndSet(seq);
+    if (seq <= prev) {
+        alerting.fire("OUT_OF_ORDER", "seq=" + seq + " after seq=" + prev);
     }
 });
 ```
 
-### 3. Conditional Wire Tap (Content-Based Activation)
-
-Combine with a predicate to tap only messages matching a business rule:
-
+**WireTap + ContentEnricher:**
+Observe messages before and after enrichment for before/after comparison:
 ```java
-// Only tap messages that are "high value" orders
-WireTap<Order> highValueTap = new WireTap<>(
-    primary,
-    order -> {
-        if (order.total().compareTo(BigDecimal.valueOf(10_000)) > 0) {
-            fraudDetectionChannel.send(order);
-        }
-    }
-);
+var beforeTap = WireTap.of(enricherInput,  msg -> log.debug("before: {}", msg));
+var afterTap  = WireTap.of(enricherOutput, msg -> log.debug("after:  {}", msg));
 ```
-
----
 
 ## Test Pattern
 
 ```java
-import org.junit.jupiter.api.Test;
+import org.acme.eip.system.WireTap;
+import org.acme.eip.channel.CapturingChannel;
 import org.assertj.core.api.WithAssertions;
-
+import org.junit.jupiter.api.Test;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 class WireTapTest implements WithAssertions {
 
-    @Test
-    void primaryAlwaysReceivesMessage() throws InterruptedException {
-        var received = new CopyOnWriteArrayList<String>();
-        MessageChannel<String> primary = received::add;
-        WireTap<String> tap = new WireTap<>(primary, msg -> {});
-
-        tap.send("hello");
-
-        assertThat(received).containsExactly("hello");
-    }
+    record Msg(int id, String value) {}
 
     @Test
-    void tapReceivesMessageOnVirtualThread() throws InterruptedException {
-        var latch = new CountDownLatch(1);
-        var tapped = new CopyOnWriteArrayList<String>();
+    void tapReceivesCopyOfEveryMessage() throws InterruptedException {
+        var primary = new CapturingChannel<Msg>("primary");
+        var tapped  = new CopyOnWriteArrayList<Msg>();
+        var latch   = new CountDownLatch(3);
 
-        MessageChannel<String> primary = msg -> {};
-        WireTap<String> wire = new WireTap<>(primary, msg -> {
-            tapped.add(msg);
-            latch.countDown();
-        });
+        var wt = WireTap.of(primary, msg -> { tapped.add(msg); latch.countDown(); });
 
-        wire.send("event-1");
+        wt.send(new Msg(1, "a"));
+        wt.send(new Msg(2, "b"));
+        wt.send(new Msg(3, "c"));
+
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(tapped).containsExactly("event-1");
+        assertThat(primary.captured()).extracting(Msg::id).containsExactly(1, 2, 3);
+        assertThat(tapped).extracting(Msg::id).containsExactlyInAnyOrder(1, 2, 3);
     }
 
     @Test
-    void tapCrashDoesNotAffectPrimary() throws InterruptedException {
-        var received = new CopyOnWriteArrayList<String>();
-        MessageChannel<String> primary = received::add;
-        WireTap<String> wire = new WireTap<>(primary, msg -> {
-            throw new RuntimeException("tap exploded");
-        });
+    void tapFailure_doesNotAffectPrimaryDelivery() throws InterruptedException {
+        var primary = new CapturingChannel<Msg>("primary");
+        var errors  = new CopyOnWriteArrayList<WireTap.TapError<Msg>>();
+        var latch   = new CountDownLatch(2);
 
-        // Must not throw
-        assertThatCode(() -> wire.send("safe")).doesNotThrowAnyException();
-        assertThat(received).containsExactly("safe");
+        var wt = WireTap.<Msg>builder()
+            .primary(primary)
+            .tap(msg -> { throw new RuntimeException("tap exploded"); })
+            .onTapError(err -> { errors.add(err); latch.countDown(); })
+            .build();
+
+        wt.send(new Msg(1, "a"));
+        wt.send(new Msg(2, "b"));
+
+        latch.await(2, TimeUnit.SECONDS);
+
+        assertThat(primary.captured()).hasSize(2);  // primary unaffected
+        assertThat(errors).hasSize(2);
+        assertThat(wt.tapErrorCount()).isEqualTo(2);
     }
 
     @Test
-    void deactivateStopsTapWithoutAffectingPrimary() throws InterruptedException {
-        var tapSeen = new CopyOnWriteArrayList<String>();
-        var primarySeen = new CopyOnWriteArrayList<String>();
+    void deactivate_stopsInvokingTap() throws InterruptedException {
+        var primary  = new CapturingChannel<Msg>("primary");
+        var tapCount = new AtomicInteger();
+        var latch    = new CountDownLatch(1);
 
-        WireTap<String> wire = new WireTap<>(primarySeen::add, tapSeen::add);
+        var wt = WireTap.of(primary, msg -> { tapCount.incrementAndGet(); latch.countDown(); });
 
-        wire.deactivate();
-        wire.send("msg-while-inactive");
+        wt.send(new Msg(1, "a"));
+        assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(tapCount.get()).isEqualTo(1);
 
-        // Give virtual thread time to run (should not run — deactivated)
+        wt.deactivate();
+        assertThat(wt.isActive()).isFalse();
+
+        wt.send(new Msg(2, "b"));
+        wt.send(new Msg(3, "c"));
         Thread.sleep(100);
 
-        assertThat(primarySeen).containsExactly("msg-while-inactive");
-        assertThat(tapSeen).isEmpty();
+        assertThat(tapCount.get()).isEqualTo(1);   // no new taps after deactivate
+        assertThat(primary.captured()).hasSize(3); // primary still receives all
+
+        wt.activate();
+        assertThat(wt.isActive()).isTrue();
     }
 
     @Test
-    void activateReenablesTapAfterDeactivation() throws InterruptedException {
-        var latch = new CountDownLatch(1);
-        var tapSeen = new CopyOnWriteArrayList<String>();
+    void stackedTaps_allFireForEveryMessage() throws InterruptedException {
+        var primary  = new CapturingChannel<Msg>("primary");
+        var tap1Msgs = new CopyOnWriteArrayList<Msg>();
+        var tap2Msgs = new CopyOnWriteArrayList<Msg>();
+        var tap3Msgs = new CopyOnWriteArrayList<Msg>();
+        var latch    = new CountDownLatch(9);  // 3 taps x 3 messages
 
-        WireTap<String> wire = new WireTap<>(msg -> {}, msg -> {
-            tapSeen.add(msg);
-            latch.countDown();
-        });
+        var stacked = WireTap.stacked(
+            primary,
+            msg -> { tap1Msgs.add(msg); latch.countDown(); },
+            msg -> { tap2Msgs.add(msg); latch.countDown(); },
+            msg -> { tap3Msgs.add(msg); latch.countDown(); }
+        );
 
-        wire.deactivate();
-        wire.send("ignored");
-        wire.activate();
-        wire.send("observed");
+        stacked.send(new Msg(1, "x"));
+        stacked.send(new Msg(2, "y"));
+        stacked.send(new Msg(3, "z"));
 
+        assertThat(latch.await(3, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(primary.captured()).hasSize(3);
+        assertThat(tap1Msgs).hasSize(3);
+        assertThat(tap2Msgs).hasSize(3);
+        assertThat(tap3Msgs).hasSize(3);
+    }
+
+    @Test
+    void tapCount_accurate() throws InterruptedException {
+        var primary = new CapturingChannel<Msg>("primary");
+        var latch   = new CountDownLatch(5);
+        var wt      = WireTap.of(primary, msg -> latch.countDown());
+
+        for (int i = 0; i < 5; i++) wt.send(new Msg(i, "val"));
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(tapSeen).containsExactly("observed");
+
+        assertThat(wt.tapCount()).isEqualTo(5);
+        assertThat(wt.tapErrorCount()).isEqualTo(0);
+    }
+
+    @Test
+    void primaryThrows_tapNotInvoked() throws InterruptedException {
+        var tapInvoked = new AtomicInteger();
+        var wt = WireTap.of(
+            (MessageChannel<Msg>) msg -> { throw new RuntimeException("primary failed"); },
+            msg -> tapInvoked.incrementAndGet()
+        );
+
+        assertThatThrownBy(() -> wt.send(new Msg(1, "x")))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessage("primary failed");
+
+        Thread.sleep(50);
+        assertThat(tapInvoked.get()).isEqualTo(0);  // tap never fired
+    }
+
+    @Test
+    void concurrentSends_noDataRace() throws InterruptedException {
+        var primary  = new CapturingChannel<Msg>("primary");
+        var tapCount = new AtomicInteger();
+        var latch    = new CountDownLatch(1000);
+
+        var wt = WireTap.of(primary, msg -> { tapCount.incrementAndGet(); latch.countDown(); });
+
+        var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        for (int i = 0; i < 1000; i++) {
+            final int id = i;
+            executor.submit(() -> wt.send(new Msg(id, "concurrent")));
+        }
+
+        assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(primary.captured()).hasSize(1000);
+        assertThat(tapCount.get()).isEqualTo(1000);
+        assertThat(wt.tapCount()).isEqualTo(1000);
     }
 }
 ```
 
----
-
 ## Caveats & Trade-offs
 
-**Async tap — no delivery guarantee.** The tap virtual thread is fire-and-forget. If the JVM shuts down between `primary.send()` and `tap.accept()`, the tap message is lost. For hard audit requirements, consider a synchronous tap (call `tap.accept()` on the sender thread before returning) at the cost of adding tap latency to every send.
+**Use when:**
+- You need to observe messages flowing through a channel without modifying producers or consumers
+- You want audit logging, metrics recording, or fraud detection to be completely decoupled from the primary processing path
+- Tap latency must not block or slow the primary delivery path
+- You need to activate/deactivate observation at runtime (debug taps, A/B test observers, temporary audit windows)
 
-**Memory pressure at high throughput.** Each tapped message spawns a virtual thread. Virtual threads are cheap but not free: the JVM still allocates a small stack and schedules the thread on the ForkJoinPool carrier pool. Under extreme throughput (millions of messages/second), the cost accumulates. Profile before deploying in hot paths.
+**Avoid when:**
+- The tap must guarantee delivery (e.g., regulatory audit) — virtual thread failure can lose tap events. Use a durable channel for the tap instead of a bare `Consumer<T>`.
+- Tap ordering relative to other taps matters and must be guaranteed — use a single ordered `Consumer` instead of stacked `WireTap` wrappers.
+- The tap is computationally intensive and produces work proportional to the primary — spawning a virtual thread per message under extreme load can saturate the thread scheduler. Consider batching tap events or using a single tap consumer with a `BlockingQueue`.
 
-**Message mutability.** If `T` is a mutable object and the tap modifies it, the primary channel may observe the mutation (depending on ordering). Always use immutable records or defensively copy before tapping mutable objects.
+**Virtual thread overhead:**
+- Each active `WireTap.send()` spawns one virtual thread. For very high-throughput channels (millions of messages per second), this overhead is measurable. Profile before adding taps to hot paths.
+- Virtual threads are cheap (no OS thread created), but the scheduler has finite capacity. Under extreme load (10M+ msg/s), consider a single tap consumer thread with a `LinkedBlockingQueue` instead of per-message virtual thread spawning.
 
-**`volatile` race on activate/deactivate.** There is a benign race window: a message that arrives during `deactivate()` may or may not be tapped. This is intentional for an observability tap. If strict "tap exactly these messages" semantics are required, serialize access to `active` with a lock or use a higher-level routing mechanism.
+**Message immutability:**
+- If the message type is mutable and the tap is invoked concurrently with the primary consumer, there is a potential race on the message object. Use immutable records (Java 26 best practice) to eliminate this entirely, or provide a `copyFn` to the builder.
+- The `copyFn` is called *before* spawning the tap virtual thread, on the calling thread. This adds synchronous copy overhead on the hot path. Prefer immutable records over copy functions.
 
-**No back-pressure.** `WireTap` does not apply back-pressure to the sender. If the tap consumer is slower than the send rate, virtual threads accumulate. Use a bounded executor or a `Semaphore` in the tap consumer if this is a concern.
+**Tap vs. audit channel:**
+- A `WireTap` with a bare `Consumer<T>` is appropriate for ephemeral observations (metrics, logging).
+- For durable audit trails, route the tap through a `DurableSubscriber` or persistent channel:
+  ```java
+  var auditSub = DurableSubscriber.<T>builder()
+      .handler(auditStore::record).build();
+  var wt = WireTap.of(primary, auditSub::send);
+  ```
+  This ensures the audit record persists even if the audit writer is slow or temporarily unavailable.
 
-**Not a security boundary.** The tap sees every message. Do not use `WireTap` to route messages to untrusted consumers. For selective masking (e.g., redact PII before tapping), apply a transformation inside the tap consumer before forwarding.
+**`deactivate()` is not instantaneous:**
+- `deactivate()` sets an `AtomicBoolean`. Virtual threads already spawned before `deactivate()` was called will still complete. The tap may fire a few more times after `deactivate()` due to in-flight virtual threads. This is consistent with Erlang's `sys:trace(Pid, false)` — trace messages already dispatched before the flag is cleared will still arrive.
