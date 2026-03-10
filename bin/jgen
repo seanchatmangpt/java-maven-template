@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # jgen — Java Code Generation CLI
-# Wraps ggen (seanchatmangpt/ggen) for Java 26 code generation and migration
+# Wraps ggen (seanchatmangpt/ggen) for Java 26 code generation
 # =============================================================================
 
 set -euo pipefail
@@ -10,8 +10,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GGEN_CONFIG="$PROJECT_ROOT/ggen.toml"
 TEMPLATES_DIR="$PROJECT_ROOT/templates/java"
-SCHEMA_DIR="$PROJECT_ROOT/schema"
-QUERIES_DIR="$PROJECT_ROOT/queries"
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,19 +23,10 @@ usage() {
 jgen — Java 26 Code Generation Engine (powered by ggen)
 
 USAGE:
-    jgen <command> [options]
-
-COMMANDS:
-    generate        Generate Java code from ontologies and templates
-    verify          Validate generated code compiles and passes formatting
-    migrate         Analyze and migrate a Java codebase to Java 26
-    refactor        Full analysis: score + ranked jgen commands + migration script
-    list            List available templates and patterns
-    inspect         Show details of a specific pattern or template
-    init            Initialize ggen in a new project
+    jgen generate -t <template> -n <name> -p <package> [options]
 
 OPTIONS:
-    -t, --template <name>     Use a specific template
+    -t, --template <name>     Template to render (e.g. core/record)
     -p, --package <pkg>       Target Java package (e.g., com.example)
     -o, --output <dir>        Output directory (default: src/main/java)
     -n, --name <name>         Type name for generation
@@ -47,13 +36,9 @@ OPTIONS:
 
 EXAMPLES:
     jgen generate -t core/record -n Person -p com.example.model
-    jgen generate -t patterns/result-type -p com.example
-    jgen migrate --source ./legacy-project --target-version 26
-    jgen refactor --source ./legacy-project
-    jgen refactor --source ./legacy-project --plan  # saves migrate.sh
-    jgen refactor --source ./legacy-project --score # score-only report
-    jgen list --category patterns
-    jgen verify
+    jgen generate -t concurrency/virtual-thread -n Worker -p com.example
+    jgen generate -t patterns/strategy-functional -n TextTransform -p com.example
+    jgen generate -t error-handling/result-railway -n Result -p com.example
 
 TEMPLATE CATEGORIES:
     core/           Language features (records, sealed types, patterns, etc.)
@@ -88,11 +73,11 @@ cmd_generate() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -t|--template) template="$2"; shift 2 ;;
-            -p|--package) package="$2"; shift 2 ;;
-            -o|--output) output="$2"; shift 2 ;;
-            -n|--name) name="$2"; shift 2 ;;
-            --dry-run) dry_run=true; shift ;;
-            -v|--verbose) verbose=true; shift ;;
+            -p|--package)  package="$2"; shift 2 ;;
+            -o|--output)   output="$2"; shift 2 ;;
+            -n|--name)     name="$2"; shift 2 ;;
+            --dry-run)     dry_run=true; shift ;;
+            -v|--verbose)  verbose=true; shift ;;
             *) echo -e "${RED}Unknown option: $1${NC}"; usage; exit 1 ;;
         esac
     done
@@ -106,12 +91,11 @@ cmd_generate() {
     local template_file="$TEMPLATES_DIR/$template.tera"
     if [[ ! -f "$template_file" ]]; then
         echo -e "${RED}Error: Template not found: $template_file${NC}"
-        echo "Run 'jgen list' to see available templates."
         exit 1
     fi
 
     echo -e "${BLUE}Generating from template: ${template}${NC}"
-    [[ -n "$name" ]] && echo -e "  Name:    ${GREEN}${name}${NC}"
+    [[ -n "$name" ]]    && echo -e "  Name:    ${GREEN}${name}${NC}"
     [[ -n "$package" ]] && echo -e "  Package: ${GREEN}${package}${NC}"
     echo -e "  Output:  ${GREEN}${output}${NC}"
 
@@ -126,7 +110,6 @@ cmd_generate() {
         return 0
     fi
 
-    # Invoke ggen with template variables
     cd "$PROJECT_ROOT"
     GGEN_TEMPLATE="$template" \
     GGEN_NAME="$name" \
@@ -135,511 +118,6 @@ cmd_generate() {
     ggen sync
 
     echo -e "${GREEN}Generation complete.${NC}"
-}
-
-cmd_verify() {
-    echo -e "${BLUE}Verifying generated code...${NC}"
-    cd "$PROJECT_ROOT"
-
-    echo -e "\n${YELLOW}[1/3] Checking formatting...${NC}"
-    if ./mvnw spotless:check -q 2>/dev/null; then
-        echo -e "${GREEN}  ✓ Formatting OK${NC}"
-    else
-        echo -e "${RED}  ✗ Formatting issues found. Run: ./mvnw spotless:apply${NC}"
-        return 1
-    fi
-
-    echo -e "\n${YELLOW}[2/3] Compiling...${NC}"
-    if ./mvnw compile -q 2>/dev/null; then
-        echo -e "${GREEN}  ✓ Compilation OK${NC}"
-    else
-        echo -e "${RED}  ✗ Compilation failed${NC}"
-        return 1
-    fi
-
-    echo -e "\n${YELLOW}[3/3] Running tests...${NC}"
-    if ./mvnw test -q 2>/dev/null; then
-        echo -e "${GREEN}  ✓ Tests passed${NC}"
-    else
-        echo -e "${RED}  ✗ Tests failed${NC}"
-        return 1
-    fi
-
-    echo -e "\n${GREEN}All checks passed.${NC}"
-}
-
-cmd_migrate() {
-    local source=""
-    local target_version="26"
-    local dry_run=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --source) source="$2"; shift 2 ;;
-            --target-version) target_version="$2"; shift 2 ;;
-            --dry-run) dry_run=true; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
-        esac
-    done
-
-    if [[ -z "$source" ]]; then
-        echo -e "${RED}Error: --source is required${NC}"
-        echo "Usage: jgen migrate --source <dir> [--target-version 26]"
-        exit 1
-    fi
-
-    echo -e "${BLUE}Analyzing codebase for migration to Java ${target_version}...${NC}"
-    echo -e "  Source: ${GREEN}${source}${NC}"
-
-    # Count Java files
-    local java_count
-    java_count=$(find "$source" -name "*.java" | wc -l)
-    echo -e "  Java files found: ${GREEN}${java_count}${NC}"
-
-    # Detect patterns that need migration
-    echo -e "\n${YELLOW}Detecting migration candidates...${NC}"
-
-    local found=0
-
-    # Check for legacy patterns
-    if grep -rq "extends TestCase" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} JUnit 3 tests found → migrate to JUnit 5"
-        ((found++))
-    fi
-    if grep -rq "@org.junit.Test" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} JUnit 4 tests found → migrate to JUnit 5"
-        ((found++))
-    fi
-    if grep -rq "java\.util\.Date\|java\.util\.Calendar" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} Legacy Date/Calendar → migrate to java.time"
-        ((found++))
-    fi
-    if grep -rq "HttpURLConnection" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} HttpURLConnection → migrate to HttpClient"
-        ((found++))
-    fi
-    if grep -rq "new Thread\|extends Thread" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} Platform threads → migrate to virtual threads"
-        ((found++))
-    fi
-    if grep -rq "ThreadLocal" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} ThreadLocal → migrate to ScopedValue"
-        ((found++))
-    fi
-    if grep -rq "newFixedThreadPool\|newCachedThreadPool" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} Thread pools → migrate to virtual thread executor"
-        ((found++))
-    fi
-    if grep -rq "instanceof.*{" "$source" 2>/dev/null; then
-        echo -e "  ${YELLOW}●${NC} instanceof + cast → pattern matching available"
-        ((found++))
-    fi
-    if grep -rq "javax\.\(servlet\|persistence\|annotation\)" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} javax.* namespaces → migrate to jakarta.*"
-        ((found++))
-    fi
-    if grep -rq "java\.io\.File[^s]" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} java.io.File → migrate to java.nio.file"
-        ((found++))
-    fi
-    if grep -rq "Vector\|Hashtable\|Stack" "$source" 2>/dev/null; then
-        echo -e "  ${RED}●${NC} Legacy collections (Vector/Hashtable/Stack) → modern collections"
-        ((found++))
-    fi
-    if grep -rq "StringBuffer" "$source" 2>/dev/null; then
-        echo -e "  ${YELLOW}●${NC} StringBuffer → StringBuilder"
-        ((found++))
-    fi
-    if grep -rq "synchronized" "$source" 2>/dev/null; then
-        echo -e "  ${YELLOW}●${NC} synchronized blocks found (review for virtual thread compatibility)"
-        ((found++))
-    fi
-
-    echo -e "\n${BLUE}Migration candidates found: ${found}${NC}"
-
-    if $dry_run; then
-        echo -e "${YELLOW}[DRY RUN] No changes applied.${NC}"
-    else
-        echo -e "\nRun 'jgen generate' with specific templates to apply migrations."
-    fi
-}
-
-cmd_refactor() {
-    local source=""
-    local plan_mode=false
-    local score_mode=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --source|-s) source="$2"; shift 2 ;;
-            --plan)      plan_mode=true; shift ;;
-            --score)     score_mode=true; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
-        esac
-    done
-
-    if [[ -z "$source" ]]; then
-        echo -e "${RED}Error: --source is required${NC}"
-        echo "Usage: jgen refactor --source <dir> [--plan] [--score]"
-        exit 1
-    fi
-
-    if [[ ! -d "$source" ]]; then
-        echo -e "${RED}Error: Source directory not found: $source${NC}"
-        exit 1
-    fi
-
-    echo -e "${BLUE}╔══ Java 26 Refactor Analysis ══════════════════════════════════╗${NC}"
-    echo -e "${BLUE}  Source: ${GREEN}${source}${NC}"
-
-    # Count and index Java files
-    local java_files=()
-    while IFS= read -r -d '' f; do
-        java_files+=("$f")
-    done < <(find "$source" -name "*.java" -type f -print0 | sort -z)
-
-    local total="${#java_files[@]}"
-    echo -e "${BLUE}  Files:  ${GREEN}${total}${NC}"
-    echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}\n"
-
-    if [[ "$total" -eq 0 ]]; then
-        echo -e "${YELLOW}No Java files found in $source${NC}"
-        exit 0
-    fi
-
-    # Per-file analysis: detect migration signals and compute a rough score
-    declare -A file_scores
-    declare -A file_migrations
-    local total_score=0
-    local total_migrations=0
-
-    for java_file in "${java_files[@]}"; do
-        local fname
-        fname=$(basename "$java_file" .java)
-        local pkg
-        pkg=$(grep -m1 "^package " "$java_file" 2>/dev/null | sed 's/^package //;s/;//' || echo "org.example")
-
-        local score=50  # start at 50 (neutral)
-        local migrations=()
-
-        # Legacy penalties (−5 each)
-        grep -q "new Thread\|extends Thread" "$java_file" 2>/dev/null && {
-            migrations+=("concurrency/virtual-thread:${fname}VT:${pkg}:Platform Thread → Virtual Thread:false")
-            ((score -= 5)) || true
-        }
-        grep -q "Executors\.new.*ThreadPool" "$java_file" 2>/dev/null && {
-            migrations+=("concurrency/virtual-thread-executor:${fname}VT:${pkg}:Thread Pool → Virtual Executor:false")
-            ((score -= 5)) || true
-        }
-        grep -q "java\.util\.Date\|java\.util\.Calendar\|SimpleDateFormat" "$java_file" 2>/dev/null && {
-            migrations+=("api/java-time:${fname}Time:${pkg}:Date/Calendar → java.time:true")
-            ((score -= 5)) || true
-        }
-        grep -q "java\.io\.File[^s]" "$java_file" 2>/dev/null && {
-            migrations+=("api/nio2-files:${fname}Nio:${pkg}:java.io.File → java.nio.file:true")
-            ((score -= 5)) || true
-        }
-        grep -q "instanceof[^P].*)" "$java_file" 2>/dev/null && {
-            migrations+=("core/instanceof-pattern:${fname}:${pkg}:instanceof + Cast → Pattern Matching:false")
-            ((score -= 3)) || true
-        }
-        grep -qP "^\s*} else if \(" "$java_file" 2>/dev/null && {
-            migrations+=("core/pattern-matching-switch:${fname}:${pkg}:if/else Chain → Switch Expression:false")
-            ((score -= 3)) || true
-        }
-        grep -q "StringBuffer" "$java_file" 2>/dev/null && {
-            migrations+=("api/string-methods:${fname}Modern:${pkg}:StringBuffer → StringBuilder:false")
-            ((score -= 2)) || true
-        }
-        grep -q "@org\.junit\.Test\|import org\.junit\.Test" "$java_file" 2>/dev/null && {
-            migrations+=("testing/junit5-test:${fname}Modern:${pkg}:JUnit 4 → JUnit 5:true")
-            ((score -= 5)) || true
-        }
-        grep -q "import javax\.\(servlet\|persistence\|annotation\)" "$java_file" 2>/dev/null && {
-            migrations+=("security/jakarta-migration:${fname}Modern:${pkg}:javax.* → jakarta.*:true")
-            ((score -= 5)) || true
-        }
-        grep -q "ThreadLocal" "$java_file" 2>/dev/null && {
-            migrations+=("concurrency/scoped-value:${fname}SV:${pkg}:ThreadLocal → ScopedValue:true")
-            ((score -= 3)) || true
-        }
-
-        # Modern bonuses (+5 each)
-        grep -q "Thread\.ofVirtual\|newVirtualThreadPerTaskExecutor" "$java_file" 2>/dev/null && ((score += 5)) || true
-        grep -q "StructuredTaskScope" "$java_file" 2>/dev/null && ((score += 5)) || true
-        grep -q "^.*record\s" "$java_file" 2>/dev/null && ((score += 5)) || true
-        grep -q "sealed\s\+\(interface\|class\)" "$java_file" 2>/dev/null && ((score += 5)) || true
-        grep -q '"""' "$java_file" 2>/dev/null && ((score += 3)) || true
-        grep -q "instanceof.*\s[a-z][a-zA-Z]*\s*[)&|]" "$java_file" 2>/dev/null && ((score += 3)) || true
-        grep -q "org\.junit\.jupiter" "$java_file" 2>/dev/null && ((score += 5)) || true
-        grep -q "assertThat(" "$java_file" 2>/dev/null && ((score += 3)) || true
-
-        # Clamp to 0-100
-        ((score < 0)) && score=0
-        ((score > 100)) && score=100
-
-        file_scores["$java_file"]=$score
-        file_migrations["$java_file"]="${migrations[*]}"
-        ((total_score += score)) || true
-        ((total_migrations += ${#migrations[@]})) || true
-    done
-
-    local avg_score=$(( total_score / total ))
-
-    if $score_mode; then
-        # Score-only report
-        echo -e "${BLUE}Modernization Scores (worst first):${NC}"
-        # Sort by score ascending
-        for java_file in "${java_files[@]}"; do
-            local s="${file_scores[$java_file]}"
-            local fname
-            fname=$(basename "$java_file")
-            local color="${GREEN}"
-            (( s < 40 )) && color="${RED}"
-            (( s >= 40 && s < 70 )) && color="${YELLOW}"
-            printf "  %s[%3d/100]%s  %s\n" "$color" "$s" "${NC}" "$fname"
-        done
-        echo -e "\n${BLUE}Average score: ${avg_score}/100${NC}"
-        return 0
-    fi
-
-    # ── Full analysis ─────────────────────────────────────────────────────────
-
-    echo -e "${YELLOW}Per-file breakdown (worst score first):${NC}"
-
-    # Sort files by score ascending
-    local sorted_files=()
-    while IFS= read -r -d $'\0' f; do
-        sorted_files+=("$f")
-    done < <(
-        for java_file in "${java_files[@]}"; do
-            printf '%d\0%s\0' "${file_scores[$java_file]}" "$java_file"
-        done | sort -z -n | awk 'BEGIN{RS="\0"; ORS="\0"} NR%2==0'
-    )
-
-    declare -a safe_cmds=()
-    declare -a breaking_cmds=()
-
-    for java_file in "${sorted_files[@]}"; do
-        local s="${file_scores[$java_file]}"
-        local fname
-        fname=$(basename "$java_file")
-        local color="${GREEN}"
-        (( s < 40 )) && color="${RED}"
-        (( s >= 40 && s < 70 )) && color="${YELLOW}"
-
-        local mig_str="${file_migrations[$java_file]}"
-        local mig_count=0
-        [[ -n "$mig_str" ]] && mig_count=$(echo "$mig_str" | wc -w) || true
-        mig_count=$(echo "$mig_str" | tr ' ' '\n' | grep -c ":" || true)
-
-        printf "  %s[%3d/100]%s  %-40s  %d migration(s)\n" \
-            "$color" "$s" "${NC}" "$fname" "$mig_count"
-
-        # Collect commands
-        if [[ -n "$mig_str" ]]; then
-            for entry in $mig_str; do
-                IFS=':' read -r tmpl name pkg label breaking <<< "$entry"
-                local cmd="bin/jgen generate -t $tmpl -n $name -p $pkg"
-                local comment="# $label"
-                if [[ "$breaking" == "true" ]]; then
-                    breaking_cmds+=("$comment" "$cmd")
-                else
-                    safe_cmds+=("$comment" "$cmd")
-                fi
-            done
-        fi
-    done
-
-    echo -e "\n${BLUE}Summary: ${total} files | avg score: ${avg_score}/100 | ${total_migrations} migration(s)${NC}"
-
-    if [[ "${#safe_cmds[@]}" -gt 0 ]]; then
-        echo -e "\n${GREEN}Top safe migrations (apply immediately):${NC}"
-        local limit=10
-        local shown=0
-        for (( i=0; i<${#safe_cmds[@]} && shown<limit; i+=2 )); do
-            echo "  ${safe_cmds[$i]}"
-            echo "  ${safe_cmds[$((i+1))]}"
-            ((shown++)) || true
-        done
-        local remaining=$(( ${#safe_cmds[@]} / 2 - shown ))
-        (( remaining > 0 )) && echo -e "  ${YELLOW}... and ${remaining} more (use --plan to save all)${NC}"
-    fi
-
-    if [[ "${#breaking_cmds[@]}" -gt 0 ]]; then
-        echo -e "\n${RED}Breaking changes (review before applying):${NC}"
-        for (( i=0; i<${#breaking_cmds[@]} && i<10; i+=2 )); do
-            echo "  ${breaking_cmds[$i]}"
-            echo "  ${breaking_cmds[$((i+1))]}"
-        done
-    fi
-
-    if $plan_mode; then
-        local script="migrate.sh"
-        {
-            echo "#!/usr/bin/env bash"
-            echo "# ================================================================="
-            echo "# Java 26 Migration Script — generated by: jgen refactor --plan"
-            echo "# Source: $source"
-            echo "# Files:  $total | Avg score: $avg_score/100 | Migrations: $total_migrations"
-            echo "# ================================================================="
-            echo "set -euo pipefail"
-            echo ""
-            if [[ "${#safe_cmds[@]}" -gt 0 ]]; then
-                echo "# ── Safe migrations (non-breaking) ──────────────────────────────"
-                for (( i=0; i<${#safe_cmds[@]}; i+=2 )); do
-                    echo "${safe_cmds[$i]}"
-                    echo "${safe_cmds[$((i+1))]}"
-                    echo ""
-                done
-            fi
-            if [[ "${#breaking_cmds[@]}" -gt 0 ]]; then
-                echo ""
-                echo "# ── Breaking changes — review before running ──────────────────"
-                echo "read -rp 'Apply breaking changes? (y/N) ' confirm"
-                echo "[[ \"\$confirm\" =~ ^[Yy]\$ ]] || exit 0"
-                echo ""
-                for (( i=0; i<${#breaking_cmds[@]}; i+=2 )); do
-                    echo "${breaking_cmds[$i]}"
-                    echo "${breaking_cmds[$((i+1))]}"
-                    echo ""
-                done
-            fi
-            echo "echo 'Migration complete. Run: bin/jgen verify'"
-        } > "$script"
-        chmod +x "$script"
-        echo -e "\n${GREEN}Migration script saved to: ${script}${NC}"
-        echo -e "  Run: ${YELLOW}bash migrate.sh${NC}"
-    fi
-}
-
-cmd_list() {
-    local category=""
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --category|-c) category="$2"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
-
-    echo -e "${BLUE}Available Java 26 Templates${NC}"
-    echo -e "========================================\n"
-
-    local search_dir="$TEMPLATES_DIR"
-    if [[ -n "$category" ]]; then
-        search_dir="$TEMPLATES_DIR/$category"
-        if [[ ! -d "$search_dir" ]]; then
-            echo -e "${RED}Category not found: $category${NC}"
-            exit 1
-        fi
-    fi
-
-    for dir in "$search_dir"/*/; do
-        [[ -d "$dir" ]] || continue
-        local dir_name
-        dir_name=$(basename "$dir")
-        if [[ -n "$category" ]] && [[ "$dir_name" != "$category" ]]; then
-            continue
-        fi
-        echo -e "${GREEN}$dir_name/${NC}"
-        for template in "$dir"*.tera; do
-            [[ -f "$template" ]] || continue
-            local name
-            name=$(basename "$template" .tera)
-            # Extract description from first comment in template
-            local desc
-            desc=$(grep -m1 "^{#" "$template" 2>/dev/null | sed 's/{#\s*//' | sed 's/\s*#}//' || echo "")
-            if [[ -n "$desc" ]]; then
-                printf "    %-35s %s\n" "$name" "$desc"
-            else
-                echo "    $name"
-            fi
-        done
-        echo ""
-    done
-}
-
-cmd_inspect() {
-    local template="$1"
-    local template_file="$TEMPLATES_DIR/$template.tera"
-
-    if [[ ! -f "$template_file" ]]; then
-        echo -e "${RED}Template not found: $template${NC}"
-        exit 1
-    fi
-
-    echo -e "${BLUE}Template: $template${NC}"
-    echo -e "File: $template_file\n"
-    cat "$template_file"
-}
-
-cmd_init() {
-    echo -e "${BLUE}Initializing jgen in current project...${NC}"
-
-    # Create directory structure
-    mkdir -p schema queries templates/java/{core,concurrency,patterns,api,modules,testing,error-handling,build,security}
-
-    # Create ggen.toml if not exists
-    if [[ ! -f "ggen.toml" ]]; then
-        cat > ggen.toml <<'TOML'
-[project]
-name = "my-java-project"
-version = "1.0.0"
-
-[sources]
-ontologies = "schema/"
-queries = "queries/"
-
-[output]
-root = "src/main/java"
-test_root = "src/test/java"
-
-[templates]
-path = "templates/java"
-TOML
-        echo -e "${GREEN}  Created ggen.toml${NC}"
-    fi
-
-    echo -e "${GREEN}Initialization complete.${NC}"
-    echo "Run 'jgen list' to see available templates."
-}
-
-cmd_stress() {
-    local source=""
-    local plan_flag=false
-    local generate_flag=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --source)   source="$2"; shift 2;;
-            --plan)     plan_flag=true; shift;;
-            --generate) generate_flag=true; shift;;
-            *) shift;;
-        esac
-    done
-
-    if [[ -z "$source" ]]; then
-        echo -e "${RED}Usage: jgen stress --source <dir> [--plan] [--generate]${NC}"
-        echo ""
-        echo "  Scans any Java source tree for Armstrong-style breaking-point patterns"
-        echo "  and generates bin/jgen commands to scaffold stress tests."
-        echo ""
-        echo "  --source <dir>   Root directory to scan (e.g. src/main/java)"
-        echo "  --plan           Write stress-tests.sh with all generation commands"
-        echo "  --generate       Write and immediately run stress-tests.sh"
-        exit 1
-    fi
-
-    local args="$source"
-    [[ "$plan_flag"     == "true" ]] && args="$args --plan"
-    [[ "$generate_flag" == "true" ]] && args="$args --generate"
-
-    echo -e "${BLUE}Armstrong Stress Scan: $source${NC}"
-    ./mvnw exec:java -q \
-        -Dexec.mainClass="org.acme.dogfood.innovation.StressTestScanner" \
-        -Dexec.args="$args" \
-        -Dexec.classpathScope="test"
 }
 
 # =============================================================================
@@ -651,21 +129,14 @@ if [[ $# -lt 1 ]]; then
     exit 0
 fi
 
-command="$1"
-shift
+# ggen is the sole engine — nothing works without it
+check_ggen
 
-case "$command" in
-    generate)   cmd_generate "$@" ;;
-    verify)     cmd_verify "$@" ;;
-    migrate)    cmd_migrate "$@" ;;
-    refactor)   cmd_refactor "$@" ;;
-    list)       cmd_list "$@" ;;
-    inspect)    cmd_inspect "$@" ;;
-    init)       cmd_init "$@" ;;
-    stress)     cmd_stress "$@" ;;
-    -h|--help)  usage ;;
+case "$1" in
+    generate)  shift; cmd_generate "$@" ;;
+    -h|--help) usage ;;
     *)
-        echo -e "${RED}Unknown command: $command${NC}"
+        echo -e "${RED}Unknown command: $1${NC}"
         usage
         exit 1
         ;;

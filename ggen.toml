@@ -3,23 +3,93 @@ name = "java-maven-template"
 version = "1.0.0"
 description = "Exhaustive Java 26 code generation templates for universal codebase migration"
 
+# ggen v5: Ontology configuration
+[ontology]
+source = "schema/java-instances.ttl"
+imports = [
+    "schema/java-core.ttl",
+    "schema/java-patterns.ttl",
+    "schema/java-concurrency.ttl",
+    "schema/java-modules.ttl",
+    "schema/java-migration.ttl",
+]
+base_iri = "https://jgen.dev/"
+
+[ontology.prefixes]
+java   = "https://jgen.dev/ontology/java#"
+rdfs   = "http://www.w3.org/2000/01/rdf-schema#"
+xsd    = "http://www.w3.org/2001/XMLSchema#"
+
+# Legacy jgen settings (ignored by ggen v5, used by bin/jgen)
 [sources]
 ontologies = "schema/"
-queries = "queries/"
+queries    = "queries/"
 
 [output]
-root = "src/main/java"
-test_root = "src/test/java"
-resources_root = "src/main/resources"
+root            = "src/main/java"
+test_root       = "src/test/java"
+resources_root  = "src/main/resources"
 
 [templates]
 path = "templates/java"
 
-[generation]
-deterministic = true
-format_output = true
-
 [quality_gates]
-validate_ontology = true
-check_compilation = true
-verify_formatting = true
+validate_ontology  = true
+check_compilation  = true
+verify_formatting  = true
+
+# =============================================================================
+# ggen v5: Generation rules
+# Each rule = SPARQL SELECT → Tera template → output file
+# =============================================================================
+
+[generation]
+output_dir = "."
+
+# --- Records ------------------------------------------------------------------
+
+[[generation.rules]]
+name        = "java-records"
+output_file = "src/main/java/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+
+[generation.rules.query]
+file = "queries/v5/select-records.rq"
+
+[generation.rules.template]
+file = "templates/java/v5/record.tera"
+
+# --- Sealed interfaces --------------------------------------------------------
+
+[[generation.rules]]
+name        = "java-sealed-interfaces"
+output_file = "src/main/java/{{ package | replace(from='.', to='/') }}/{{ name }}.java"
+
+[generation.rules.query]
+file = "queries/v5/select-sealed-interfaces.rq"
+
+[generation.rules.template]
+file = "templates/java/v5/sealed-interface.tera"
+
+# --- Service layer ------------------------------------------------------------
+
+[[generation.rules]]
+name        = "java-services"
+output_file = "src/main/java/{{ package | replace(from='.', to='/') }}/{{ name }}Service.java"
+
+[generation.rules.query]
+file = "queries/v5/select-services.rq"
+
+[generation.rules.template]
+file = "templates/java/v5/service.tera"
+
+# --- JUnit 5 tests ------------------------------------------------------------
+
+[[generation.rules]]
+name        = "java-tests"
+output_file = "src/test/java/{{ package | replace(from='.', to='/') }}/{{ name }}Test.java"
+
+[generation.rules.query]
+file = "queries/v5/select-testable.rq"
+
+[generation.rules.template]
+file = "templates/java/v5/junit5-test.tera"
