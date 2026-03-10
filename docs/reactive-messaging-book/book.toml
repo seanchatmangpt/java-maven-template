@@ -1,0 +1,19 @@
+[book]
+title = "Reactive Messaging Patterns in JOTP"
+authors = ["JOTP Contributors"]
+description = "All 39 Enterprise Integration Patterns implemented in Java 26 using OTP-style concurrency primitives"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/seanchatmangpt/java-maven-template"
+git-repository-icon = "fa-github"
+
+[output.html.fold]
+enable = true
+level = 1

@@ -3,146 +3,209 @@ package org.acme.reactive;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+
+import org.acme.Proc;
+import org.acme.ProcSys;
 
 /**
  * Durable Subscriber — EIP endpoint pattern for a pub-sub subscriber that continues
  * to receive messages even when temporarily offline (paused), buffering them for delivery
  * when it comes back online.
  *
- * <p>In contrast to a transient subscriber (which misses messages published during its
- * absence), a DurableSubscriber maintains a persistent message buffer. This pattern is
- * essential for ensuring at-least-once delivery in event-driven architectures.
+ * <p><strong>JOTP implementation:</strong> backed by a {@link Proc}{@code <State, Cmd>} where
+ * the process state holds the delivery buffer and pause flag. Pause and resume are sent as
+ * ordinary messages to the mailbox ({@link Cmd.Pause} / {@link Cmd.Resume}), keeping all
+ * state transitions deterministic and introspectable via the {@code sys} module.
  *
- * <p>Implementation: messages arriving while the subscriber is paused are stored in an
- * internal {@link LinkedTransferQueue}. When the subscriber resumes, buffered messages
- * are drained and delivered to the handler before new messages are accepted, preserving
- * ordering guarantees. A dedicated virtual thread drives the delivery loop.
+ * <ul>
+ *   <li>{@link Cmd.Deliver} — enqueues a payload for the consumer
+ *   <li>{@link Cmd.Pause}   — suspends delivery; subsequent payloads are buffered in state
+ *   <li>{@link Cmd.Resume}  — drains the buffer and re-enables live delivery
+ * </ul>
  *
- * <p>Erlang/OTP analogy: a process that {@code suspend}s via {@code sys:suspend/1} —
- * the mailbox accumulates messages; on {@code sys:resume/1} all buffered messages are
- * processed in order before new ones.
+ * <p>OTP analogy: a process using {@code sys:suspend/1} to accumulate mailbox messages, then
+ * {@code sys:resume/1} to process them in arrival order — but here pause/resume are first-class
+ * messages, not sys calls, so the handler itself controls the transition logic.
  *
- * @param <T> message type
+ * <p>Fault isolation: if the consumer crashes on a message, {@code Proc.lastError} is set and
+ * the process stops — exactly as OTP's "let it crash" principle. Wrap in a {@link org.acme.Supervisor}
+ * to restart automatically.
+ *
+ * @param <T> message payload type
  */
 public final class DurableSubscriber<T> implements MessageChannel<T>, AutoCloseable {
 
-    private final LinkedTransferQueue<T> buffer = new LinkedTransferQueue<>();
-    private final Consumer<T> handler;
-    private final AtomicBoolean paused = new AtomicBoolean(false);
-    private final AtomicBoolean running = new AtomicBoolean(true);
-    private final AtomicLong received = new AtomicLong(0);
-    private final AtomicLong delivered = new AtomicLong(0);
-    private final Object pauseLock = new Object();
-    private final Thread deliveryThread;
+    // ── Internal command protocol ────────────────────────────────────────────
 
-    /**
-     * Creates a DurableSubscriber that processes messages with {@code handler} on a
-     * dedicated virtual thread.
-     *
-     * @param handler invoked for each message; runs on a virtual thread
-     */
-    public DurableSubscriber(Consumer<T> handler) {
-        this.handler = handler;
-        this.deliveryThread = Thread.ofVirtual()
-                .name("durable-subscriber")
-                .start(this::deliveryLoop);
+    /** Sealed command hierarchy delivered to the backing Proc mailbox. */
+    sealed interface Cmd<T> permits Cmd.Deliver, Cmd.Pause, Cmd.Resume {
+        /** Carry a payload to the consumer. */
+        record Deliver<T>(T payload) implements Cmd<T> {}
+        /** Pause delivery — subsequent payloads are buffered. */
+        record Pause<T>() implements Cmd<T> {}
+        /** Resume delivery — drain buffer, then deliver live. */
+        record Resume<T>() implements Cmd<T> {}
     }
 
+    // ── Internal state ────────────────────────────────────────────────────────
+
+    record State<T>(boolean paused, List<T> buffer, long delivered) {
+        static <T> State<T> initial() { return new State<>(false, List.of(), 0L); }
+    }
+
+    // ── JOTP Proc backing this subscriber ────────────────────────────────────
+
+    private final Proc<State<T>, Cmd<T>> proc;
+
     /**
-     * Enqueues {@code message} for delivery. If the subscriber is paused, the message
-     * is buffered. If active, it is buffered and the delivery loop picks it up promptly.
+     * Creates a DurableSubscriber. The {@code consumer} is called for each delivered payload
+     * inside the backing {@link Proc} virtual thread — OTP fault isolation applies.
      *
-     * <p>Thread-safe; never blocks the sender.
+     * @param consumer invoked for each payload in delivery order
+     */
+    @SuppressWarnings("unchecked")
+    public DurableSubscriber(Consumer<T> consumer) {
+        this.proc = new Proc<>(State.initial(), (State<T> state, Cmd<T> cmd) -> switch (cmd) {
+
+            case Cmd.Pause<T> __ -> new State<>(true, state.buffer(), state.delivered());
+
+            case Cmd.Resume<T> __ -> {
+                // Drain buffer in arrival order, then go live
+                List<T> buf = state.buffer();
+                long count = state.delivered();
+                for (T payload : buf) {
+                    consumer.accept(payload);
+                    count++;
+                }
+                yield new State<>(false, List.of(), count);
+            }
+
+            case Cmd.Deliver<T>(T payload) -> {
+                if (state.paused()) {
+                    // Buffer the payload — preserve arrival order
+                    var newBuf = new ArrayList<>(state.buffer());
+                    newBuf.add(payload);
+                    yield new State<>(true, List.copyOf(newBuf), state.delivered());
+                } else {
+                    consumer.accept(payload);
+                    yield new State<>(false, state.buffer(), state.delivered() + 1L);
+                }
+            }
+        });
+    }
+
+    // ── MessageChannel ────────────────────────────────────────────────────────
+
+    /**
+     * Delivers {@code message} to this subscriber. If paused, it is buffered in the process
+     * state. If active, it is dispatched to the consumer immediately.
+     *
+     * <p>Non-blocking fire-and-forget — identical to Erlang's {@code Pid ! Msg}.
      */
     @Override
+    @SuppressWarnings("unchecked")
     public void send(T message) {
-        received.incrementAndGet();
-        buffer.offer(message);
+        proc.tell(new Cmd.Deliver<>(message));
     }
 
+    // ── Control API ───────────────────────────────────────────────────────────
+
     /**
-     * Pauses delivery — subsequent messages are buffered until {@link #resume()} is called.
-     * Already-queued messages are not discarded.
+     * Pauses delivery — subsequent messages are buffered in the process state.
+     * Delivered as a message to preserve ordering with in-flight payloads.
      */
+    @SuppressWarnings("unchecked")
     public void pause() {
-        paused.set(true);
+        proc.tell(new Cmd.Pause<>());
     }
 
     /**
-     * Resumes delivery — buffered messages are drained and delivered in arrival order,
-     * then new messages flow normally.
+     * Resumes delivery — the buffer is drained in-order, then live delivery continues.
+     * Delivered as a message to preserve ordering with in-flight payloads.
      */
+    @SuppressWarnings("unchecked")
     public void resume() {
-        paused.set(false);
-        synchronized (pauseLock) {
-            pauseLock.notifyAll();
+        proc.tell(new Cmd.Resume<>());
+    }
+
+    /**
+     * Returns the current buffer size (snapshot via {@link ProcSys#getState}).
+     * The returned count reflects state at the time of the call; the process may
+     * have advanced further by the time this returns.
+     *
+     * @throws RuntimeException if the process has terminated
+     */
+    public int bufferSize() {
+        try {
+            return ProcSys.getState(proc).get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .buffer().size();
+        } catch (Exception e) {
+            return 0;
         }
     }
 
-    /** Returns {@code true} if the subscriber is currently paused. */
-    public boolean isPaused() {
-        return paused.get();
-    }
-
-    /** Returns the total number of messages received (including those still buffered). */
-    public long receivedCount() {
-        return received.get();
-    }
-
-    /** Returns the number of messages delivered to the handler. */
+    /**
+     * Returns the number of messages delivered to the consumer (excluding those still buffered).
+     *
+     * @throws RuntimeException if the process has terminated
+     */
     public long deliveredCount() {
-        return delivered.get();
+        try {
+            return ProcSys.getState(proc).get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .delivered();
+        } catch (Exception e) {
+            return 0L;
+        }
     }
 
-    /** Returns the number of messages currently in the buffer awaiting delivery. */
-    public int bufferSize() {
-        return buffer.size();
+    /**
+     * Returns the total number of messages received (delivered + currently buffered).
+     */
+    public long receivedCount() {
+        return ProcSys.statistics(proc).messagesIn();
     }
 
-    /** Returns a snapshot of all currently buffered messages (does not remove them). */
+    /**
+     * Returns {@code true} if the subscriber is currently paused (snapshot; may change).
+     */
+    public boolean isPaused() {
+        try {
+            return ProcSys.getState(proc).get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .paused();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Returns a snapshot of currently buffered messages (does not remove them).
+     */
     public List<T> peekBuffer() {
-        return new ArrayList<>(buffer);
+        try {
+            return ProcSys.getState(proc).get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .buffer();
+        } catch (Exception e) {
+            return List.of();
+        }
     }
+
+    /**
+     * Returns the backing {@link Proc} for JOTP introspection via {@link ProcSys}.
+     */
+    public Proc<State<T>, Cmd<T>> proc() {
+        return proc;
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     @Override
     public void stop() throws InterruptedException {
-        close();
+        proc.stop();
     }
 
     @Override
     public void close() throws InterruptedException {
-        running.set(false);
-        synchronized (pauseLock) {
-            pauseLock.notifyAll();
-        }
-        deliveryThread.interrupt();
-        deliveryThread.join(1000);
-    }
-
-    private void deliveryLoop() {
-        while (running.get()) {
-            try {
-                synchronized (pauseLock) {
-                    while (paused.get() && running.get()) {
-                        pauseLock.wait(100);
-                    }
-                }
-                T message = buffer.poll();
-                if (message != null) {
-                    handler.accept(message);
-                    delivered.incrementAndGet();
-                } else {
-                    Thread.sleep(1); // brief yield when idle
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                // Swallow handler exceptions — durable means the subscriber stays alive
-            }
-        }
+        stop();
     }
 }
