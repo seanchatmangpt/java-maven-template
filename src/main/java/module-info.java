@@ -9,5 +9,6 @@ module org.acme {
     exports org.acme.dogfood.security;
     exports org.acme.dogfood.innovation;
     exports org.acme.dogfood.mclaren;
+    exports org.acme.dogfood.messaging;
     exports org.acme.dogfood.reactive;
 }
