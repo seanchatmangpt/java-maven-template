@@ -1,0 +1,76 @@
+{# Content-Based Router — Route messages based on content using pattern matching #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Router.java"
+vars:
+  name: "Content"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  route_count: 3
+  javadoc: "Routes messages based on content using pattern matching"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Content-Based Router pattern using JOTP Proc with pattern matching.
+ * Routes incoming messages to appropriate destinations based on message content.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 7
+ */
+{% endif %}
+public final class {{ name }}Router {
+
+    private final Proc<RoutingTable, {{ message_type }}> router;
+
+    /** Routing table holding destination channels. */
+    public record RoutingTable(
+            java.util.List<Proc<?, {{ message_type }}>> destinations,
+            java.util.function.Function<{{ message_type }}, Integer> routeFunction) {}
+
+    private {{ name }}Router(Proc<RoutingTable, {{ message_type }}> router) {
+        this.router = router;
+    }
+
+    /**
+     * Creates a content-based router with the given routing logic.
+     *
+     * @param destinations list of destination channels
+     * @param routeFunction function that determines route index from message content
+     */
+    public static {{ name }}Router create(
+            java.util.List<Proc<?, {{ message_type }}>> destinations,
+            java.util.function.Function<{{ message_type }}, Integer> routeFunction) {
+        var table = new RoutingTable(destinations, routeFunction);
+        var router = new Proc<>(
+                table,
+                (RoutingTable t, {{ message_type }} msg) -> {
+                    int routeIndex = t.routeFunction().apply(msg);
+                    if (routeIndex >= 0 && routeIndex < t.destinations().size()) {
+                        t.destinations().get(routeIndex).tell(msg);
+                    }
+                    return t;
+                });
+        return new {{ name }}Router(router);
+    }
+
+    /**
+     * Routes a message based on its content.
+     *
+     * @param message the message to route
+     */
+    public void route({{ message_type }} message) {
+        router.tell(message);
+    }
+
+    /**
+     * Stops the router.
+     */
+    public void stop() {
+        router.stop();
+    }
+}

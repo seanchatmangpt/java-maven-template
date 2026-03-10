@@ -1,0 +1,171 @@
+{# Process Manager — State machine-based saga coordination #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}ProcessManager.java"
+vars:
+  name: "Saga"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Coordinates complex message flows with state machine-based saga management"
+---
+package {{ package }};
+
+import org.acme.StateMachine;
+import org.acme.StateMachine.Transition;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Process Manager pattern using JOTP StateMachine.
+ * Coordinates complex message flows across multiple handlers with state management.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 8
+ */
+{% endif %}
+public final class {{ name }}ProcessManager {
+
+    /** Process states for the saga. */
+    public sealed interface ProcessState permits ProcessState.Initial, ProcessState.Processing, ProcessState.Completed, ProcessState.Failed {
+        record Initial() implements ProcessState {}
+        record Processing(String currentStep, java.util.List<String> completedSteps) implements ProcessState {}
+        record Completed(java.util.List<String> completedSteps) implements ProcessState {}
+        record Failed(String reason, java.util.List<String> completedSteps) implements ProcessState {}
+    }
+
+    /** Process events. */
+    public sealed interface ProcessEvent permits ProcessEvent.Start, ProcessEvent.StepComplete, ProcessEvent.StepFailed, ProcessEvent.Abort {
+        record Start({{ message_type }} command) implements ProcessEvent {}
+        record StepComplete(String stepName) implements ProcessEvent {}
+        record StepFailed(String stepName, String reason) implements ProcessEvent {}
+        record Abort(String reason) implements ProcessEvent {}
+    }
+
+    /** Process data. */
+    public record ProcessData(
+            {{ message_type }} originalCommand,
+            java.util.Map<String, Object> context,
+            java.util.List<String> steps) {}
+
+    private final StateMachine<ProcessState, ProcessEvent, ProcessData> stateMachine;
+
+    private {{ name }}ProcessManager(
+            StateMachine<ProcessState, ProcessEvent, ProcessData> stateMachine) {
+        this.stateMachine = stateMachine;
+    }
+
+    /**
+     * Creates a process manager with the given step handlers.
+     *
+     * @param steps ordered list of step names
+     * @param stepHandlers map of step name to handler function
+     */
+    public static {{ name }}ProcessManager create(
+            java.util.List<String> steps,
+            java.util.Map<String, java.util.function.Function<ProcessData, ProcessData>> stepHandlers) {
+
+        StateMachine<ProcessState, ProcessEvent, ProcessData> sm = StateMachine.create(
+                new ProcessState.Initial(),
+                new ProcessData(null, new java.util.HashMap<>(), steps),
+                (ProcessState state, ProcessEvent event, ProcessData data) -> {
+                    return switch (state) {
+                        case ProcessState.Initial initial -> switch (event) {
+                            case ProcessEvent.Start start -> {
+                                var newData = new ProcessData(start.command(), new java.util.HashMap<>(), steps);
+                                yield Transition.to(new ProcessState.Processing(steps.get(0), new java.util.ArrayList<>()), newData);
+                            }
+                            default -> Transition.stay();
+                        };
+
+                        case ProcessState.Processing processing -> switch (event) {
+                            case ProcessEvent.StepComplete complete -> {
+                                var completed = new java.util.ArrayList<>(processing.completedSteps());
+                                completed.add(complete.stepName());
+
+                                int nextIdx = steps.indexOf(complete.stepName()) + 1;
+                                if (nextIdx >= steps.size()) {
+                                    yield Transition.to(new ProcessState.Completed(completed), data);
+                                } else {
+                                    yield Transition.to(new ProcessState.Processing(steps.get(nextIdx), completed), data);
+                                }
+                            }
+                            case ProcessEvent.StepFailed failed -> {
+                                var completed = new java.util.ArrayList<>(processing.completedSteps());
+                                yield Transition.to(new ProcessState.Failed(failed.reason(), completed), data);
+                            }
+                            case ProcessEvent.Abort abort -> {
+                                var completed = new java.util.ArrayList<>(processing.completedSteps());
+                                yield Transition.to(new ProcessState.Failed(abort.reason(), completed), data);
+                            }
+                            default -> Transition.stay();
+                        };
+
+                        case ProcessState.Completed, ProcessState.Failed -> Transition.stay();
+                    };
+                });
+
+        return new {{ name }}ProcessManager(sm);
+    }
+
+    /**
+     * Starts a new process with the given command.
+     *
+     * @param command the initiating command
+     */
+    public void start({{ message_type }} command) {
+        stateMachine.send(new ProcessEvent.Start(command));
+    }
+
+    /**
+     * Signals step completion.
+     *
+     * @param stepName the completed step name
+     */
+    public void stepComplete(String stepName) {
+        stateMachine.send(new ProcessEvent.StepComplete(stepName));
+    }
+
+    /**
+     * Signals step failure.
+     *
+     * @param stepName the failed step name
+     * @param reason the failure reason
+     */
+    public void stepFailed(String stepName, String reason) {
+        stateMachine.send(new ProcessEvent.StepFailed(stepName, reason));
+    }
+
+    /**
+     * Aborts the process.
+     *
+     * @param reason the abort reason
+     */
+    public void abort(String reason) {
+        stateMachine.send(new ProcessEvent.Abort(reason));
+    }
+
+    /**
+     * Gets the current state.
+     *
+     * @return the current process state
+     */
+    public ProcessState getState() {
+        return stateMachine.getState();
+    }
+
+    /**
+     * Gets the process data.
+     *
+     * @return the current process data
+     */
+    public ProcessData getData() {
+        return stateMachine.getData();
+    }
+
+    /**
+     * Stops the process manager.
+     */
+    public void stop() {
+        stateMachine.stop();
+    }
+}

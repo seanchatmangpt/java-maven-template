@@ -1,0 +1,345 @@
+{#
+  Supervisor Pattern - OTP-inspired process supervisor
+
+  Generates a supervisor that:
+  - Monitors child processes for crashes
+  - Restarts failed children according to strategy (ONE_FOR_ONE, ONE_FOR_ALL, REST_FOR_ONE)
+  - Implements sliding restart window to detect cascade failures
+
+  Variables:
+    name: The supervisor class name (e.g., "OrderSupervisor", "PaymentSupervisor")
+    package: The Java package (e.g., "org.acme.supervisors")
+    strategy: Restart strategy - ONE_FOR_ONE, ONE_FOR_ALL, or REST_FOR_ONE
+    max_restarts: Maximum restarts within the window (default: 3)
+    window_seconds: Restart window duration in seconds (default: 60)
+#}
+package {{ package }};
+
+import org.acme.Supervisor;
+import org.acme.ProcRef;
+import org.acme.Proc;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+
+/**
+ * {{ name }} — an OTP-inspired supervisor for managing child processes.
+ *
+ * <p>This supervisor implements fault tolerance through supervised restarts:
+ * <ul>
+ *   <li>Monitors child processes for crashes (exit signals)</li>
+ *   <li>Restarts failed children according to the configured strategy</li>
+ *   <li>Enforces a restart window to prevent cascade failures</li>
+ * </ul>
+ *
+ * <h2>Restart Strategies</h2>
+ * <ul>
+ *   <li><b>ONE_FOR_ONE</b>: Only the crashed child is restarted</li>
+ *   <li><b>ONE_FOR_ALL</b>: All children are restarted when any crashes</li>
+ *   <li><b>REST_FOR_ONE</b>: The crashed child and all started after it are restarted</li>
+ * </ul>
+ *
+ * <pre>{@code
+ * var supervisor = {{ name }}.create();
+ * supervisor.startChild("worker-1", () -> Worker.create());
+ * supervisor.startChild("worker-2", () -> Worker.create());
+ * // Children are now supervised and will be restarted on failure
+ * }</pre>
+ *
+ * @see Supervisor
+ * @see Proc
+ */
+public final class {{ name }} {
+
+    // ── Configuration ──────────────────────────────────────────────────
+
+    private static final Supervisor.RestartStrategy STRATEGY =
+            Supervisor.RestartStrategy.{{ strategy | default(value="ONE_FOR_ONE") }};
+
+    private static final int MAX_RESTARTS = {{ max_restarts | default(value=3) }};
+    private static final Duration RESTART_WINDOW = Duration.ofSeconds({{ window_seconds | default(value=60) }});
+
+    // ── Child Specification ─────────────────────────────────────────────
+
+    /**
+     * Specification for a supervised child process.
+     *
+     * @param id unique identifier for this child
+     * @param factory supplier that creates a new instance of the child
+     * @param ref current process reference (updated on restart)
+     * @param permanent if true, child is restarted on failure
+     */
+    public record ChildSpec(
+            String id,
+            Supplier<ProcRef<?, ?>> factory,
+            ProcRef<?, ?> ref,
+            boolean permanent
+    ) {}
+
+    // ── Supervisor State ────────────────────────────────────────────────
+
+    private final Supervisor supervisor;
+    private final List<ChildSpec> children = new CopyOnWriteArrayList<>();
+    private final List<Long> restartTimestamps = new CopyOnWriteArrayList<>();
+    private final AtomicInteger restartCount = new AtomicInteger(0);
+
+    // ── Factory ──────────────────────────────────────────────────────────
+
+    private {{ name }}(Supervisor supervisor) {
+        this.supervisor = supervisor;
+    }
+
+    /**
+     * Creates a new supervisor with the default configuration.
+     *
+     * @return a new supervisor instance
+     */
+    public static {{ name }} create() {
+        var supervisor = new Supervisor(STRATEGY, MAX_RESTARTS, RESTART_WINDOW);
+        return new {{ name }}(supervisor);
+    }
+
+    /**
+     * Creates a new supervisor with custom restart parameters.
+     *
+     * @param maxRestarts maximum restarts within the window
+     * @param windowSeconds restart window duration in seconds
+     * @return a new supervisor instance
+     */
+    public static {{ name }} create(int maxRestarts, int windowSeconds) {
+        var supervisor = new Supervisor(
+                STRATEGY,
+                maxRestarts,
+                Duration.ofSeconds(windowSeconds));
+        return new {{ name }}(supervisor);
+    }
+
+    // ── Child Management ────────────────────────────────────────────────
+
+    /**
+     * Starts a child process under this supervisor.
+     *
+     * @param id unique identifier for the child
+     * @param factory supplier that creates a new instance of the child
+     * @param <S> the child's state type
+     * @param <M> the child's message type
+     * @return the process reference to the started child
+     */
+    @SuppressWarnings("unchecked")
+    public <S, M> ProcRef<S, M> startChild(String id, Supplier<ProcRef<S, M>> factory) {
+        var ref = factory.get();
+        children.add(new ChildSpec(id, () -> factory.get(), ref, true));
+        supervisor.watch(ref);
+        return ref;
+    }
+
+    /**
+     * Starts a permanent child that will always be restarted.
+     *
+     * @param id unique identifier for the child
+     * @param factory supplier that creates a new instance of the child
+     * @return the process reference to the started child
+     */
+    public <S, M> ProcRef<S, M> startPermanentChild(String id, Supplier<ProcRef<S, M>> factory) {
+        return startChild(id, factory);
+    }
+
+    /**
+     * Starts a temporary child that will not be restarted on failure.
+     *
+     * @param id unique identifier for the child
+     * @param factory supplier that creates a new instance of the child
+     * @return the process reference to the started child
+     */
+    @SuppressWarnings("unchecked")
+    public <S, M> ProcRef<S, M> startTemporaryChild(String id, Supplier<ProcRef<S, M>> factory) {
+        var ref = factory.get();
+        children.add(new ChildSpec(id, () -> factory.get(), ref, false));
+        // Temporary children are not watched for restarts
+        return ref;
+    }
+
+    /**
+     * Stops a child process and removes it from supervision.
+     *
+     * @param id the child identifier
+     * @return true if the child was found and stopped
+     */
+    public boolean stopChild(String id) {
+        var found = children.stream()
+                .filter(c -> c.id().equals(id))
+                .findFirst();
+
+        if (found.isPresent()) {
+            var child = found.get();
+            children.remove(child);
+            supervisor.unwatch(child.ref());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Restarts a specific child process.
+     *
+     * @param id the child identifier
+     * @return true if the child was found and restarted
+     */
+    public boolean restartChild(String id) {
+        for (int i = 0; i < children.size(); i++) {
+            var child = children.get(i);
+            if (child.id().equals(id) && child.permanent()) {
+                var newRef = child.factory().get();
+                children.set(i, new ChildSpec(id, child.factory(), newRef, true));
+                supervisor.watch(newRef);
+                recordRestart();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ── Restart Window Management ────────────────────────────────────────
+
+    private void recordRestart() {
+        restartTimestamps.add(System.currentTimeMillis());
+        restartCount.incrementAndGet();
+        pruneOldTimestamps();
+    }
+
+    private void pruneOldTimestamps() {
+        var cutoff = System.currentTimeMillis() - RESTART_WINDOW.toMillis();
+        restartTimestamps.removeIf(ts -> ts < cutoff);
+    }
+
+    private boolean withinRestartLimit() {
+        pruneOldTimestamps();
+        return restartTimestamps.size() < MAX_RESTARTS;
+    }
+
+    // ── Failure Handling ─────────────────────────────────────────────────
+
+    /**
+     * Called when a child crashes — implements the restart strategy.
+     *
+     * @param crashedRef the process reference that crashed
+     */
+    void onChildCrash(ProcRef<?, ?> crashedRef) {
+        if (!withinRestartLimit()) {
+            escalateFailure("Restart limit exceeded within window");
+            return;
+        }
+
+        recordRestart();
+
+        switch (STRATEGY) {
+            case ONE_FOR_ONE -> restartOneForOne(crashedRef);
+            case ONE_FOR_ALL -> restartOneForAll();
+            case REST_FOR_ONE -> restartRestForOne(crashedRef);
+        }
+    }
+
+    private void restartOneForOne(ProcRef<?, ?> crashedRef) {
+        for (int i = 0; i < children.size(); i++) {
+            var child = children.get(i);
+            if (child.ref().equals(crashedRef) && child.permanent()) {
+                var newRef = child.factory().get();
+                children.set(i, new ChildSpec(child.id(), child.factory(), newRef, true));
+                supervisor.watch(newRef);
+                break;
+            }
+        }
+    }
+
+    private void restartOneForAll() {
+        for (int i = 0; i < children.size(); i++) {
+            var child = children.get(i);
+            if (child.permanent()) {
+                var newRef = child.factory().get();
+                children.set(i, new ChildSpec(child.id(), child.factory(), newRef, true));
+                supervisor.watch(newRef);
+            }
+        }
+    }
+
+    private void restartRestForOne(ProcRef<?, ?> crashedRef) {
+        int crashIndex = -1;
+        for (int i = 0; i < children.size(); i++) {
+            if (children.get(i).ref().equals(crashedRef)) {
+                crashIndex = i;
+                break;
+            }
+        }
+
+        if (crashIndex >= 0) {
+            for (int i = crashIndex; i < children.size(); i++) {
+                var child = children.get(i);
+                if (child.permanent()) {
+                    var newRef = child.factory().get();
+                    children.set(i, new ChildSpec(child.id(), child.factory(), newRef, true));
+                    supervisor.watch(newRef);
+                }
+            }
+        }
+    }
+
+    // ── Failure Escalation ────────────────────────────────────────────────
+
+    private void escalateFailure(String reason) {
+        System.err.println("[{{ name }}] ESCALATING: " + reason);
+
+        // Stop all children to prevent cascade failures
+        for (var child : children) {
+            if (child.permanent()) {
+                try {
+                    child.ref().send(new ShutdownSignal());
+                } catch (Exception e) {
+                    // Ignore errors during shutdown
+                }
+            }
+        }
+    }
+
+    // ── Introspection ────────────────────────────────────────────────────
+
+    /**
+     * Returns the list of supervised children.
+     */
+    public List<ChildSpec> getChildren() {
+        return List.copyOf(children);
+    }
+
+    /**
+     * Returns the number of restarts within the current window.
+     */
+    public int getRestartCount() {
+        return restartCount.get();
+    }
+
+    /**
+     * Returns the underlying supervisor instance.
+     */
+    public Supervisor supervisor() {
+        return supervisor;
+    }
+
+    // ── Shutdown Signal ──────────────────────────────────────────────────
+
+    /**
+     * Internal signal for graceful shutdown.
+     */
+    public record ShutdownSignal() {}
+
+    @Override
+    public String toString() {
+        return "{{ name }}[children=%d, restarts=%d/%d in %ds]".formatted(
+                children.size(),
+                restartTimestamps.size(),
+                MAX_RESTARTS,
+                RESTART_WINDOW.toSeconds());
+    }
+}

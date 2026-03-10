@@ -1,0 +1,262 @@
+{#
+  Actor Pattern - OTP-inspired process with isolated state and message passing
+
+  Generates a Proc-based actor that:
+  - Owns its state exclusively (no shared mutable state)
+  - Communicates only via messages
+  - Handles messages in a pure state transition function
+
+  Variables:
+    name: The actor class name (e.g., "UserCache", "OrderProcessor")
+    package: The Java package (e.g., "org.acme.actors")
+    state_type: The state record type (e.g., "UserCacheState")
+    message_type: The sealed message interface type (e.g., "UserCacheMsg")
+#}
+package {{ package }};
+
+import org.acme.Proc;
+import org.acme.ProcRef;
+import org.acme.Supervisor;
+import org.acme.Result;
+
+import java.util.function.BiFunction;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
+/**
+ * {{ name }} — an OTP-inspired actor process with isolated state.
+ *
+ * <p>This actor follows the "share nothing" principle: all state is owned
+ * exclusively by this process and can only be modified via message passing.
+ * No other code can read or write the state directly.
+ *
+ * <pre>{@code
+ * var actor = {{ name }}.start();
+ * actor.send(new {{ name }}.Command.YourCommand(...));
+ * var result = actor.ask(new {{ name }}.Query.YourQuery(...));
+ * }</pre>
+ *
+ * @see Proc
+ * @see Supervisor
+ */
+public final class {{ name }} {
+
+    // ── Message Protocol (sealed for exhaustive handling) ─────────────
+
+    /**
+     * Sealed message interface — all messages to this actor implement this.
+     * Pattern matching in the handler ensures compile-time exhaustiveness.
+     */
+    public sealed interface Msg permits Command, Query, Event {}
+
+    /**
+     * Commands — messages that mutate state and return void.
+     * Send via {@link #send(Msg)} for fire-and-forget semantics.
+     */
+    public sealed interface Command extends Msg {
+        // Add your command messages here, e.g.:
+        // record CreateUser(String id, String name) implements Command {}
+        // record UpdateEmail(String id, String email) implements Command {}
+        // record DeleteUser(String id) implements Command {}
+    }
+
+    /**
+     * Queries — messages that read state and return a result.
+     * Send via {@link #ask(Msg)} for request-response semantics.
+     */
+    public sealed interface Query extends Msg {
+        // Add your query messages here, e.g.:
+        // record GetUser(String id) implements Query {}
+        // record ListUsers(int limit) implements Query {}
+        // record CountUsers() implements Query {}
+    }
+
+    /**
+     * Events — internal state change notifications.
+     * Used for side effects like logging, metrics, notifications.
+     */
+    public sealed interface Event extends Msg {
+        // Add your event messages here, e.g.:
+        // record UserCreated(String id) implements Event {}
+        // record UserDeleted(String id) implements Event {}
+    }
+
+    // ── Actor State (immutable record) ─────────────────────────────────
+
+    /**
+     * Immutable state record — the actor's internal state.
+     * All fields should be immutable or defensively copied.
+     *
+     * <p>State transitions return new instances; the original is never mutated.
+     */
+    public record State(
+            // Define your state fields here, e.g.:
+            // Map<String, User> users,
+            // Instant lastModified,
+            // long version
+    ) {
+        /** Initial empty state. */
+        public static State empty() {
+            return new State(
+                    // Initialize fields with empty/default values
+            );
+        }
+    }
+
+    // ── Actor Instance ─────────────────────────────────────────────────
+
+    private final ProcRef<State, Msg> ref;
+
+    private {{ name }}(ProcRef<State, Msg> ref) {
+        this.ref = ref;
+    }
+
+    /**
+     * Starts a new {{ name }} actor with empty initial state.
+     *
+     * @return a handle to the started actor
+     */
+    public static {{ name }} start() {
+        return start(State.empty());
+    }
+
+    /**
+     * Starts a new {{ name }} actor with the given initial state.
+     *
+     * @param initialState the starting state
+     * @return a handle to the started actor
+     */
+    public static {{ name }} start(State initialState) {
+        var proc = new Proc<>(initialState, {{ name }}::handle);
+        var ref = ProcRef.of(proc);
+        return new {{ name }}(ref);
+    }
+
+    /**
+     * Starts this actor under a supervisor with the given restart strategy.
+     *
+     * @param supervisor the supervisor to register with
+     * @return a handle to the started actor
+     */
+    public static {{ name }} startUnder(Supervisor supervisor) {
+        var actor = start();
+        supervisor.watch(actor.ref());
+        return actor;
+    }
+
+    // ── Message Passing API ────────────────────────────────────────────
+
+    /**
+     * Sends a fire-and-forget message (typically a Command).
+     * Does not wait for processing or a response.
+     *
+     * @param msg the message to send
+     */
+    public void send(Msg msg) {
+        ref.send(msg);
+    }
+
+    /**
+     * Sends a request message and waits for a response.
+     * Use for queries that need to return data.
+     *
+     * @param msg the query message
+     * @param <R> the response type
+     * @return the response
+     * @throws InterruptedException if interrupted while waiting
+     */
+    @SuppressWarnings("unchecked")
+    public <R> R ask(Query msg) throws InterruptedException {
+        try {
+            return (R) ref.ask(msg, java.time.Duration.ofSeconds(5));
+        } catch (ExecutionException e) {
+            throw new RuntimeException("Actor query failed", e.getCause());
+        }
+    }
+
+    /**
+     * Sends a request message with a custom timeout.
+     *
+     * @param msg the query message
+     * @param timeout maximum time to wait
+     * @param <R> the response type
+     * @return the response
+     */
+    @SuppressWarnings("unchecked")
+    public <R> CompletableFuture<R> askAsync(Query msg, java.time.Duration timeout) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return (R) ref.ask(msg, timeout);
+            } catch (InterruptedException | ExecutionException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    // ── State Handler (pure function) ───────────────────────────────────
+
+    /**
+     * Pure state transition function — handles all messages and returns new state.
+     *
+     * <p>This function must be pure: no side effects, no mutation of input state.
+     * Return a new State record for each transition.
+     *
+     * @param state the current state (never null, never mutated)
+     * @param msg the message to process
+     * @return the new state after processing
+     */
+    private static State handle(State state, Msg msg) {
+        return switch (msg) {
+            // ── Commands (mutate state) ───────────────────────────────
+            // case Command.CreateUser c -> {
+            //     var newUser = new User(c.id(), c.name());
+            //     var updatedUsers = new LinkedHashMap<>(state.users());
+            //     updatedUsers.put(c.id(), newUser);
+            //     yield new State(
+            //         Map.copyOf(updatedUsers),
+            //         Instant.now(),
+            //         state.version() + 1
+            //     );
+            // }
+
+            // ── Queries (return current state, no mutation) ───────────
+            // case Query.GetUser q -> {
+            //     // For queries, use Proc.ask() which handles replies
+            //     yield state; // no state change
+            // }
+
+            // ── Events (internal notifications) ───────────────────────
+            // case Event.UserCreated e -> {
+            //     // Log, emit metrics, notify observers
+            //     yield state; // events typically don't change state
+            // }
+
+            // Remove this default branch once you add your message cases:
+            case Command c -> state;
+            case Query q -> state;
+            case Event e -> state;
+        };
+    }
+
+    // ── Introspection (for debugging/monitoring) ───────────────────────
+
+    /**
+     * Returns the current state for debugging/monitoring purposes.
+     * Do not use for business logic — use message passing instead.
+     */
+    public State getState() {
+        return ref.getState();
+    }
+
+    /**
+     * Returns the process reference for supervision purposes.
+     */
+    public ProcRef<State, Msg> ref() {
+        return ref;
+    }
+
+    @Override
+    public String toString() {
+        return "{{ name }}[state=%s]".formatted(ref.getState());
+    }
+}

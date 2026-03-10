@@ -1,0 +1,99 @@
+{# Wire Tap — Non-intrusive message observation via EventManager #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}WireTap.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Non-intrusive message observation without affecting main flow"
+---
+package {{ package }};
+
+import org.acme.EventManager;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Wire Tap pattern using JOTP EventManager.
+ * Observes messages flowing through a channel without affecting the main flow.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 7
+ */
+{% endif %}
+public final class {{ name }}WireTap {
+
+    private final EventManager<{{ message_type }}> tapBus;
+    private final java.util.concurrent.atomic.AtomicInteger tapCount;
+
+    private {{ name }}WireTap() {
+        this.tapBus = EventManager.start();
+        this.tapCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    }
+
+    /**
+     * Creates a new wire tap.
+     */
+    public static {{ name }}WireTap create() {
+        return new {{ name }}WireTap();
+    }
+
+    /**
+     * Adds an observer to the wire tap.
+     *
+     * @param observer the observer to add
+     */
+    public void addObserver(java.util.function.Consumer<{{ message_type }}> observer) {
+        tapBus.addHandler(observer);
+    }
+
+    /**
+     * Creates a tap function that can be inserted into a message flow.
+     * The tap observes and forwards the message unchanged.
+     *
+     * @return a function that taps and forwards messages
+     */
+    public java.util.function.Function<{{ message_type }}, {{ message_type }}> tapFunction() {
+        return msg -> {
+            tapCount.incrementAndGet();
+            tapBus.notify(msg); // Non-blocking notification to observers
+            return msg; // Forward unchanged
+        };
+    }
+
+    /**
+     * Taps a message (sends to observers without blocking).
+     *
+     * @param message the message to tap
+     */
+    public void tap({{ message_type }} message) {
+        tapCount.incrementAndGet();
+        tapBus.notify(message);
+    }
+
+    /**
+     * Gets the count of messages that have been tapped.
+     *
+     * @return the tap count
+     */
+    public int getTapCount() {
+        return tapCount.get();
+    }
+
+    /**
+     * Removes an observer from the wire tap.
+     *
+     * @param observer the observer to remove
+     */
+    public void removeObserver(java.util.function.Consumer<{{ message_type }}> observer) {
+        tapBus.deleteHandler(observer);
+    }
+
+    /**
+     * Stops the wire tap and releases resources.
+     */
+    public void stop() {
+        tapBus.stop();
+    }
+}

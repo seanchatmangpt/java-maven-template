@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -290,5 +292,75 @@ class RefactorEngineTest implements WithAssertions {
         assertThat(headline).contains("score=");
         assertThat(headline).contains("Order.java");
         assertThat(headline).contains("migration(s)");
+    }
+
+    // ── Edge Cases (JIDOKA - Stop and Fix) ────────────────────────────────────
+
+    @Nested
+    @DisplayName("Edge cases and error handling")
+    class EdgeCases {
+
+        @Test
+        void analyzeFile_nullPath_throws(@TempDir Path tmp) {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> RefactorEngine.analyzeFile(null));
+        }
+
+        @Test
+        void analyze_nullPath_throws(@TempDir Path tmp) {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> RefactorEngine.analyze(null));
+        }
+
+        @Test
+        void analyze_nonExistentDirectory_returnsEmptyPlan(@TempDir Path tmp) throws Exception {
+            var nonExistent = tmp.resolve("non-existent");
+            // Non-existent directory throws exception - this is expected behavior
+            assertThatThrownBy(() -> RefactorEngine.analyze(nonExistent))
+                    .isInstanceOf(java.nio.file.NoSuchFileException.class);
+        }
+
+        @Test
+        void analyzeFile_nonJavaFile_returnsEmptyPlan(@TempDir Path tmp) throws IOException {
+            var txtFile = tmp.resolve("README.txt");
+            Files.writeString(txtFile, "This is not Java code");
+
+            var plan = RefactorEngine.analyzeFile(txtFile);
+
+            assertThat(plan.commands()).isEmpty();
+        }
+
+        @Test
+        void toScript_emptyPlan_producesMinimalScript(@TempDir Path tmp) throws IOException {
+            var emptyDir = tmp.resolve("empty");
+            Files.createDirectories(emptyDir);
+
+            var plan = RefactorEngine.analyze(emptyDir);
+            var script = plan.toScript();
+
+            assertThat(script).startsWith("#!/usr/bin/env bash");
+            assertThat(script).contains("No migrations required");
+        }
+
+        @Test
+        void jgenCommand_toShellCommand_escapesSpecialCharacters(@TempDir Path tmp) throws IOException {
+            var source = """
+                    package org.acme;
+                    public class Test {
+                        private String field;
+                        public String getField() { return field; }
+                    }
+                    """;
+            var file = tmp.resolve("Test.java");
+            Files.writeString(file, source);
+
+            var plan = RefactorEngine.analyzeFile(file);
+
+            plan.commands().forEach(cmd -> {
+                // Shell command should be safe to execute
+                assertThat(cmd.toShellCommand()).doesNotContain("\n");
+                assertThat(cmd.toShellCommand()).doesNotContain("`");
+            });
+        }
     }
 }

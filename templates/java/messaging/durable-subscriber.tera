@@ -1,0 +1,184 @@
+{# Durable Subscriber — Subscriber that receives messages while inactive #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}DurableSubscriber.java"
+vars:
+  name: "Event"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Subscriber that receives messages sent while inactive, with persistent state"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Durable Subscriber pattern using JOTP Proc.
+ * Maintains subscription state so messages sent while inactive are delivered on reconnection.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 3
+ */
+{% endif %}
+public final class {{ name }}DurableSubscriber {
+
+    private final Proc<SubscriptionState, Object> subscriber;
+
+    /** State of the durable subscription. */
+    public record SubscriptionState(
+            String subscriptionId,
+            boolean active,
+            long lastDeliveredSeq,
+            java.util.List<PendingMessage> pendingMessages,
+            java.util.List<PendingMessage> undeliveredMessages,
+            int maxPendingSize) {
+
+        public static SubscriptionState initial(String id, int maxPending) {
+            return new SubscriptionState(id, false, -1, new java.util.ArrayList<>(), new java.util.ArrayList<>(), maxPending);
+        }
+    }
+
+    /** Pending message with sequence number. */
+    public record PendingMessage(
+            long sequenceNumber,
+            {{ message_type }} message,
+            long timestamp) {}
+
+    private {{ name }}DurableSubscriber(Proc<SubscriptionState, Object> subscriber) {
+        this.subscriber = subscriber;
+    }
+
+    /**
+     * Creates a durable subscriber.
+     *
+     * @param subscriptionId unique subscription identifier
+     * @param maxPending maximum pending messages to retain
+     */
+    public static {{ name }}DurableSubscriber create(String subscriptionId, int maxPending) {
+        var proc = new Proc<>(
+                SubscriptionState.initial(subscriptionId, maxPending),
+                (SubscriptionState state, Object msg) -> {
+                    if (msg instanceof ReceiveMessage rm) {
+                        var newPending = new java.util.ArrayList<>(state.pendingMessages());
+                        newPending.add(new PendingMessage(rm.sequenceNumber(), rm.message(), System.currentTimeMillis()));
+
+                        // Trim to max size
+                        while (newPending.size() > state.maxPendingSize()) {
+                            newPending.remove(0);
+                        }
+
+                        // If active, deliver immediately
+                        if (state.active()) {
+                            var newUndelivered = new java.util.ArrayList<>(state.undeliveredMessages());
+                            newUndelivered.addAll(newPending);
+                            return new SubscriptionState(
+                                    state.subscriptionId(),
+                                    true,
+                                    newPending.get(newPending.size() - 1).sequenceNumber(),
+                                    new java.util.ArrayList<>(),
+                                    newUndelivered,
+                                    state.maxPendingSize());
+                        }
+
+                        return new SubscriptionState(
+                                state.subscriptionId(),
+                                false,
+                                state.lastDeliveredSeq(),
+                                newPending,
+                                state.undeliveredMessages(),
+                                state.maxPendingSize());
+                    } else if (msg instanceof Activate) {
+                        // On activation, move pending to undelivered
+                        var newUndelivered = new java.util.ArrayList<>(state.undeliveredMessages());
+                        newUndelivered.addAll(state.pendingMessages());
+                        return new SubscriptionState(
+                                state.subscriptionId(),
+                                true,
+                                state.lastDeliveredSeq(),
+                                new java.util.ArrayList<>(),
+                                newUndelivered,
+                                state.maxPendingSize());
+                    } else if (msg instanceof Deactivate) {
+                        return new SubscriptionState(
+                                state.subscriptionId(),
+                                false,
+                                state.lastDeliveredSeq(),
+                                state.pendingMessages(),
+                                state.undeliveredMessages(),
+                                state.maxPendingSize());
+                    } else if (msg instanceof QueryState) {
+                        return state;
+                    }
+                    return state;
+                });
+        return new {{ name }}DurableSubscriber(proc);
+    }
+
+    /**
+     * Activates the subscription.
+     */
+    public void activate() {
+        subscriber.tell(new Activate());
+    }
+
+    /**
+     * Deactivates the subscription.
+     */
+    public void deactivate() {
+        subscriber.tell(new Deactivate());
+    }
+
+    /**
+     * Receives a message.
+     *
+     * @param sequenceNumber the message sequence number
+     * @param message the message
+     */
+    public void receive(long sequenceNumber, {{ message_type }} message) {
+        subscriber.tell(new ReceiveMessage(sequenceNumber, message));
+    }
+
+    /**
+     * Gets the subscription state.
+     *
+     * @return the current state
+     */
+    public SubscriptionState getState() {
+        try {
+            return subscriber.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query subscription state", e);
+        }
+    }
+
+    /**
+     * Checks if the subscription is active.
+     *
+     * @return true if active
+     */
+    public boolean isActive() {
+        try {
+            return subscriber.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .active();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Stops the subscriber.
+     */
+    public void stop() {
+        subscriber.stop();
+    }
+
+    // Message types
+    record ReceiveMessage(long sequenceNumber, {{ message_type }} message) {}
+    record Activate() {}
+    record Deactivate() {}
+    record QueryState() {}
+}

@@ -1,0 +1,178 @@
+{# Control Bus — Manage and monitor messaging system via ProcSys #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}ControlBus.java"
+vars:
+  name: "System"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  javadoc: "Manages and monitors messaging system via ProcSys introspection"
+---
+package {{ package }};
+
+import org.acme.Proc;
+import org.acme.ProcSys;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Control Bus pattern using JOTP ProcSys.
+ * Provides management and monitoring capabilities for the messaging system.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 12
+ */
+{% endif %}
+public final class {{ name }}ControlBus {
+
+    private final java.util.Map<String, Proc<?, ?>> managedProcesses;
+    private final Proc<ControlState, ControlCommand> controlProc;
+
+    /** Control bus state. */
+    public record ControlState(
+            java.util.Map<String, ProcessInfo> processInfo,
+            boolean suspended) {}
+
+    /** Process information. */
+    public record ProcessInfo(
+            String name,
+            String status,
+            long messageCount,
+            long errorCount) {}
+
+    /** Control commands. */
+    public sealed interface ControlCommand permits
+            ControlCommand.Suspend,
+            ControlCommand.Resume,
+            ControlCommand.GetStats,
+            ControlCommand.Reset {}
+
+    public record Suspend(String processName) implements ControlCommand {}
+    public record Resume(String processName) implements ControlCommand {}
+    public record GetStats() implements ControlCommand {}
+    public record Reset(String processName) implements ControlCommand {}
+
+    private {{ name }}ControlBus(
+            java.util.Map<String, Proc<?, ?>> managedProcesses,
+            Proc<ControlState, ControlCommand> controlProc) {
+        this.managedProcesses = managedProcesses;
+        this.controlProc = controlProc;
+    }
+
+    /**
+     * Creates a control bus.
+     */
+    public static {{ name }}ControlBus create() {
+        var managedProcesses = new java.util.concurrent.ConcurrentHashMap<String, Proc<?, ?>>();
+
+        var controlProc = new Proc<>(
+                new ControlState(new java.util.HashMap<>(), false),
+                (ControlState state, ControlCommand cmd) -> {
+                    return switch (cmd) {
+                        case Suspend s -> {
+                            var proc = managedProcesses.get(s.processName());
+                            if (proc != null) {
+                                ProcSys.suspend(proc);
+                            }
+                            yield state;
+                        }
+                        case Resume r -> {
+                            var proc = managedProcesses.get(r.processName());
+                            if (proc != null) {
+                                ProcSys.resume(proc);
+                            }
+                            yield state;
+                        }
+                        case GetStats g -> {
+                            yield state; // Stats retrieved via ask()
+                        }
+                        case Reset r -> {
+                            // Reset would clear state - implementation depends on use case
+                            yield state;
+                        }
+                    };
+                });
+
+        return new {{ name }}ControlBus(managedProcesses, controlProc);
+    }
+
+    /**
+     * Registers a process for management.
+     *
+     * @param name the process name
+     * @param proc the process to manage
+     */
+    public void register(String name, Proc<?, ?> proc) {
+        managedProcesses.put(name, proc);
+    }
+
+    /**
+     * Unregisters a process.
+     *
+     * @param name the process name
+     */
+    public void unregister(String name) {
+        managedProcesses.remove(name);
+    }
+
+    /**
+     * Suspends a managed process.
+     *
+     * @param processName the process name
+     */
+    public void suspend(String processName) {
+        controlProc.tell(new Suspend(processName));
+    }
+
+    /**
+     * Resumes a suspended process.
+     *
+     * @param processName the process name
+     */
+    public void resume(String processName) {
+        controlProc.tell(new Resume(processName));
+    }
+
+    /**
+     * Gets statistics for all managed processes.
+     *
+     * @return map of process statistics
+     */
+    public java.util.Map<String, Object> getStats() {
+        var stats = new java.util.LinkedHashMap<String, Object>();
+        for (var entry : managedProcesses.entrySet()) {
+            var procStats = ProcSys.statistics(entry.getValue());
+            stats.put(entry.getKey(), procStats);
+        }
+        return stats;
+    }
+
+    /**
+     * Gets the state of a specific process.
+     *
+     * @param processName the process name
+     * @return the process state
+     */
+    public Object getProcessState(String processName) {
+        var proc = managedProcesses.get(processName);
+        if (proc != null) {
+            return ProcSys.getState(proc);
+        }
+        return null;
+    }
+
+    /**
+     * Lists all managed process names.
+     *
+     * @return set of process names
+     */
+    public java.util.Set<String> listProcesses() {
+        return java.util.Collections.unmodifiableSet(managedProcesses.keySet());
+    }
+
+    /**
+     * Stops the control bus.
+     */
+    public void stop() {
+        controlProc.stop();
+    }
+}

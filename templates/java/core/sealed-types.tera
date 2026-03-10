@@ -1,0 +1,211 @@
+{#
+  Sealed Types Pattern - Exhaustive type hierarchies with pattern matching
+
+  Generates a sealed interface/class with permitted subtypes that enables:
+  - Compile-time exhaustiveness checking in switch expressions
+  - Type-safe domain modeling
+  - Pattern matching on all variants
+
+  Variables:
+    name: The sealed type name (e.g., "Shape", "PaymentMethod", "Result")
+    package: The Java package (e.g., "org.acme.domain")
+    kind: "interface" or "class"
+    permits: Comma-separated list of permitted subtype names
+    subtypes: List of subtype definitions (each with name, components, and javadoc)
+#}
+package {{ package }};
+
+import java.util.function.Function;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+/**
+ * {{ name }} — a sealed type hierarchy enabling exhaustive pattern matching.
+ *
+ * <p>Sealed types provide compile-time guarantees that all subtypes are known,
+ * allowing the compiler to verify that switch expressions are exhaustive.
+ *
+ * <pre>{@code
+ * var result = switch (shape) {
+ *     case {{ name }}.Circle c -> Math.PI * c.radius() * c.radius();
+ *     case {{ name }}.Rectangle r -> r.width() * r.height();
+ *     // Compiler ensures all cases are handled
+ * };
+ * }</pre>
+ *
+ * @see <a href="https://openjdk.org/jeps/409">JEP 409: Sealed Classes</a>
+ */
+public sealed {{ kind | default(value="interface") }} {{ name }}
+        permits {{ permits | default(value=name + ".Circle, " + name + ".Rectangle") }} {
+
+    // ── Type Category ────────────────────────────────────────────────────
+
+    /**
+     * Returns the category of this type for pattern matching convenience.
+     */
+    {% if kind == "interface" %}
+    String category();
+    {% else %}
+    public abstract String category();
+    {% endif %}
+
+    // ── Common Operations ─────────────────────────────────────────────────
+
+    /**
+     * Folds over all possible subtypes and returns a result.
+     * The compiler ensures all cases are handled.
+     *
+     * @param circle function for Circle case
+     * @param rectangle function for Rectangle case
+     * @return the result of applying the matching function
+     */
+    default <R> R fold(
+            Function<? super Circle, ? extends R> circle,
+            Function<? super Rectangle, ? extends R> rectangle) {
+        return switch (this) {
+            case Circle c -> circle.apply(c);
+            case Rectangle r -> rectangle.apply(r);
+        };
+    }
+
+    /**
+     * Performs an action on this type.
+     * The compiler ensures all cases are handled.
+     */
+    default void forEach(
+            Consumer<? super Circle> circle,
+            Consumer<? super Rectangle> rectangle) {
+        switch (this) {
+            case Circle c -> circle.accept(c);
+            case Rectangle r -> rectangle.accept(r);
+        }
+    }
+
+    /**
+     * Returns all possible subtype names for documentation purposes.
+     */
+    static Stream<String> subtypeNames() {
+        return Stream.of("Circle", "Rectangle");
+    }
+
+    // ── Permitted Subtypes ────────────────────────────────────────────────
+
+    /**
+     * Circle subtype — represents a circular shape.
+     *
+     * @param radius the radius of the circle
+     */
+    record Circle(double radius) implements {{ name }} {
+        @Override
+        public String category() {
+            return "round";
+        }
+
+        /**
+         * Computes the area of this circle.
+         */
+        public double area() {
+            return Math.PI * radius * radius;
+        }
+
+        /**
+         * Computes the circumference of this circle.
+         */
+        public double circumference() {
+            return 2 * Math.PI * radius;
+        }
+    }
+
+    /**
+     * Rectangle subtype — represents a rectangular shape.
+     *
+     * @param width the width of the rectangle
+     * @param height the height of the rectangle
+     */
+    record Rectangle(double width, double height) implements {{ name }} {
+        @Override
+        public String category() {
+            return "angular";
+        }
+
+        /**
+         * Computes the area of this rectangle.
+         */
+        public double area() {
+            return width * height;
+        }
+
+        /**
+         * Computes the perimeter of this rectangle.
+         */
+        public double perimeter() {
+            return 2 * (width + height);
+        }
+
+        /**
+         * Returns true if this is a square.
+         */
+        public boolean isSquare() {
+            return width == height;
+        }
+    }
+
+    // ── Factory Methods ──────────────────────────────────────────────────
+
+    /**
+     * Creates a circle with the given radius.
+     */
+    static Circle circle(double radius) {
+        if (radius <= 0) {
+            throw new IllegalArgumentException("Radius must be positive");
+        }
+        return new Circle(radius);
+    }
+
+    /**
+     * Creates a rectangle with the given dimensions.
+     */
+    static Rectangle rectangle(double width, double height) {
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("Dimensions must be positive");
+        }
+        return new Rectangle(width, height);
+    }
+
+    /**
+     * Creates a square (special case of rectangle) with the given side.
+     */
+    static Rectangle square(double side) {
+        return rectangle(side, side);
+    }
+
+    // ── Pattern Matching Helpers ─────────────────────────────────────────
+
+    /**
+     * Pattern matching predicate for Circle.
+     */
+    static boolean isCircle({{ name }} shape) {
+        return shape instanceof Circle;
+    }
+
+    /**
+     * Pattern matching predicate for Rectangle.
+     */
+    static boolean isRectangle({{ name }} shape) {
+        return shape instanceof Rectangle;
+    }
+
+    /**
+     * Safe cast to Circle, returning null if not a Circle.
+     */
+    static Circle asCircle({{ name }} shape) {
+        return shape instanceof Circle c ? c : null;
+    }
+
+    /**
+     * Safe cast to Rectangle, returning null if not a Rectangle.
+     */
+    static Rectangle asRectangle({{ name }} shape) {
+        return shape instanceof Rectangle r ? r : null;
+    }
+}

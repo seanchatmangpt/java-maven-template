@@ -489,4 +489,69 @@ class GoNoGoEngineTest implements WithAssertions {
                     .isInstanceOf(UnsupportedOperationException.class);
         }
     }
+
+    // ── Edge Cases (JIDOKA - Stop and Fix) ────────────────────────────────────
+
+    @Nested
+    @DisplayName("Edge cases and error handling")
+    class EdgeCases {
+
+        @Test
+        @DisplayName("check null source throws NullPointerException")
+        void checkNullSource() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> GoNoGoEngine.check(null, "TestClass"))
+                    .withMessageContaining("javaSource");
+        }
+
+        @Test
+        @DisplayName("check null className throws NullPointerException")
+        void checkNullClassName() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> GoNoGoEngine.check("public class Foo {}", null))
+                    .withMessageContaining("className");
+        }
+
+        @Test
+        @DisplayName("audit null source throws NullPointerException")
+        void auditNullSource() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> GoNoGoEngine.audit(null))
+                    .withMessageContaining("javaSource");
+        }
+
+        @Test
+        @DisplayName("check empty source returns NoGo (code is correct)")
+        void checkEmptySource() {
+            var verdict = GoNoGoEngine.check("", "Empty");
+
+            // NoGo means "code is already correct" - no violations found
+            assertThat(verdict).isInstanceOf(Verdict.NoGo.class);
+        }
+
+        @Test
+        @DisplayName("audit empty source returns empty list")
+        void auditEmptySource() {
+            var violations = GoNoGoEngine.audit("");
+
+            assertThat(violations).isEmpty();
+        }
+
+        @Test
+        @DisplayName("check blank source returns NoGo (code is correct)")
+        void checkBlankSource() {
+            var verdict = GoNoGoEngine.check("   \n\n   ", "Blank");
+
+            // NoGo means "code is already correct" - no violations found
+            assertThat(verdict).isInstanceOf(Verdict.NoGo.class);
+        }
+
+        @Test
+        @DisplayName("audit blank source returns empty list")
+        void auditBlankSource() {
+            var violations = GoNoGoEngine.audit("   \n\n   ");
+
+            assertThat(violations).isEmpty();
+        }
+    }
 }

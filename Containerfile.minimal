@@ -1,0 +1,37 @@
+# Java Maven Template - Minimal Runtime Containerfile
+# For pre-built JAR files (CI/CD pipeline use)
+
+# Use Eclipse Temurin JRE 25 (minimal Alpine)
+FROM eclipse-temurin:25-jre-alpine
+
+# Labels for OCI compliance
+LABEL org.opencontainers.image.title="Java Maven Template" \
+      org.opencontainers.image.description="Java 25 Maven Template Application" \
+      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.source="https://github.com/seanchatmangpt/java-maven-template"
+
+# Security: Create non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+# Copy pre-built JAR (must be built externally)
+# Usage: docker build -f Containerfile.minimal --build-arg JAR_FILE=target/app.jar -t app .
+ARG JAR_FILE=target/*.jar
+COPY --chown=appuser:appgroup ${JAR_FILE} /app/app.jar
+
+# Security: Run as non-root
+USER appuser
+
+# Expose application port
+EXPOSE 8080
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Container-optimized JVM settings
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+
+# Entry point
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

@@ -1,0 +1,111 @@
+{# Domain Types — Generate sealed interface message types and record payloads #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Domain.java"
+vars:
+  name: "Telemetry"
+  package: "org.acme.domain"
+  output_dir: "src/main/java"
+  domain_types: []
+  message_types: []
+  javadoc: "Domain types for type-safe messaging"
+---
+package {{ package }};
+
+import java.util.UUID;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Generated domain types for the {{ name }} domain.
+ * Provides sealed interface message types and record payloads for type-safe messaging.
+ */
+{% endif %}
+public final class {{ name }}Domain {
+
+    private {{ name }}Domain() {
+        // Utility class - no instantiation
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // DOMAIN VALUE TYPES
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+{% for type in domain_types %}
+    {% if type.is_sealed %}
+    /** {{ type.description | default(value="Sealed type hierarchy for " ~ type.name) }} */
+    public sealed interface {{ type.name }} permits
+    {%- for variant in type.variants %}
+            {{ type.name }}.{{ variant.name }}{% if not loop.last %}, {% endif %}
+    {%- endfor %} {
+    {% for variant in type.variants %}
+        record {{ variant.name }}({{ variant.fields | default(value="") }}) implements {{ type.name }} {}
+    {% endfor %}
+    }
+
+    {% else %}
+    /** {{ type.description | default(value="Value type: " ~ type.name) }} */
+    public record {{ type.name }}({{ type.fields | default(value="") }}) {}
+
+    {% endif %}
+{% endfor %}
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // MESSAGE TYPES (Sealed Interface)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Canonical message type for {{ name }} domain.
+     * All messages implement this sealed interface for exhaustive pattern matching.
+     */
+    public sealed interface {{ name }}Msg permits
+{% for msg in message_types %}
+            {{ name }}Msg.{{ msg.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+            {{ name }}Msg.Query {
+
+        /** Unique correlation ID for message tracking. */
+        UUID correlationId();
+
+        /** Message creation timestamp. */
+        long timestamp();
+
+{% for msg in message_types %}
+        /** {{ msg.description | default(value="Message type: " ~ msg.name) }} */
+        record {{ msg.name }}(
+                UUID correlationId,
+                long timestamp
+                {%- if msg.fields %},{% endif -%}
+{% for field in msg.fields %}
+                {{ field.type }} {{ field.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+        ) implements {{ name }}Msg {}
+
+{% endfor %}
+        /** Query message for state retrieval. */
+        sealed interface Query extends {{ name }}Msg permits Query.State, Query.Count {
+            record State() implements Query {}
+            record Count() implements Query {}
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // HELPER FACTORIES
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Generates a new correlation ID.
+     */
+    public static UUID newCorrelationId() {
+        return UUID.randomUUID();
+    }
+
+    /**
+     * Gets current timestamp.
+     */
+    public static long now() {
+        return System.currentTimeMillis();
+    }
+}

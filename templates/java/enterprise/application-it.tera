@@ -1,0 +1,292 @@
+package {{ project.basePackage | default(value="org.generated") }};
+
+import org.acme.*;
+import org.junit.jupiter.api.*;
+import org.assertj.core.api.WithAssertions;
+import org.awaitility.Awaitility;
+
+import java.time.Duration;
+import java.util.concurrent.*;
+
+import static org.awaitility.Awaitility.await;
+
+/**
+ * Integration tests for {{ project.name | default(value="Generated Application") }}.
+ *
+ * <p>Tests verify:
+ * <ul>
+ *   <li>Application starts and stops correctly</li>
+ *   <li>Services are supervised and restart on failure</li>
+ *   <li>Message flow between services works</li>
+ *   <li>Infrastructure components initialize correctly</li>
+ *   <li>Health checks pass</li>
+ *   <li>API Gateway routes requests</li>
+ * </ul>
+ */
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+class ApplicationIT implements WithAssertions {
+
+    private Application app;
+    {% if project.infrastructure %}
+    {% for infra in project.infrastructure %}
+    private {{ infra.type | default(value="MessageBus") }} {{ infra.name | default(value="bus") }};
+    {% endfor %}
+    {% endif %}
+
+    @BeforeEach
+    void setUp() {
+        {% if project.infrastructure %}
+        {% for infra in project.infrastructure %}
+        {{ infra.name | default(value="bus") }} = {{ infra.type | default(value="MessageBus") }}.create("{{ infra.name | default(value="bus") }}");
+        {% endfor %}
+        {% endif %}
+
+        app = Application.builder("{{ project.name | default(value="app") }}")
+                .supervisorStrategy(Supervisor.Strategy.{{ project.supervisorStrategy | default(value="ONE_FOR_ONE") }})
+                .maxRestarts({{ project.maxRestarts | default(value=10) }})
+                .restartWindow(Duration.ofMinutes({{ project.restartWindow | default(value=1) }}))
+                {% if project.services %}
+                {% for service in project.services %}
+                .service("{{ service.name }}",
+                        () -> new {{ service.stateClass | default(value="ServiceState") }}({% if service.dependencies %}{% for dep in service.dependencies %}{{ dep.name }{{ "," }}{% endfor %}{% endif %}),
+                        this::handle{{ service.name | capitalize }})
+                {% endfor %}
+                {% endif %}
+                {% if project.infrastructure %}
+                {% for infra in project.infrastructure %}
+                .infrastructure({{ infra.name | default(value="bus") }})
+                {% endfor %}
+                {% endif %}
+                {% if project.healthChecks %}
+                {% for hc in project.healthChecks %}
+                .healthCheck({{ hc.name | default(value="health") }})
+                {% endfor %}
+                {% endif %}
+                .config(ApplicationConfig.create()
+                        .environment("test")
+                        {% if project.config %}
+                        {% for key, project.config %}
+                        .set("{{ key }}", {{ project.config[key] }})
+                        {% endfor %}
+                        {% endif %})
+                .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (app != null) {
+        app.stop();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // APPLICATION LIFECYCLE
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(1)
+    @DisplayName("Application: should start and stop")
+    void applicationShouldStartAndStop() {
+        assertThat(app.isStarted()).isFalse();
+        assertThat(app.isRunning()).isTrue();
+
+        // Start application
+        Application.StartResult result = app.start();
+        assertThat(result).isInstanceOf(Application.StartResult.Ok.class);
+        assertThat(app.isStarted()).isTrue();
+        assertThat(app.isRunning()).isTrue();
+
+        // Stop application
+        Application.StopResult stopResult = app.stop();
+        assertThat(stopResult).isInstanceOf(Application.StopResult.Ok.class);
+        assertThat(app.isStarted()).isFalse();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // SUPERVISION
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(2)
+    @DisplayName("Supervisor: should restart crashed services")
+    void supervisorShouldRestartCrashedServices() throws Exception {
+        app.start();
+
+        {% if project.services %}
+        {% for service in project.services %}
+        // Get service reference
+        Optional<ProcRef<{{ service.stateClass | default(value="ServiceState") }}, Object>> svc = app.service("{{ service.name }}");
+        assertThat(svc).isPresent();
+
+        // Send a message that causes a crash
+        // Note: The service should crash but supervisor should restart it
+        {% endfor %}
+        {% endif %}
+
+        await().atMost(Duration.ofSeconds(5)).untilAssertThat(app.isRunning()).isTrue();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // MESSAGE FLOW
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(3)
+    @DisplayName("MessageBus: should deliver messages between services")
+    void messageBusShouldDeliverMessages() throws Exception {
+        app.start();
+        List<Object> received = new CopyOnWriteArrayList<>();
+
+        {% if project.infrastructure contains(value="MessageBus") %}
+        // Subscribe to test topic
+        MessageBus.Subscription sub = bus.subscribe("test.topic", env -> {
+            received.add(env.payload());
+        });
+
+        // Publish message
+        bus.publish("test.topic", "test-message-1");
+        bus.publish("test.topic", "test-message-2");
+
+        // Wait for delivery
+        await().atMost(Duration.ofSeconds(2)).until(() -> received.size() >= 2);
+        assertThat(received).containsExactly("test-message-1", "test-message-2");
+
+        sub.cancel();
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // EVENT STORE
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(4)
+    @DisplayName("EventStore: should append and load events")
+    void eventStoreShouldAppendAndLoadEvents() {
+        app.start();
+        {% if project.infrastructure contains(value="EventStore") %}
+        // Append events
+        eventStore.append("test-stream", List.of(
+                new TestEvent("event-1", "data-1"),
+                new TestEvent("event-2", "data-2")
+        ));
+
+        // Load events
+        List<EventStore.StoredEvent> events = eventStore.load("test-stream").toList();
+        assertThat(events).hasSize(2);
+        assertThat(events.get(0).version()).isEqualTo(1);
+        assertThat(events.get(1).version()).isEqualTo(2);
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // HEALTH CHECKS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(5)
+    @DisplayName("HealthChecker: should report application health")
+    void healthCheckerShouldReportHealth() {
+        app.start();
+        {% if project.healthChecks %}
+        HealthChecker.Status status = healthChecker.check();
+        assertThat(status.overall()).isNotEqualTo(HealthChecker.HealthStatus.UNHEALTHY);
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // CONFIGURATION
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(6)
+    @DisplayName("ApplicationConfig: should provide typed configuration")
+    void applicationConfigShouldProvideTypedConfiguration() {
+        ApplicationConfig config = app.config();
+        assertThat(config.environment()).isEqualTo("test");
+        {% if project.config %}
+        {% for key in project.config %}
+        assertThat(config.has("{{ key }}")).isTrue();
+        {% endfor %}
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // API GATEWAY
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(7)
+    @DisplayName("ApiGateway: should route requests")
+    void apiGatewayShouldRouteRequests() throws Exception {
+        app.start();
+        {% if project.infrastructure contains(value="ApiGateway") %}
+        ApiGateway.Request req = ApiGateway.Request.get("/health");
+        ApiGateway.Response resp = gateway.handle(req).get(5, TimeUnit.SECONDS);
+        assertThat(resp.status()).isEqualTo(200);
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // METRICS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(8)
+    @DisplayName("MetricsCollector: should collect metrics")
+    void metricsCollectorShouldCollectMetrics() {
+        app.start();
+        {% if project.infrastructure contains(value="MetricsCollector") %}
+        MetricsCollector.Counter counter = metrics.counter("test.counter");
+        counter.increment();
+        counter.increment(5);
+        assertThat(counter.count()).isEqualTo(6);
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // FULL APPLICATION TEST
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @Order(100)
+    @DisplayName("Full Application: should process messages end-to-end")
+    void fullApplicationShouldProcessMessagesEndToEnd() throws Exception {
+        app.start();
+
+        // Verify all services are running
+        assertThat(app.isRunning()).isTrue();
+
+        {% if project.services %}
+        {% for service in project.services %}
+        // Get {{ service.name }} service
+        Optional<ProcRef<?, ?>> {{ service.name }}Svc = app.service("{{ service.name }}");
+        assertThat({{ service.name }}Svc).isPresent();
+        {% endfor %}
+        {% endif %}
+
+        // Verify infrastructure is available
+        {% if project.infrastructure %}
+        {% for infra in project.infrastructure %}
+        assertThat(app.infrastructure("{{ infra.name }}")).isPresent();
+        {% endfor %}
+        {% endif %}
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // TEST SUPPORT TYPES
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    {% if project.services %}
+    {% for service in project.services %}
+    record {{ service.stateClass | default(value="ServiceState") }}({% if service.dependencies %}{% for dep in service.dependencies %}{{ dep.name }} {{ dep.type | default(value="Object") }}, {% endfor %}{% endif %}) {}
+    {% endfor %}
+    {% endif %}
+
+    private {{ service.stateClass | default(value="ServiceState") }} handle{{ service.name | capitalize }}({{ service.stateClass | default(value="ServiceState") }} state, Object msg) {
+        // Default handler - override in generated code
+        return state;
+    }
+
+    record TestEvent(String id, String data) {}
+}

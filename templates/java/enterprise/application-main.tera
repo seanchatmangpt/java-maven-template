@@ -1,0 +1,199 @@
+package {{ project.basePackage | default(value="org.generated") }};
+
+import org.acme.*;
+import org.acme.Application.Infrastructure;
+
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * {{ project.name | default(value="Generated Application") }} - Main entry point.
+ *
+ * <p>Generated from Turtle specification: {{ project.ttlSource | default(value="unknown") }}
+ *
+ * <p>This application is composed from JOTP primitives following Joe Armstrong's
+ * Erlang/OTP philosophy: "Do not share state. Share nothing. Communicate by message passing."
+ */
+public final class Application {
+
+    private final org.acme.Application app;
+    private volatile boolean running = false;
+
+    public Application() {
+        this.app = buildApplication();
+    }
+
+    /**
+     * Build the complete application from configuration.
+     */
+    private org.acme.Application buildApplication() {
+        var builder = org.acme.Application.builder("{{ project.appName | default(value="generated-app") }}")
+                .supervisorStrategy(Supervisor.Strategy.{{ project.supervisorStrategy | default(value="ONE_FOR_ONE") }})
+                .maxRestarts({{ project.maxRestarts | default(value=10) }})
+                .restartWindow(Duration.ofMinutes({{ project.restartWindowMinutes | default(value=1) }}))
+                .config(buildConfig());
+
+        {% if project.services %}
+        // Services
+        {% for service in project.services %}
+        builder.service(
+                "{{ service.name }}",
+                {{ service.name | capitalize }}State::new,
+                this::handle{{ service.name | capitalize }}
+        );
+        {% endfor %}
+        {% endif %}
+
+        {% if project.infrastructure %}
+        // Infrastructure
+        {% for infra in project.infrastructure %}
+        builder.infrastructure(new {{ infra.type }}());
+        {% endfor %}
+        {% endif %}
+
+        {% if project.healthChecks %}
+        // Health checks
+        {% for health in project.healthChecks %}
+        builder.healthCheck(new {{ health.type }}());
+        {% endfor %}
+        {% endif %}
+
+        return builder.build();
+    }
+
+    /**
+     * Build application configuration.
+     */
+    private ApplicationConfig buildConfig() {
+        var config = ApplicationConfig.create()
+                .environment(System.getProperty("app.env", "{{ project.environment | default(value="development") }}"));
+
+        {% if project.config %}
+        // Configuration values
+        {% for cfg in project.config %}
+        config.set("{{ cfg.key }}", {{ cfg.value | default(value="null") }});
+        {% endfor %}
+        {% endif %}
+
+        return config;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // SERVICE HANDLERS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    {% if project.services %}
+    {% for service in project.services %}
+    /**
+     * Handler for {{ service.name }} service.
+     * Pattern: {{ service.pattern | default(value="N/A") }}
+     */
+    private {{ service.stateType | default(value="Object") }} handle{{ service.name | capitalize }}(
+            {{ service.stateType | default(value="Object") }} state,
+            {{ service.messageType | default(value="Object") }} message) {
+
+        return switch (message) {
+            {% if service.messageCases %}
+            {% for case in service.messageCases %}
+            case {{ case.type }} msg -> {
+                // {{ case.description | default(value="Handle message") }}
+                yield process{{ service.name | capitalize }}{{ case.type | capitalize }}(state, msg);
+            }
+            {% endfor %}
+            {% else %}
+            default -> {
+                // Default handler - pass through
+                yield state;
+            }
+            {% endif %}
+        };
+    }
+
+    {% if service.messageCases %}
+    {% for case in service.messageCases %}
+    private {{ service.stateType | default(value="Object") }} process{{ service.name | capitalize }}{{ case.type | capitalize }}(
+            {{ service.stateType | default(value="Object") }} state,
+            {{ case.type }} msg) {
+        // TODO: Implement {{ case.type }} handling
+        return state;
+    }
+    {% endfor %}
+    {% endif %}
+
+    {% endfor %}
+    {% endif %}
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // LIFECYCLE
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Start the application.
+     */
+    public synchronized void start() {
+        if (running) {
+            throw new IllegalStateException("Application already running");
+        }
+
+        var result = app.start();
+        if (result instanceof org.acme.Application.StartResult.Err(var error)) {
+            throw new RuntimeException("Failed to start application: " + error);
+        }
+
+        running = true;
+        System.out.println("[{{ project.appName | default(value="app") }}] Started successfully");
+    }
+
+    /**
+     * Stop the application.
+     */
+    public synchronized void stop() {
+        if (!running) return;
+
+        app.stop();
+        running = false;
+        System.out.println("[{{ project.appName | default(value="app") }}] Stopped");
+    }
+
+    /**
+     * Check if application is running.
+     */
+    public boolean isRunning() {
+        return running && app.isRunning();
+    }
+
+    /**
+     * Get the underlying application.
+     */
+    public org.acme.Application application() {
+        return app;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // MAIN ENTRY POINT
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    public static void main(String[] args) throws Exception {
+        System.out.println("Starting {{ project.name | default(value="Generated Application") }}...");
+        System.out.println("Java: " + Runtime.version());
+        System.out.println("Processors: " + Runtime.getRuntime().availableProcessors());
+
+        var app = new Application();
+
+        // Shutdown hook
+        Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().start(() -> {
+            System.out.println("\nShutting down...");
+            app.stop();
+        }));
+
+        // Start application
+        app.start();
+
+        // Wait for termination
+        synchronized (app) {
+            while (app.isRunning()) {
+                app.wait(1000);
+            }
+        }
+    }
+}
