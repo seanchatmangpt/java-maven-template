@@ -1,0 +1,137 @@
+{# Service Activator — Invoke service method upon message receipt #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Activator.java"
+vars:
+  name: "Service"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  result_type: "Object"
+  javadoc: "Invokes service method upon message receipt with mailbox-based activation"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Service Activator pattern using JOTP Proc.
+ * Invokes business logic upon message receipt via mailbox-based activation.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 3
+ */
+{% endif %}
+public final class {{ name }}Activator {
+
+    private final Proc<ActivatorState, {{ message_type }}> activator;
+
+    /** State of the activator. */
+    public record ActivatorState(
+            long processedCount,
+            long errorCount,
+            java.util.List<{{ result_type }}> lastResults) {
+
+        public static ActivatorState initial() {
+            return new ActivatorState(0, 0, new java.util.ArrayList<>());
+        }
+    }
+
+    private {{ name }}Activator(Proc<ActivatorState, {{ message_type }}> activator) {
+        this.activator = activator;
+    }
+
+    /**
+     * Creates a service activator with the given handler.
+     *
+     * @param serviceFunction the function to invoke for each message
+     */
+    public static {{ name }}Activator create(
+            java.util.function.Function<{{ message_type }}, {{ result_type }}> serviceFunction) {
+        var proc = new Proc<>(
+                ActivatorState.initial(),
+                (ActivatorState state, {{ message_type }} msg) -> {
+                    try {
+                        var result = serviceFunction.apply(msg);
+                        var newResults = new java.util.ArrayList<>(state.lastResults());
+                        newResults.add(result);
+                        // Keep only last 100 results
+                        if (newResults.size() > 100) {
+                            newResults.remove(0);
+                        }
+                        return new ActivatorState(state.processedCount() + 1, state.errorCount(), newResults);
+                    } catch (Exception e) {
+                        return new ActivatorState(state.processedCount(), state.errorCount() + 1, state.lastResults());
+                    }
+                });
+        return new {{ name }}Activator(proc);
+    }
+
+    /**
+     * Creates a service activator with async handler.
+     *
+     * @param asyncServiceFunction the async function to invoke for each message
+     */
+    public static {{ name }}Activator createAsync(
+            java.util.function.Function<{{ message_type }}, java.util.concurrent.CompletableFuture<{{ result_type }}>> asyncServiceFunction) {
+        var proc = new Proc<>(
+                ActivatorState.initial(),
+                (ActivatorState state, {{ message_type }} msg) -> {
+                    asyncServiceFunction.apply(msg).thenAccept(result -> {
+                        // Result would be handled asynchronously
+                    });
+                    return new ActivatorState(state.processedCount() + 1, state.errorCount(), state.lastResults());
+                });
+        return new {{ name }}Activator(proc);
+    }
+
+    /**
+     * Activates the service with a message.
+     *
+     * @param message the activation message
+     */
+    public void activate({{ message_type }} message) {
+        activator.tell(message);
+    }
+
+    /**
+     * Activates the service and waits for result.
+     *
+     * @param message the activation message
+     * @param timeout the timeout duration
+     * @return the activator state after processing
+     */
+    public ActivatorState activateAndWait({{ message_type }} message, java.time.Duration timeout)
+            throws Exception {
+        activator.tell(message);
+        // Small delay to allow processing
+        Thread.sleep(10);
+        return activator.ask(new QueryState())
+                .get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Gets the current activator state.
+     *
+     * @return the activator state
+     */
+    public ActivatorState getState() {
+        try {
+            return activator.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query activator state", e);
+        }
+    }
+
+    /**
+     * Stops the activator.
+     */
+    public void stop() {
+        activator.stop();
+    }
+
+    /** Query message for state retrieval. */
+    record QueryState() {}
+}

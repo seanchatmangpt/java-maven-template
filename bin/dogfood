@@ -21,29 +21,56 @@ NC='\033[0m'
 # Template-to-dogfood mapping
 # Each entry: category|template|dogfood_class|type(main|test)
 DOGFOOD_MAP=(
-    # ── Core dogfood sources ─────────────────────────────────────────────────
+    # ── Core ─────────────────────────────────────────────────────────────────
     "core|core/record.tera|core/Person.java|main"
-    "concurrency|concurrency/virtual-thread.tera|concurrency/VirtualThreadPatterns.java|main"
-    "patterns|patterns/strategy-functional.tera|patterns/TextTransformStrategy.java|main"
-    "api|api/string-methods.tera|api/StringMethodPatterns.java|main"
-    "error-handling|error-handling/result-railway.tera|errorhandling/ResultRailway.java|main"
-    "security|security/input-validation.tera|security/InputValidation.java|main"
-    # ── Core dogfood tests ───────────────────────────────────────────────────
+    "core|core/gatherer.tera|core/GathererPatterns.java|main"
+    "core|core/pattern-matching-switch.tera|core/PatternMatchingPatterns.java|main"
     "testing|testing/junit5-test.tera|core/PersonTest.java|test"
     "testing|testing/property-based-jqwik.tera|core/PersonProperties.java|test"
-    "testing|testing/junit5-test.tera|concurrency/VirtualThreadPatternsTest.java|test"
-    "testing|testing/junit5-test.tera|patterns/TextTransformStrategyTest.java|test"
+    "testing|testing/junit5-test.tera|core/GathererPatternsTest.java|test"
+    "testing|testing/junit5-test.tera|core/PatternMatchingPatternsTest.java|test"
+
+    # ── API ──────────────────────────────────────────────────────────────────
+    "api|api/string-methods.tera|api/StringMethodPatterns.java|main"
+    "api|api/java-time.tera|api/JavaTimePatterns.java|main"
     "testing|testing/junit5-test.tera|api/StringMethodPatternsTest.java|test"
+    "testing|testing/junit5-test.tera|api/JavaTimePatternsTest.java|test"
+
+    # ── Concurrency ──────────────────────────────────────────────────────────
+    "concurrency|concurrency/virtual-thread.tera|concurrency/VirtualThreadPatterns.java|main"
+    "concurrency|concurrency/scoped-value.tera|concurrency/ScopedValuePatterns.java|main"
+    "concurrency|concurrency/structured-task-scope.tera|concurrency/StructuredTaskScopePatterns.java|main"
+    "testing|testing/junit5-test.tera|concurrency/VirtualThreadPatternsTest.java|test"
+    "testing|testing/junit5-test.tera|concurrency/ScopedValuePatternsTest.java|test"
+    "testing|testing/junit5-test.tera|concurrency/StructuredTaskScopePatternsTest.java|test"
+
+    # ── Error Handling ───────────────────────────────────────────────────────
+    "error-handling|error-handling/result-railway.tera|errorhandling/ResultRailway.java|main"
     "testing|testing/junit5-test.tera|errorhandling/ResultRailwayTest.java|test"
+
+    # ── Patterns ─────────────────────────────────────────────────────────────
+    "patterns|patterns/strategy-functional.tera|patterns/TextTransformStrategy.java|main"
+    "testing|testing/junit5-test.tera|patterns/TextTransformStrategyTest.java|test"
+
+    # ── Security ─────────────────────────────────────────────────────────────
+    "security|security/input-validation.tera|security/InputValidation.java|main"
     "testing|testing/junit5-test.tera|security/InputValidationTest.java|test"
-    # ── Innovation engine sources ────────────────────────────────────────────
+
+    # ── Messaging ────────────────────────────────────────────────────────────
+    "messaging|messaging/message-bus.tera|messaging/MessageBusPatterns.java|main"
+    "messaging|messaging/content-based-router.tera|messaging/RouterPatterns.java|main"
+    "messaging|messaging/pub-sub.tera|messaging/PubSubPatterns.java|main"
+    "messaging|messaging/scatter-gather.tera|messaging/ScatterGatherPatterns.java|main"
+    "messaging|messaging/correlation-identifier.tera|messaging/CorrelationPatterns.java|main"
+    "testing|testing/messaging-test.tera|messaging/MessageBusPatternsTest.java|test"
+
+    # ── Innovation Engines ───────────────────────────────────────────────────
     "patterns|patterns/builder-record.tera|innovation/OntologyMigrationEngine.java|main"
     "patterns|patterns/state-machine-sealed.tera|innovation/ModernizationScorer.java|main"
     "patterns|patterns/visitor-exhaustive-switch.tera|innovation/TemplateCompositionEngine.java|main"
     "patterns|patterns/chain-of-responsibility-sealed.tera|innovation/BuildDiagnosticEngine.java|main"
     "patterns|patterns/observer-flow.tera|innovation/LivingDocGenerator.java|main"
     "patterns|patterns/strategy-functional.tera|innovation/RefactorEngine.java|main"
-    # ── Innovation engine tests ──────────────────────────────────────────────
     "testing|testing/junit5-test.tera|innovation/OntologyMigrationEngineTest.java|test"
     "testing|testing/junit5-test.tera|innovation/ModernizationScorerTest.java|test"
     "testing|testing/junit5-test.tera|innovation/TemplateCompositionEngineTest.java|test"

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ project.name | default(value="app") }}
+  labels:
+    app: {{ project.name | default(value="app") }}
+spec:
+  replicas: {{ k8s.replicas | default(value=3) }}
+  selector:
+    matchLabels:
+      app: {{ project.name | default(value="app") }}
+  template:
+    metadata:
+      labels:
+        app: {{ project.name | default(value="app") }}
+    spec:
+    containers:
+    - name: {{ project.name | default(value="app") }}
+      image: "{{ project.name | default(value="app") }}:{{ project.version | default(value="1.0.0") }}"
+      ports:
+        - containerPort: {{ project.port | default(value="8080") }}
+          protocol: TCP
+      env:
+        - name: JAVA_OPTS
+          value: "--enable-preview"
+      resources:
+        requests:
+          cpu: "{{ k8s.cpu | default(value="500") }}m"
+          memory: "{{ k8s.memory | default(value="512") }}Mi"
+        limits:
+          cpu: "{{ k8s.cpuLimit | default(value="1000") }}m"
+          memory: "{{ k8s.memoryLimit | default(value="1") }}Gi"
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: {{ project.port | default(value="8080") }}
+        initialDelaySeconds: 10
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: {{ project.port | default(value="8080") }}
+        initialDelaySeconds: 5
+        periodSeconds: 5

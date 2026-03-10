@@ -1,0 +1,71 @@
+# =============================================================================
+# Java 26 Development Container with Maven 4.0.0-rc-5
+# =============================================================================
+# Uses mvnd 2.0.0-rc-3 (bundling Maven 4) as required by CLAUDE.md
+# NOTE: Uses linux-amd64 with Rosetta 2 on Apple Silicon (no ARM64 mvnd build)
+# =============================================================================
+
+# Stage 1: Download Java 26 EA and Maven Daemon
+FROM --platform=linux/amd64 alpine:3.21 AS downloader
+
+# Install download tools
+RUN apk add --no-cache curl tar gzip ca-certificates
+
+# JDK 26 EA Build 33 (2026/1/30) - x86_64 for compatibility with mvnd
+ARG JDK_BUILD=33
+RUN mkdir -p /opt/jdk \
+    && echo "Downloading Java 26 EA (x86_64) from OpenJDK..." \
+    && curl -fsSL "https://download.java.net/java/early_access/jdk26/${JDK_BUILD}/GPL/openjdk-26-ea+${JDK_BUILD}_linux-x64_bin.tar.gz" \
+    | tar -xzf - -C /opt/jdk --strip-components=1
+
+# Download Maven Daemon 2.0.0-rc-3 (bundles Maven 4.0.0-rc-3)
+ARG MVND_VERSION=2.0.0-rc-3
+RUN mkdir -p /opt/mvnd \
+    && echo "Downloading Maven Daemon ${MVND_VERSION} (x86_64)..." \
+    && curl -fsSL "https://github.com/apache/maven-mvnd/releases/download/${MVND_VERSION}/maven-mvnd-${MVND_VERSION}-linux-amd64.tar.gz" \
+    | tar -xzf - -C /opt/mvnd --strip-components=1
+
+# Stage 2: Runtime image
+FROM --platform=linux/amd64 ubuntu:24.04
+
+# Install runtime dependencies in single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    curl \
+    git \
+    jq \
+    procps \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy from downloader stage
+COPY --from=downloader /opt/jdk /opt/jdk
+COPY --from=downloader /opt/mvnd /opt/mvnd
+
+# Create symlinks - mvnd is the primary build tool (mvn is symlinked to mvnd)
+RUN ln -s /opt/jdk/bin/java /usr/local/bin/java \
+    && ln -s /opt/jdk/bin/javac /usr/local/bin/javac \
+    && ln -s /opt/jdk/bin/jshell /usr/local/bin/jshell \
+    && ln -s /opt/mvnd/bin/mvnd /usr/local/bin/mvnd \
+    && ln -s /opt/mvnd/bin/mvnd /usr/local/bin/mvn \
+    && ln -s /opt/mvnd/bin/mvnw /usr/local/bin/mvnw
+
+# Create directories
+RUN mkdir -p /app /root/.m2/repository /root/.m2/mvnd
+
+# Working directory
+WORKDIR /app
+
+# Environment for maximum performance
+ENV JAVA_HOME=/opt/jdk
+ENV MVND_HOME=/opt/mvnd
+ENV MAVEN_OPTS="-Xmx2g -XX:+UseZGC -XX:+UseStringDeduplication"
+ENV JAVA_OPTS="--enable-preview --add-modules=jdk.incubator.vector"
+ENV PATH="${JAVA_HOME}/bin:${MVND_HOME}/bin:${PATH}"
+
+# Verify installations
+RUN java --version && mvnd --version
+
+# Default command
+ENTRYPOINT ["/bin/bash", "-c"]
+CMD ["bash"]

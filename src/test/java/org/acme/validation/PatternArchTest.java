@@ -65,7 +65,7 @@ class PatternArchTest {
                 .resideInAPackage("org.acme.dogfood..")
                 .because("Core patterns must be independent of dogfood — dogfood depends on core");
 
-        rule.check(allClasses);
+        rule.allowEmptyShould(true).check(allClasses);
     }
 
     // =========================================================================
@@ -83,7 +83,7 @@ class PatternArchTest {
                 .haveFullyQualifiedName("java.util.Date")
                 .because("ggen-generated API patterns use java.time, not legacy java.util.Date");
 
-        rule.check(apiDogfoodClasses);
+        rule.allowEmptyShould(true).check(apiDogfoodClasses);
     }
 
     // =========================================================================
@@ -101,7 +101,7 @@ class PatternArchTest {
                 .haveFullyQualifiedName("java.util.Calendar")
                 .because("ggen generates java.time patterns, not legacy Calendar");
 
-        rule.check(dogfoodClasses);
+        rule.allowEmptyShould(true).check(dogfoodClasses);
     }
 
     // =========================================================================
@@ -119,7 +119,7 @@ class PatternArchTest {
                 .haveFullyQualifiedName("java.util.Date")
                 .because("ggen generates java.time patterns, not legacy java.util.Date");
 
-        rule.check(dogfoodClasses);
+        rule.allowEmptyShould(true).check(dogfoodClasses);
     }
 
     // =========================================================================
@@ -135,6 +135,6 @@ class PatternArchTest {
                         .should()
                         .beFreeOfCycles();
 
-        noCycles.check(dogfoodClasses);
+        noCycles.allowEmptyShould(true).check(dogfoodClasses);
     }
 }

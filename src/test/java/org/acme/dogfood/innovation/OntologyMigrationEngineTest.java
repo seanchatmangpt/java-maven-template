@@ -11,10 +11,10 @@ import org.junit.jupiter.api.Test;
 class OntologyMigrationEngineTest implements WithAssertions {
 
     @Test
-    @DisplayName("allRules returns all 12 built-in ontology rules")
+    @DisplayName("allRules returns all 15 built-in ontology rules")
     void allRulesReturnsBuiltInRules() {
         var rules = OntologyMigrationEngine.allRules();
-        assertThat(rules).hasSize(12);
+        assertThat(rules).hasSize(15);
         assertThat(rules).allSatisfy(r -> {
             assertThat(r.id()).isNotBlank();
             assertThat(r.label()).isNotBlank();

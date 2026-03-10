@@ -1,0 +1,157 @@
+{# Supervision Storm — Supervise process tree with restart strategies #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Supervisor.java"
+vars:
+  name: "Messaging"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  javadoc: "Supervises process tree with restart strategies and cascade control"
+---
+package {{ package }};
+
+import org.acme.Proc;
+import org.acme.ProcRef;
+import org.acme.Supervisor;
+import org.acme.Supervisor.Strategy;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Supervision Storm pattern using JOTP Supervisor.
+ * Manages a tree of processes with configurable restart strategies.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 6 (Error Handling)
+ */
+{% endif %}
+public final class {{ name }}Supervisor {
+
+    private final Supervisor supervisor;
+    private final java.util.Map<String, ProcRef<?, ?>> children;
+
+    private {{ name }}Supervisor(Supervisor supervisor, java.util.Map<String, ProcRef<?, ?>> children) {
+        this.supervisor = supervisor;
+        this.children = children;
+    }
+
+    /**
+     * Creates a builder for constructing a supervision tree.
+     *
+     * @param name the supervisor name
+     */
+    public static Builder builder(String name) {
+        return new Builder(name);
+    }
+
+    /**
+     * Gets a child process by name.
+     *
+     * @param name the child name
+     * @return the process reference, or null if not found
+     */
+    @SuppressWarnings("unchecked")
+    public <S, M> ProcRef<S, M> getChild(String name) {
+        return (ProcRef<S, M>) children.get(name);
+    }
+
+    /**
+     * Sends a message to a child process.
+     *
+     * @param childName the child name
+     * @param message the message
+     */
+    public <M> void tell(String childName, M message) {
+        var child = children.get(childName);
+        if (child != null) {
+            child.tell(message);
+        }
+    }
+
+    /**
+     * Gets supervisor statistics.
+     *
+     * @return statistics map
+     */
+    public java.util.Map<String, Object> getStats() {
+        return java.util.Map.of(
+                "name", supervisor.name(),
+                "childCount", children.size(),
+                "strategy", supervisor.strategy().toString()
+        );
+    }
+
+    /**
+     * Shuts down the supervisor and all children.
+     */
+    public void shutdown() {
+        supervisor.shutdown();
+    }
+
+    /** Builder for supervision tree. */
+    public static final class Builder {
+        private final String name;
+        private Strategy strategy = Strategy.ONE_FOR_ONE;
+        private int maxRestarts = 100;
+        private java.time.Duration restartWindow = java.time.Duration.ofMinutes(5);
+        private final java.util.Map<String, ChildSpec<?, ?>> children = new java.util.LinkedHashMap<>();
+
+        private Builder(String name) {
+            this.name = name;
+        }
+
+        public Builder strategy(Strategy strategy) {
+            this.strategy = strategy;
+            return this;
+        }
+
+        public Builder oneForOne() {
+            this.strategy = Strategy.ONE_FOR_ONE;
+            return this;
+        }
+
+        public Builder oneForAll() {
+            this.strategy = Strategy.ONE_FOR_ALL;
+            return this;
+        }
+
+        public Builder restForOne() {
+            this.strategy = Strategy.REST_FOR_ONE;
+            return this;
+        }
+
+        public Builder maxRestarts(int maxRestarts) {
+            this.maxRestarts = maxRestarts;
+            return this;
+        }
+
+        public Builder restartWindow(java.time.Duration restartWindow) {
+            this.restartWindow = restartWindow;
+            return this;
+        }
+
+        public <S, M> Builder child(
+                String childName,
+                S initialState,
+                java.util.function.BiFunction<S, M, S> handler) {
+            children.put(childName, new ChildSpec<>(childName, initialState, handler));
+            return this;
+        }
+
+        public {{ name }}Supervisor build() {
+            var supervisor = new Supervisor(name, strategy, maxRestarts, restartWindow);
+            var childRefs = new java.util.LinkedHashMap<String, ProcRef<?, ?>>();
+
+            for (var spec : children.values()) {
+                var ref = supervisor.supervise(spec.name, spec.initialState, spec.handler);
+                childRefs.put(spec.name, ref);
+            }
+
+            return new {{ name }}Supervisor(supervisor, childRefs);
+        }
+
+        private record ChildSpec<S, M>(
+                String name,
+                S initialState,
+                java.util.function.BiFunction<S, M, S> handler) {}
+    }
+}

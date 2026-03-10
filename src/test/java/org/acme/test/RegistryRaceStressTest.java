@@ -16,6 +16,8 @@ import org.assertj.core.api.WithAssertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 /**
  * Armstrong's registry race condition stress tests — breaking points of {@link ProcessRegistry}.
@@ -43,6 +45,7 @@ import org.junit.jupiter.api.Timeout;
  * </ol>
  */
 @Timeout(30)
+@Execution(ExecutionMode.SAME_THREAD)  // Isolate from parallel tests due to global ProcessRegistry
 class RegistryRaceStressTest implements WithAssertions {
 
     sealed interface Msg permits Msg.Noop, Msg.Crash {
@@ -170,8 +173,8 @@ class RegistryRaceStressTest implements WithAssertions {
                 .until(() -> procs.stream().noneMatch(p -> p.thread().isAlive()));
 
         // Registry must be empty — all auto-deregistered
-        // Give a small grace for the termination callbacks to complete
-        await().atMost(Duration.ofSeconds(2))
+        // Give more time for the termination callbacks to complete (500 concurrent crashes)
+        await().atMost(Duration.ofSeconds(5))
                 .until(() -> {
                     var registered = ProcessRegistry.registered();
                     return registered.stream().noneMatch(n -> n.startsWith("stress-"));

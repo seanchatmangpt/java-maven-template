@@ -1,0 +1,109 @@
+{# Publish-Subscribe — Broadcast messages to multiple subscribers #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}PubSub.java"
+vars:
+  name: "Event"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Broadcasts messages to multiple subscribers via EventManager"
+---
+package {{ package }};
+
+import org.acme.EventManager;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Publish-Subscribe pattern using JOTP EventManager.
+ * Broadcasts messages to all subscribers without coupling publishers to subscribers.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 2
+ */
+{% endif %}
+public final class {{ name }}PubSub {
+
+    private final EventManager<{{ message_type }}> eventManager;
+    private final java.util.concurrent.atomic.AtomicInteger subscriberCount;
+    private final java.util.concurrent.atomic.AtomicLong publishCount;
+
+    private {{ name }}PubSub() {
+        this.eventManager = EventManager.start();
+        this.subscriberCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        this.publishCount = new java.util.concurrent.atomic.AtomicLong(0);
+    }
+
+    /**
+     * Creates and starts a new pub-sub channel.
+     */
+    public static {{ name }}PubSub create() {
+        return new {{ name }}PubSub();
+    }
+
+    /**
+     * Subscribes to all events on this channel.
+     *
+     * @param subscriber the subscriber function
+     */
+    public void subscribe(java.util.function.Consumer<{{ message_type }}> subscriber) {
+        eventManager.addHandler(subscriber);
+        subscriberCount.incrementAndGet();
+    }
+
+    /**
+     * Unsubscribes from this channel.
+     *
+     * @param subscriber the subscriber to remove
+     */
+    public void unsubscribe(java.util.function.Consumer<{{ message_type }}> subscriber) {
+        eventManager.deleteHandler(subscriber);
+        subscriberCount.decrementAndGet();
+    }
+
+    /**
+     * Publishes an event to all subscribers (non-blocking).
+     *
+     * @param event the event to publish
+     */
+    public void publish({{ message_type }} event) {
+        publishCount.incrementAndGet();
+        eventManager.notify(event);
+    }
+
+    /**
+     * Publishes an event to all subscribers synchronously.
+     * Blocks until all subscribers have processed the event.
+     *
+     * @param event the event to publish
+     */
+    public void publishSync({{ message_type }} event) {
+        publishCount.incrementAndGet();
+        eventManager.syncNotify(event);
+    }
+
+    /**
+     * Gets the current subscriber count.
+     *
+     * @return number of active subscribers
+     */
+    public int getSubscriberCount() {
+        return subscriberCount.get();
+    }
+
+    /**
+     * Gets the total publish count.
+     *
+     * @return number of events published
+     */
+    public long getPublishCount() {
+        return publishCount.get();
+    }
+
+    /**
+     * Stops the pub-sub channel and releases resources.
+     */
+    public void stop() {
+        eventManager.stop();
+    }
+}

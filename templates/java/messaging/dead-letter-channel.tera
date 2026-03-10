@@ -1,0 +1,135 @@
+{# Dead Letter Channel — Handle failed messages with dedicated error channel #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}DeadLetter.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Handles failed messages with dedicated dead letter queue"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Dead Letter Channel pattern using JOTP Proc.
+ * Captures failed messages for later inspection and retry.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 6
+ */
+{% endif %}
+public final class {{ name }}DeadLetter {
+
+    private final Proc<DeadLetterState, Object> deadLetterProc;
+
+    /** Entry in the dead letter queue. */
+    public record DeadLetterEntry(
+            {{ message_type }} originalMessage,
+            String reason,
+            long timestamp,
+            Exception error) {}
+
+    /** State of the dead letter channel. */
+    public record DeadLetterState(
+            java.util.List<DeadLetterEntry> entries,
+            int maxEntries) {
+
+        public static DeadLetterState initial(int maxEntries) {
+            return new DeadLetterState(new java.util.ArrayList<>(), maxEntries);
+        }
+    }
+
+    private {{ name }}DeadLetter(Proc<DeadLetterState, Object> proc) {
+        this.deadLetterProc = proc;
+    }
+
+    /**
+     * Creates a dead letter channel.
+     *
+     * @param maxEntries maximum entries to retain (older entries are dropped)
+     */
+    public static {{ name }}DeadLetter create(int maxEntries) {
+        var proc = new Proc<>(
+                DeadLetterState.initial(maxEntries),
+                (DeadLetterState state, Object msg) -> {
+                    if (msg instanceof DeadLetterEntry entry) {
+                        var newEntries = new java.util.ArrayList<>(state.entries());
+                        newEntries.add(entry);
+                        // Trim to max size
+                        while (newEntries.size() > state.maxEntries()) {
+                            newEntries.remove(0);
+                        }
+                        return new DeadLetterState(newEntries, state.maxEntries());
+                    } else if (msg instanceof QueryState) {
+                        // Return state unchanged for queries
+                        return state;
+                    }
+                    return state;
+                });
+        return new {{ name }}DeadLetter(proc);
+    }
+
+    /**
+     * Records a failed message in the dead letter channel.
+     *
+     * @param message the original message that failed
+     * @param reason the reason for failure
+     * @param error the exception that caused the failure (may be null)
+     */
+    public void record({{ message_type }} message, String reason, Exception error) {
+        var entry = new DeadLetterEntry(message, reason, System.currentTimeMillis(), error);
+        deadLetterProc.tell(entry);
+    }
+
+    /**
+     * Records a failed message with just a reason.
+     *
+     * @param message the original message that failed
+     * @param reason the reason for failure
+     */
+    public void record({{ message_type }} message, String reason) {
+        record(message, reason, null);
+    }
+
+    /**
+     * Gets all dead letter entries.
+     *
+     * @return list of dead letter entries
+     */
+    public java.util.List<DeadLetterEntry> getEntries() {
+        try {
+            return deadLetterProc.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .entries();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query dead letter entries", e);
+        }
+    }
+
+    /**
+     * Clears all dead letter entries.
+     */
+    public void clear() {
+        try {
+            var state = deadLetterProc.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            deadLetterProc.tell(new DeadLetterState(new java.util.ArrayList<>(), state.maxEntries()));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to clear dead letter entries", e);
+        }
+    }
+
+    /**
+     * Stops the dead letter channel.
+     */
+    public void stop() {
+        deadLetterProc.stop();
+    }
+
+    /** Query message for state retrieval. */
+    record QueryState() {}
+}

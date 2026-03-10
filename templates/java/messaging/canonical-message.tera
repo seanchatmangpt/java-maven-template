@@ -1,0 +1,112 @@
+{# Canonical Message — Standardized message format using sealed interface #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Message.java"
+vars:
+  name: "Canonical"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_variants: []
+  javadoc: "Standardized message format using sealed interface hierarchy"
+---
+package {{ package }};
+
+import java.util.UUID;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Canonical Message pattern using Java 26 sealed interfaces.
+ * Provides a standardized message format for type-safe messaging across the system.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 3
+ */
+{% endif %}
+public sealed interface {{ name }}Message permits
+{% for variant in message_variants %}
+        {{ name }}Message.{{ variant.name }}{% if not loop.last %},{% endif %}
+
+{% else %}
+        {{ name }}Message.Command, {{ name }}Message.Event, {{ name }}Message.Query
+{% endfor %} {
+
+    /** Unique correlation ID for message tracking. */
+    UUID correlationId();
+
+    /** Message creation timestamp (nanoseconds). */
+    long timestamp();
+
+    /** Message type discriminator. */
+    String messageType();
+
+{% for variant in message_variants %}
+    /** {{ variant.description | default(value="Message variant: " ~ variant.name) }} */
+    record {{ variant.name }}(
+            UUID correlationId,
+            long timestamp
+            {%- if variant.fields %},{% endif -%}
+{% for field in variant.fields %}
+            {{ field.type }} {{ field.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+    ) implements {{ name }}Message {
+        @Override
+        public String messageType() {
+            return "{{ variant.name }}";
+        }
+    }
+
+{% else %}
+    /** Command message - requests an action. */
+    record Command(UUID correlationId, long timestamp, String action, java.util.Map<String, Object> payload)
+            implements {{ name }}Message {
+        @Override
+        public String messageType() {
+            return "Command";
+        }
+    }
+
+    /** Event message - notifies something happened. */
+    record Event(UUID correlationId, long timestamp, String eventType, java.util.Map<String, Object> payload)
+            implements {{ name }}Message {
+        @Override
+        public String messageType() {
+            return "Event";
+        }
+    }
+
+    /** Query message - requests data. */
+    record Query(UUID correlationId, long timestamp, String queryType)
+            implements {{ name }}Message {
+        @Override
+        public String messageType() {
+            return "Query";
+        }
+    }
+{% endfor %}
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // FACTORY METHODS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Creates a new correlation ID.
+     */
+    static UUID newCorrelationId() {
+        return UUID.randomUUID();
+    }
+
+    /**
+     * Gets current timestamp in nanoseconds.
+     */
+    static long nowNanos() {
+        return System.nanoTime();
+    }
+
+    /**
+     * Gets current timestamp in milliseconds.
+     */
+    static long nowMillis() {
+        return System.currentTimeMillis();
+    }
+}

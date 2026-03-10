@@ -1,0 +1,161 @@
+{# Scatter-Gather — Parallel broadcast and aggregation with StructuredTaskScope #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}ScatterGather.java"
+vars:
+  name: "Analysis"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  result_type: "Object"
+  javadoc: "Broadcasts to multiple processors and aggregates results"
+---
+package {{ package }};
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Scatter-Gather pattern using Java 26 Structured Concurrency.
+ * Broadcasts to multiple processors and aggregates results with fail-fast semantics.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 7
+ */
+{% endif %}
+public final class {{ name }}ScatterGather {
+
+    private final java.util.List<java.util.function.Function<{{ message_type }}, {{ result_type }}>> processors;
+    private final java.util.function.BinaryOperator<{{ result_type }}> aggregator;
+
+    private {{ name }}ScatterGather(
+            java.util.List<java.util.function.Function<{{ message_type }}, {{ result_type }}>> processors,
+            java.util.function.BinaryOperator<{{ result_type }}> aggregator) {
+        this.processors = java.util.List.copyOf(processors);
+        this.aggregator = aggregator;
+    }
+
+    /**
+     * Creates a scatter-gather with the given processors and aggregator.
+     *
+     * @param processors list of processor functions
+     * @param aggregator function to combine results
+     */
+    public static {{ name }}ScatterGather create(
+            java.util.List<java.util.function.Function<{{ message_type }}, {{ result_type }}>> processors,
+            java.util.function.BinaryOperator<{{ result_type }}> aggregator) {
+        return new {{ name }}ScatterGather(processors, aggregator);
+    }
+
+    /**
+     * Creates a scatter-gather with collectors aggregation.
+     *
+     * @param processors list of processor functions
+     * @param collector collector for aggregating results
+     */
+    public static <R> {{ name }}ScatterGather createWithCollector(
+            java.util.List<java.util.function.Function<{{ message_type }}, R>> processors,
+            java.util.stream.Collector<R, ?, {{ result_type }}> collector) {
+        @SuppressWarnings("unchecked")
+        var sg = new {{ name }}ScatterGather(
+                (java.util.List) processors,
+                (a, b) -> { throw new UnsupportedOperationException("Use scatterCollect"); });
+        return sg;
+    }
+
+    /**
+     * Scatters a message to all processors and gathers results.
+     * Uses structured concurrency for parallel execution.
+     *
+     * @param message the message to scatter
+     * @return the aggregated result
+     */
+    public {{ result_type }} scatterGather({{ message_type }} message) throws Exception {
+        try (var scope = new java.util.concurrent.StructuredTaskScope.ShutdownOnFailure()) {
+            var futures = processors.stream()
+                    .map(processor -> scope.fork(() -> processor.apply(message)))
+                    .toList();
+
+            scope.join();
+            scope.throwIfFailed();
+
+            {{ result_type }} result = null;
+            for (var future : futures) {
+                var r = future.get();
+                if (result == null) {
+                    result = r;
+                } else {
+                    result = aggregator.apply(result, r);
+                }
+            }
+            return result;
+        }
+    }
+
+    /**
+     * Scatters a message and collects results using a collector.
+     *
+     * @param message the message to scatter
+     * @param collector the collector for aggregation
+     * @return the collected result
+     */
+    public <R, A> R scatterCollect(
+            {{ message_type }} message,
+            java.util.stream.Collector<R, A, R> collector) throws Exception {
+
+        @SuppressWarnings("unchecked")
+        var typedProcessors = (java.util.List<java.util.function.Function<{{ message_type }}, R>>) (java.util.List<?>) processors;
+
+        try (var scope = new java.util.concurrent.StructuredTaskScope.ShutdownOnFailure()) {
+            var futures = typedProcessors.stream()
+                    .map(processor -> scope.fork(() -> processor.apply(message)))
+                    .toList();
+
+            scope.join();
+            scope.throwIfFailed();
+
+            return futures.stream()
+                    .map(f -> f.resultNow())
+                    .collect(collector);
+        }
+    }
+
+    /**
+     * Scatters with timeout.
+     *
+     * @param message the message to scatter
+     * @param timeout the maximum duration to wait
+     * @return the aggregated result
+     */
+    public {{ result_type }} scatterGather({{ message_type }} message, java.time.Duration timeout) throws Exception {
+        try (var scope = new java.util.concurrent.StructuredTaskScope.ShutdownOnFailure()) {
+            var futures = processors.stream()
+                    .map(processor -> scope.fork(() -> processor.apply(message)))
+                    .toList();
+
+            if (!scope.joinUntil(java.time.Instant.now().plus(timeout))) {
+                scope.shutdown();
+                throw new java.util.concurrent.TimeoutException("Scatter-gather timed out");
+            }
+            scope.throwIfFailed();
+
+            {{ result_type }} result = null;
+            for (var future : futures) {
+                var r = future.get();
+                if (result == null) {
+                    result = r;
+                } else {
+                    result = aggregator.apply(result, r);
+                }
+            }
+            return result;
+        }
+    }
+
+    /**
+     * Gets the number of processors.
+     *
+     * @return processor count
+     */
+    public int getProcessorCount() {
+        return processors.size();
+    }
+}

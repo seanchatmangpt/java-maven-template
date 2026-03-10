@@ -116,3 +116,20 @@ release.properties
 
 *.jqwik-database
 dependency-reduced-pom.xml
+
+# Cloud configuration (contains secrets)
+.env.cloud
+*.pkrvars.hcl
+terraform.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+terraform.tfplan
+
+# OCI
+*.pem
+
+# Rust build artifacts
+guard-system/target/
+Cargo.lock

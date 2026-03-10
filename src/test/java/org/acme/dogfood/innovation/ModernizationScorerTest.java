@@ -602,6 +602,53 @@ class ModernizationScorerTest implements WithAssertions {
         }
     }
 
+    // ── Edge Cases (JIDOKA - Stop and Fix) ───────────────────────────────────────
+
+    @Nested
+    @DisplayName("Edge cases and error handling")
+    class EdgeCases {
+
+        @Test
+        @DisplayName("null source throws NullPointerException")
+        void nullSourceThrows() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> scorer.analyze(null))
+                    .withMessageContaining("javaSource");
+        }
+
+        @Test
+        @DisplayName("empty source returns baseline score")
+        void emptySourceReturnsBaseline() {
+            var result = scorer.analyze("");
+
+            assertThat(result.overallScore()).isEqualTo(50);
+            assertThat(result.recommendations()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("blank source returns baseline score")
+        void blankSourceReturnsBaseline() {
+            var result = scorer.analyze("   \n\n   ");
+
+            assertThat(result.overallScore()).isEqualTo(50);
+            assertThat(result.recommendations()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("source with only comments returns near-baseline score")
+        void onlyCommentsReturnsBaseline() {
+            var source = """
+                    // Just a comment
+                    /* Block comment */
+                    """;
+
+            var result = scorer.analyze(source);
+
+            // Comments-only source gets a near-baseline score (no modern patterns detected)
+            assertThat(result.overallScore()).isBetween(45, 55);
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static java.util.List<Finding> findingsForCategory(

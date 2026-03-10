@@ -1,0 +1,184 @@
+{# Correlation Identifier — Track related messages with UUID correlation IDs #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}Correlation.java"
+vars:
+  name: "Message"
+  package: "org.acme.messaging"
+  output_dir: "src/main/java"
+  message_type: "Object"
+  javadoc: "Tracks related messages across the system using UUID correlation IDs"
+---
+package {{ package }};
+
+import org.acme.Proc;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ *
+ * <p>Correlation Identifier pattern using JOTP Proc.
+ * Tracks related messages across the system using UUID correlation IDs.
+ *
+ * <p>EIP Reference: Enterprise Integration Patterns, Chapter 7
+ */
+{% endif %}
+public final class {{ name }}Correlation {
+
+    private final Proc<CorrelationState, Object> correlator;
+
+    /** Correlation entry tracking related messages. */
+    public record CorrelationEntry(
+            java.util.UUID correlationId,
+            {{ message_type }} message,
+            long timestamp,
+            String source) {}
+
+    /** State of the correlation tracker. */
+    public record CorrelationState(
+            java.util.Map<java.util.UUID, java.util.List<CorrelationEntry>> correlations,
+            int maxEntriesPerCorrelation) {
+
+        public static CorrelationState initial() {
+            return new CorrelationState(new java.util.HashMap<>(), 100);
+        }
+    }
+
+    /** Message wrapper with correlation ID. */
+    public record CorrelatedMessage(
+            java.util.UUID correlationId,
+            {{ message_type }} payload) {}
+
+    private {{ name }}Correlation(Proc<CorrelationState, Object> correlator) {
+        this.correlator = correlator;
+    }
+
+    /**
+     * Creates a correlation identifier tracker.
+     */
+    public static {{ name }}Correlation create() {
+        var proc = new Proc<>(
+                CorrelationState.initial(),
+                (CorrelationState state, Object msg) -> {
+                    if (msg instanceof CorrelatedMessage cm) {
+                        var newCorrelations = new java.util.HashMap<>(state.correlations());
+                        var entries = new java.util.ArrayList<>(
+                                newCorrelations.getOrDefault(cm.correlationId(), java.util.List.of()));
+
+                        entries.add(new CorrelationEntry(
+                                cm.correlationId(),
+                                cm.payload(),
+                                System.currentTimeMillis(),
+                                "unknown"));
+
+                        // Trim to max size
+                        if (entries.size() > state.maxEntriesPerCorrelation()) {
+                            entries = new java.util.ArrayList<>(entries.subList(
+                                    entries.size() - state.maxEntriesPerCorrelation(),
+                                    entries.size()));
+                        }
+
+                        newCorrelations.put(cm.correlationId(), entries);
+                        return new CorrelationState(newCorrelations, state.maxEntriesPerCorrelation());
+                    } else if (msg instanceof QueryByCorrelation query) {
+                        // Handled in ask() - return state unchanged
+                        return state;
+                    } else if (msg instanceof QueryState) {
+                        return state;
+                    }
+                    return state;
+                });
+        return new {{ name }}Correlation(proc);
+    }
+
+    /**
+     * Generates a new correlation ID.
+     *
+     * @return a new UUID correlation ID
+     */
+    public static java.util.UUID generateId() {
+        return java.util.UUID.randomUUID();
+    }
+
+    /**
+     * Wraps a message with a correlation ID.
+     *
+     * @param correlationId the correlation ID
+     * @param message the message
+     * @return a correlated message
+     */
+    public static CorrelatedMessage correlate(java.util.UUID correlationId, {{ message_type }} message) {
+        return new CorrelatedMessage(correlationId, message);
+    }
+
+    /**
+     * Wraps a message with a new correlation ID.
+     *
+     * @param message the message
+     * @return a correlated message with new ID
+     */
+    public static CorrelatedMessage correlate({{ message_type }} message) {
+        return correlate(generateId(), message);
+    }
+
+    /**
+     * Records a correlated message.
+     *
+     * @param message the correlated message
+     */
+    public void record(CorrelatedMessage message) {
+        correlator.tell(message);
+    }
+
+    /**
+     * Gets all messages for a correlation ID.
+     *
+     * @param correlationId the correlation ID
+     * @return list of correlation entries
+     */
+    public java.util.List<CorrelationEntry> getCorrelation(java.util.UUID correlationId) {
+        try {
+            var state = correlator.ask(new QueryByCorrelation(correlationId))
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            return state.correlations().getOrDefault(correlationId, java.util.List.of());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query correlation", e);
+        }
+    }
+
+    /**
+     * Gets all active correlation IDs.
+     *
+     * @return set of correlation IDs
+     */
+    public java.util.Set<java.util.UUID> getActiveCorrelations() {
+        try {
+            var state = correlator.ask(new QueryState())
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            return state.correlations().keySet();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query correlations", e);
+        }
+    }
+
+    /**
+     * Clears a specific correlation.
+     *
+     * @param correlationId the correlation ID to clear
+     */
+    public void clearCorrelation(java.util.UUID correlationId) {
+        // Would need a ClearCorrelation message type for full implementation
+    }
+
+    /**
+     * Stops the correlator.
+     */
+    public void stop() {
+        correlator.stop();
+    }
+
+    /** Query for specific correlation. */
+    record QueryByCorrelation(java.util.UUID correlationId) {}
+
+    /** Query for all state. */
+    record QueryState() {}
+}

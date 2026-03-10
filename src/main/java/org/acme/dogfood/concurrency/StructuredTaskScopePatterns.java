@@ -87,9 +87,23 @@ public final class StructuredTaskScopePatterns {
             throws ExecutionException, InterruptedException {
         try (var scope =
                 StructuredTaskScope.open(
-                        StructuredTaskScope.Joiner.<T>anySuccessfulResultOrThrow())) {
-            for (var task : tasks) scope.fork(task);
-            return scope.join();
+                        StructuredTaskScope.Joiner.<T>awaitAll())) {
+            List<Subtask<T>> subtasks = new java.util.ArrayList<>();
+            for (var task : tasks) subtasks.add(scope.fork(task));
+            scope.join();
+            // Find first successful result
+            for (var st : subtasks) {
+                if (st.state() == Subtask.State.SUCCESS) {
+                    return st.get();
+                }
+            }
+            // All failed - throw first exception
+            for (var st : subtasks) {
+                if (st.state() == Subtask.State.FAILED) {
+                    throw new ExecutionException(st.exception());
+                }
+            }
+            throw new IllegalStateException("No tasks provided");
         }
     }
 

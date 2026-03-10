@@ -51,6 +51,36 @@ mvnd test -Dtest=MathsTest
 mvnd verify -Dit.test=MathsIT  # integration test
 ```
 
+## Build Commands (dx.sh)
+
+The `dx.sh` script provides a unified build interface that integrates with the yawl submodule when available, or falls back to standalone Maven builds.
+
+```bash
+./dx.sh compile          # Compile changed modules
+./dx.sh test             # Run tests
+./dx.sh all              # Full build + validation (guards)
+./dx.sh validate         # Run guard validation only
+./dx.sh deploy           # Deploy to cloud (OCI default)
+```
+
+**With yawl submodule**: Delegates to `yawl/scripts/dx.sh` for full H+Q validation gates.
+**Without yawl**: Uses `dx-standalone.sh` for basic Maven builds with simplified guards.
+
+### Guard Validation
+
+The guard system detects forbidden patterns in production code:
+
+| Pattern | Description | Fix |
+|---------|-------------|-----|
+| H_TODO | Deferred work markers (TODO, FIXME, etc.) | Implement or remove |
+| H_MOCK | Mock/stub/fake implementations | Delete or implement real service |
+| H_STUB | Empty/placeholder returns | Throw UnsupportedOperationException |
+
+**Build guard system:**
+```bash
+cd guard-system && cargo build --release
+```
+
 ## Architecture
 
 **Java 26 JPMS library** (`org.acme` module) targeting Java 26 with preview features enabled (`--enable-preview`). JDK: GraalVM Community CE 25.0.2 (Java 26 EA builds required for Java 26 target).

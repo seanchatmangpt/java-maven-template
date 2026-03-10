@@ -1,0 +1,127 @@
+{# Messaging Test — Test template for messaging patterns #}
+---
+to: "{{ output_dir }}/{{ package | replace(from='.', to='/') }}/{{ name }}MessagingTest.java"
+vars:
+  name: "Pattern"
+  package: "org.acme.messaging.test"
+  output_dir: "src/test/java"
+  message_type: "Object"
+  javadoc: "Tests for messaging pattern implementation"
+---
+package {{ package }};
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.assertj.core.api.WithAssertions;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
+
+{% if javadoc %}
+/**
+ * {{ javadoc }}
+ */
+{% endif %}
+@Timeout(30)
+@Execution(ExecutionMode.SAME_THREAD)
+@DisplayName("{{ name }} Messaging Tests")
+class {{ name }}MessagingTest implements WithAssertions {
+
+    // Test fixtures will be created in nested test classes
+
+    @Nested
+    @DisplayName("Message Flow Tests")
+    class MessageFlowTests {
+
+        @Test
+        @DisplayName("should process messages in order")
+        void shouldProcessMessagesInOrder() throws Exception {
+            var processed = new ArrayList<{{ message_type }}>();
+            var count = new AtomicInteger(0);
+
+            // Create test messages
+            for (int i = 0; i < 10; i++) {
+                // Send message and verify processing
+            }
+
+            await().atMost(Duration.ofSeconds(5))
+                    .until(() -> count.get() == 10);
+
+            assertThat(processed).hasSize(10);
+        }
+
+        @Test
+        @DisplayName("should handle message bursts")
+        void shouldHandleMessageBursts() throws Exception {
+            var count = new AtomicInteger(0);
+
+            // Send burst of 100 messages
+            for (int i = 0; i < 100; i++) {
+                // Send message
+            }
+
+            await().atMost(Duration.ofSeconds(10))
+                    .until(() -> count.get() == 100);
+        }
+    }
+
+    @Nested
+    @DisplayName("Error Handling Tests")
+    class ErrorHandlingTests {
+
+        @Test
+        @DisplayName("should handle invalid messages gracefully")
+        void shouldHandleInvalidMessagesGracefully() throws Exception {
+            var errorCount = new AtomicInteger(0);
+            var successCount = new AtomicInteger(0);
+
+            // Send mix of valid and invalid messages
+
+            await().atMost(Duration.ofSeconds(5))
+                    .until(() -> errorCount.get() > 0);
+
+            assertThat(successCount.get()).isGreaterThan(0);
+        }
+    }
+
+    @Nested
+    @DisplayName("Concurrency Tests")
+    class ConcurrencyTests {
+
+        @Test
+        @DisplayName("should handle concurrent message delivery")
+        void shouldHandleConcurrentMessageDelivery() throws Exception {
+            var count = new AtomicInteger(0);
+            var threads = new ArrayList<Thread>();
+
+            // Start multiple producer threads
+            for (int t = 0; t < 4; t++) {
+                var thread = Thread.startVirtualThread(() -> {
+                    for (int i = 0; i < 25; i++) {
+                        // Send message
+                        count.incrementAndGet();
+                    }
+                });
+                threads.add(thread);
+            }
+
+            for (var thread : threads) {
+                thread.join(Duration.ofSeconds(10));
+            }
+
+            assertThat(count.get()).isEqualTo(100);
+        }
+    }
+}

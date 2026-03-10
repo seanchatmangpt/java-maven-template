@@ -260,26 +260,31 @@ public final class RefactorEngine {
             sb.append("set -euo pipefail\n\n");
 
             var safe = safeCommands();
-            if (!safe.isEmpty()) {
-                sb.append("# ── Safe migrations (non-breaking) ──────────────────────────────\n");
-                safe.forEach(cmd -> {
-                    sb.append(cmd.toComment()).append("\n");
-                    sb.append(cmd.toShellCommand()).append("\n\n");
-                });
-            }
-
             var breaking = breakingCommands();
-            if (!breaking.isEmpty()) {
-                sb.append("\n# ── Breaking changes — review before running ──────────────────\n");
-                sb.append("read -rp 'Apply breaking changes? (y/N) ' confirm\n");
-                sb.append("[[ \"$confirm\" =~ ^[Yy]$ ]] || exit 0\n\n");
-                breaking.forEach(cmd -> {
-                    sb.append(cmd.toComment()).append("\n");
-                    sb.append(cmd.toShellCommand()).append("\n\n");
-                });
-            }
 
-            sb.append("echo 'Migration complete. Run: bin/jgen verify'\n");
+            if (safe.isEmpty() && breaking.isEmpty()) {
+                sb.append("echo 'No migrations required - codebase is modern!'\n");
+            } else {
+                if (!safe.isEmpty()) {
+                    sb.append("# ── Safe migrations (non-breaking) ──────────────────────────────\n");
+                    safe.forEach(cmd -> {
+                        sb.append(cmd.toComment()).append("\n");
+                        sb.append(cmd.toShellCommand()).append("\n\n");
+                    });
+                }
+
+                if (!breaking.isEmpty()) {
+                    sb.append("\n# ── Breaking changes — review before running ──────────────────\n");
+                    sb.append("read -rp 'Apply breaking changes? (y/N) ' confirm\n");
+                    sb.append("[[ \"$confirm\" =~ ^[Yy]$ ]] || exit 0\n\n");
+                    breaking.forEach(cmd -> {
+                        sb.append(cmd.toComment()).append("\n");
+                        sb.append(cmd.toShellCommand()).append("\n\n");
+                    });
+                }
+
+                sb.append("echo 'Migration complete. Run: bin/jgen verify'\n");
+            }
             return sb.toString();
         }
     }

@@ -1,0 +1,27 @@
+# Java Maven Template - Development Containerfile
+# Includes Maven 4 + Java 25 + mvnd for fast local development
+
+FROM maven:4.0.0-rc-5-eclipse-temurin-25
+
+# Install mvnd (Maven Daemon) for faster builds
+ARG MVND_VERSION=1.0.2
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://downloads.apache.org/maven/mvnd/${MVND_VERSION}/maven-mvnd-${MVND_VERSION}-linux-amd64.tar.gz | \
+    tar xz -C /opt && \
+    ln -s /opt/maven-mvnd-${MVND_VERSION}/bin/mvnd /usr/local/bin/mvnd && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy project files
+COPY pom.xml .
+COPY .mvn .mvn
+
+# Pre-download dependencies
+RUN mvn dependency:go-offline -B || true
+
+# Copy source
+COPY src ./src
+
+# Default command: build and run
+CMD ["mvn", "verify", "exec:java"]

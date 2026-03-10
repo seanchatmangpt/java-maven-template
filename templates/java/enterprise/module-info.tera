@@ -1,0 +1,42 @@
+/**
+ * {{ project.name | default(value="Generated Application") }} - Generated from Turtle specification.
+ *
+ * @module {{ project.moduleName | default(value="org.generated") }}
+ */
+module {{ project.moduleName | default(value="org.generated") }} {
+    // Java standard modules
+    requires java.base;
+    requires java.logging;
+    requires java.management;
+    requires jdk.management;
+
+    // JOTP primitives
+    requires org.acme;
+
+    // Exports
+    exports {{ project.basePackage | default(value="org.generated") }};
+    {% if project.services %}
+    {% for service in project.services %}
+    exports {{ project.basePackage | default(value="org.generated") }}.{{ service.name | lower }};
+    {% endfor %}
+    {% endif %}
+
+    // Opens for reflection (testing, DI frameworks)
+    opens {{ project.basePackage | default(value="org.generated") }} to
+        org.junit.platform.commons,
+        org.assertj.core;
+
+    // Service providers
+    {% if project.serviceProviders %}
+    {% for provider in project.serviceProviders %}
+    provides {{ provider.interface }} with {{ provider.implementation }};
+    {% endfor %}
+    {% endif %}
+
+    // Service consumers
+    {% if project.serviceConsumers %}
+    {% for consumer in project.serviceConsumers %}
+    uses {{ consumer.interface }};
+    {% endfor %}
+    {% endif %}
+}
