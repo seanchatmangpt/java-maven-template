@@ -129,7 +129,7 @@ public final class TurtleParser {
     // ── Error Types ──────────────────────────────────────────────────────
 
     /** Exception thrown when Turtle file cannot be parsed. */
-    public static final class TurtleParseException extends RuntimeException {
+    public static class TurtleParseException extends RuntimeException {
         public TurtleParseException(String message) {
             super(message);
         }
