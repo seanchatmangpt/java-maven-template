@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.BiFunction;
 import java.util.function.IntConsumer;
 import java.util.stream.Gatherers;
@@ -23,11 +23,13 @@ import net.jqwik.api.constraints.IntRange;
 import org.acme.EventManager;
 import org.acme.Proc;
 import org.acme.ProcRef;
+import org.acme.ProcSys;
 import org.acme.Supervisor;
 import org.assertj.core.api.WithAssertions;
 import org.instancio.Instancio;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 
@@ -61,6 +63,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
  *       restart windows is expected and measured.
  * </ol>
  */
+@Timeout(600) // hard JUnit safety net: total suite must finish within 10 min
 @DisplayName("Atlas OTP Stress — 1M Virtual Thread Suite")
 @Execution(ExecutionMode.SAME_THREAD) // prevent parallel execution of heavy stress tests
 class AtlasOtpStressIT implements WithAssertions {
@@ -193,6 +196,14 @@ class AtlasOtpStressIT implements WithAssertions {
                             .isEqualTo(expectedPerProc);
                 }
             });
+
+            // ProcSys introspection: verify proc[0] processed at least expectedPerProc messages
+            var sysStats = ProcSys.statistics(procs[0]);
+            System.out.printf("[T1] proc[0] ProcSys: in=%d out=%d queue=%d%n",
+                    sysStats.messagesIn(), sysStats.messagesOut(), sysStats.queueDepth());
+            assertThat(sysStats.messagesIn())
+                    .as("proc[0] messagesIn via ProcSys.statistics() must be ≥ expectedPerProc+1")
+                    .isGreaterThanOrEqualTo(expectedPerProc);
         } finally {
             System.out.printf("[T1] total: %d ms%n", (System.nanoTime() - t0) / 1_000_000L);
             for (Proc proc : procs) {
@@ -428,21 +439,22 @@ class AtlasOtpStressIT implements WithAssertions {
     @DisplayName("T4 [120s+120s] 1M notify → 10 handlers; each must see exactly 1M events")
     void t4_eventManagerFanOut() throws Exception {
         var bus = SessionEventBus.start();
-        AtomicLong[] counters = new AtomicLong[10];
+        // LongAdder: lower contention than AtomicLong for write-heavy fan-out counting
+        LongAdder[] counters = new LongAdder[10];
         @SuppressWarnings({"unchecked", "rawtypes"})
         EventManager.Handler[] handlers = new EventManager.Handler[10];
         for (int i = 0; i < 10; i++) {
-            counters[i] = new AtomicLong(0L);
+            counters[i] = new LongAdder();
             final int hi = i;
             handlers[i] = (EventManager.Handler<SqlRaceSessionEvent>) event ->
-                    counters[hi].incrementAndGet();
+                    counters[hi].increment();
             bus.addHandler(handlers[i]);
         }
 
         // Barrier: syncNotify blocks until all 10 Add messages have been processed
         // and the handlers have each received one event. Then reset counters.
         bus.syncNotify(new SqlRaceSessionEvent.SessionSaved());
-        for (var c : counters) c.set(0L);
+        for (var c : counters) c.reset();
 
         long t0 = System.nanoTime();
         try {
@@ -459,7 +471,7 @@ class AtlasOtpStressIT implements WithAssertions {
             // Drain: 10M sequential handler calls on one EventManager virtual thread
             await().atMost(Duration.ofSeconds(120)).untilAsserted(() -> {
                 for (int i = 0; i < 10; i++) {
-                    assertThat(counters[i].get())
+                    assertThat(counters[i].sum())
                             .as("handler[%d] event count", i)
                             .isEqualTo(N);
                 }
@@ -467,7 +479,7 @@ class AtlasOtpStressIT implements WithAssertions {
 
             // Hard assertions post-drain
             for (int i = 0; i < 10; i++) {
-                assertThat(counters[i].get())
+                assertThat(counters[i].sum())
                         .as("handler[%d] must see all %d events", i, N)
                         .isEqualTo(N);
             }
