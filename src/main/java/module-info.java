@@ -1,5 +1,6 @@
 module org.acme {
     exports org.acme;
+    exports org.acme.reactive;
     exports org.acme.dogfood.core;
     exports org.acme.dogfood.concurrency;
     exports org.acme.dogfood.patterns;
@@ -9,4 +10,5 @@ module org.acme {
     exports org.acme.dogfood.innovation;
     exports org.acme.dogfood.mclaren;
     exports org.acme.dogfood.messaging;
+    exports org.acme.dogfood.reactive;
 }
