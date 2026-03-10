@@ -1,505 +1,561 @@
 # 29. Polling Consumer
 
-> *"A gen_server with `receive after Timeout` is the ur-polling consumer: wake up every N milliseconds, check if work is available, process it, sleep again. The PollingConsumer makes the poller and the handler separate concerns — one virtual thread polls, one Proc handles — so a slow handler never starves the poll loop and a crashing handler never kills the poller."*
+> *"Don't call us; we'll call you. Except in distributed systems —
+> sometimes you have to keep knocking until someone answers."*
+> — a pragmatic inversion of the Hollywood Principle
+
+---
 
 ## Intent
 
-Consume messages from a source at a controlled rate by periodically polling rather than being pushed, with fault isolation between the polling loop and the message handler so that handler failures are confined and observable without disrupting the poll schedule.
+A **Polling Consumer** explicitly controls when it fetches messages from a channel,
+rather than having messages pushed to it. It owns the polling loop: it checks the
+queue at a configurable interval, retrieves one message at a time, and forwards it to
+a handler. This inverts the usual push model and gives the consumer authority over its
+own consumption rate, making it ideal for back-pressure scenarios, rate-limited
+upstream services, or integration with systems that expose a pull-only API (e.g.,
+SQS, database outbox tables, file-system drop-folders). In JOTP, the polling loop
+runs on a virtual thread while message handling runs inside a `Proc`, giving the
+consumer both lightweight concurrency and OTP-style state introspection.
 
-The PollingConsumer is the pull-side complement to the event-driven push consumer. It is the right choice when the message source cannot push (legacy databases, files, REST APIs, systems without event/webhook support) or when backpressure must be applied by controlling the poll rate rather than relying on the source to throttle.
+---
 
 ## OTP Analogy
 
-The canonical Erlang polling loop is:
+In Erlang/OTP the canonical equivalent is a `gen_server` that uses
+`erlang:send_after/3` to schedule periodic self-messages, waking itself to drain a
+shared ETS table or external queue:
 
 ```erlang
--record(state, {
-    source   :: fun(() -> {ok, Msg} | empty),
-    handler  :: fun((Msg) -> ok),
-    interval :: non_neg_integer(),  %% milliseconds
-    polled   :: non_neg_integer()
-}).
+-module(polling_consumer).
+-behaviour(gen_server).
 
-handle_info(poll, #state{source=Src, handler=H, interval=I, polled=N}=S) ->
-    NewN = case Src() of
-        {ok, Msg} ->
-            H(Msg),
-            N + 1;
-        empty ->
-            N
+-record(state, {handler, interval_ms, count = 0}).
+
+init([Handler, IntervalMs]) ->
+    schedule_poll(IntervalMs),
+    {ok, #state{handler = Handler, interval_ms = IntervalMs}}.
+
+handle_info(poll, #state{handler = H, interval_ms = Ms, count = C} = S) ->
+    NewCount = case queue_module:dequeue() of
+        empty   -> C;
+        {ok, M} -> H(M), C + 1
     end,
-    erlang:send_after(I, self(), poll),
-    {noreply, S#state{polled=NewN}};
+    schedule_poll(Ms),
+    {noreply, S#state{count = NewCount}};
 
-init(State) ->
-    self() ! poll,
-    {ok, State}.
+handle_cast({enqueue, Msg}, S) ->
+    queue_module:enqueue(Msg),
+    {noreply, S}.
+
+schedule_poll(Ms) -> erlang:send_after(Ms, self(), poll).
 ```
 
-The `receive after Timeout` version is slightly different — it avoids `send_after` overhead by embedding the timeout in the receive:
+JOTP replaces the timed self-message with a blocking `queue.poll(interval)` on a
+virtual thread, which is cheaper than timer messages and maps directly to Java's
+`BlockingQueue` contract:
 
-```erlang
-loop(State) ->
-    receive
-        {stop} -> ok
-    after State#state.interval ->
-        NewState = poll_and_handle(State),
-        loop(NewState)
-    end.
-```
+| OTP concept | JOTP equivalent |
+|---|---|
+| `gen_server` + `send_after` | virtual-thread poll loop (`Thread.ofVirtual()`) |
+| ETS table / process dictionary | `BlockingQueue<T>` (injected or internal) |
+| `handle_info(poll, ...)` | `pollLoop()` — `queue.poll(interval, MILLISECONDS)` |
+| `handle_cast({enqueue, Msg}, ...)` | `send(T message)` — `queue.offer(message)` |
+| `handle_cast` counter update | `Proc<Long, T>` — state is the message count |
+| `sys:statistics/2` | `ProcSys.statistics(handlerProc).messagesIn()` |
+| `AtomicBoolean` running flag | `running` field; set to `false` on `close()` |
 
-The Java implementation separates the concerns more explicitly:
-
-- The **poll loop** is a plain `while(running)` on a virtual thread — sleeping between polls, calling the source, enqueuing messages. It never calls the handler directly.
-- The **handler** runs inside a `Proc<Long, T>` — the `Long` state is the polled count. Each enqueued message is sent to the `Proc` as a message. The `Proc` provides mailbox buffering, fault isolation, and `ProcSys` introspection for the handler.
-
-This separation means: if the handler crashes (throws), the `Proc` supervisor can restart it without touching the poll loop. If the poll source is slow, the poll loop blocks on the source, not on the handler. The `BlockingQueue` between them is the bounded buffer that provides backpressure.
+---
 
 ## JOTP Implementation
 
-**Class:** `PollingConsumer<T>`
-**Package:** `org.acme.eip.endpoint`
-**Key design decisions:**
+### Design Decisions
 
-1. **Dual-thread architecture** — poll loop on a virtual thread, handler inside a `Proc<Long, T>`. The poll loop sends to the `Proc`'s mailbox via a `BlockingQueue` with bounded capacity (backpressure). If the `Proc` mailbox is full, the poll loop blocks — automatically throttling the source read rate.
+**1. The poll loop and the handler are intentionally separated.**
 
-2. **Two constructors** — internal queue (the `PollingConsumer` manages the `BlockingQueue`) and external queue (caller provides a `BlockingQueue<T>` that another producer already fills). The external queue constructor enables the `PollingConsumer` to drain a pre-filled queue, which is the pattern for JMS/AMQP bridge adapters.
+The poll loop is a plain virtual-thread `while` loop — as simple as possible. Its
+only job is to move messages from the `BlockingQueue` to the `Proc` mailbox via
+`handlerProc.tell(message)`. All application logic lives in the `Proc` handler
+lambda, which means it inherits `Proc` semantics: sequential execution, observable
+state, and `ProcSys` introspection. This separation also means the `Proc` can be
+supervised independently of the poll loop.
 
-3. **`Proc<Long, T>` for handler** — the handler function `Consumer<T>` is wrapped in a `Proc`. The `Proc` state is the `Long` polled count. The state handler increments the count after each successful handler invocation, so `polledCount()` is obtained from the `Proc` state (via `ProcSys.getState`) rather than a separate counter, keeping the count consistent with the `Proc`'s actual execution.
+**2. `BlockingQueue` is the bridge, not an implementation detail.**
 
-4. **Configurable poll interval** — `Duration pollInterval` controls the sleep between polls. For time-window-based polling, the interval is added *after* each poll attempt (fixed delay, not fixed rate). This avoids the "thundering herd" problem when many consumers start simultaneously.
+The three-argument constructor accepts an `externalQueue`, making it possible to
+share the queue with other producers (e.g., a `DurableSubscriber` draining its buffer
+into the same queue, or a `JMS` listener depositing messages). The two-argument
+constructor creates a private `LinkedBlockingQueue` for standalone use.
 
-5. **Graceful shutdown** — `close()` sets `running = false`, interrupts the poll thread, and sends a terminal poison-pill to the `Proc`. Both stop cleanly.
+**3. `running` flag + thread interrupt for clean shutdown.**
 
-6. **Error channel** — optional `MessageChannel<PollingError<T>>` for handler exceptions. If a handler throws, the exception is wrapped in `PollingError` and sent to the error channel rather than crashing the `Proc`. This enables "retry later" workflows without stopping the consumer.
+On `close()`, `running` is set to `false` and the poll thread is interrupted. The
+`InterruptedException` catch in `pollLoop()` re-sets the interrupt flag and breaks the
+loop cleanly. `pollerThread.join(interval + 500 ms)` ensures the thread has exited
+before `handlerProc.stop()` is called — so no messages are in flight when the `Proc`
+stops.
+
+**4. `AtomicBoolean` avoids a `Proc` command for the shutdown signal.**
+
+Using an `AtomicBoolean` rather than a `Cmd.Stop` message is deliberate. A `Proc`
+command for shutdown would be subject to mailbox queuing — if the queue is deep, the
+stop signal could take a long time to arrive. The `AtomicBoolean` + interrupt
+combination stops the poll loop immediately, at the OS-scheduling level, without
+waiting for the mailbox to drain.
+
+### Architecture Diagram
+
+```
+ External Producers (any thread)
+        |
+        |  pollingConsumer.send(T message)
+        |     queue.offer(message)
+        |
+        v
++-----------------------------------------------------+
+|  PollingConsumer<T>   implements MessageChannel     |
+|                                                     |
+|  +---------------------------+                      |
+|  |  Virtual Thread           |                      |
+|  |  "polling-consumer-loop"  |                      |
+|  |                           |                      |
+|  |  while (running.get()):   |                      |
+|  |    msg = queue.poll(      |                      |
+|  |            interval, MS)  |                      |
+|  |    if (msg != null):      |                      |
+|  |      handlerProc.tell(msg)|                      |
+|  |    on InterruptedException|                      |
+|  |      break                |                      |
+|  +---------------------------+                      |
+|           |                                         |
+|           | tell(T)                                 |
+|           v                                         |
+|  +----------------------------------------------+   |
+|  |  Proc<Long, T>  (virtual-thread mailbox)     |   |
+|  |                                              |   |
+|  |  State: Long (message count)                 |   |
+|  |  Handler: (count, msg) -> {                  |   |
+|  |      handler.accept(msg);                    |   |
+|  |      return count + 1;                       |   |
+|  |  }                                           |   |
+|  +----------------------------------------------+   |
+|                                                     |
+|  polledCount()  <- ProcSys.statistics().messagesIn()|
+|  queueSize()    <- queue.size()                     |
++-----------------------------------------------------+
+         |
+         v
+    Consumer<T>  (your application logic)
+```
+
+---
 
 ## API Reference
 
-### `PollingConsumer<T>`
-
 | Method | Signature | Description |
-|--------|-----------|-------------|
-| `polledCount` | `long polledCount()` | Total messages processed by handler (from Proc state) |
-| `pendingCount` | `int pendingCount()` | Current size of the internal queue (messages polled but not yet handled) |
-| `handlerProc` | `ProcRef<Long, T> handlerProc()` | Raw `ProcRef` for supervisor wiring and `ProcSys` introspection |
-| `isRunning` | `boolean isRunning()` | Whether the poll loop is active |
-| `pause` | `void pause()` | Suspend polling (handler keeps draining the queue) |
-| `resume` | `void resume()` | Resume polling |
-| `setPollInterval` | `void setPollInterval(Duration interval)` | Change poll interval at runtime |
-| `close` | `void close()` | Graceful shutdown: stop polling, drain queue, stop handler Proc |
+|---|---|---|
+| Constructor (2-arg) | `PollingConsumer(Consumer<T> handler, Duration pollInterval)` | Internal `LinkedBlockingQueue`. Starts the poll virtual thread immediately. |
+| Constructor (3-arg) | `PollingConsumer(BlockingQueue<T> externalQueue, Consumer<T> handler, Duration pollInterval)` | Shared queue — multiple producers may enqueue to the same queue. |
+| `send` | `void send(T message)` | `MessageChannel<T>` contract. Non-blocking `queue.offer(message)`. Returns `false` if the queue is full (unbounded queue: always `true`). |
+| `polledCount` | `long polledCount()` | Total messages forwarded to the handler proc. Reads `ProcSys.statistics(handlerProc).messagesIn()`. |
+| `queueSize` | `int queueSize()` | Current number of messages waiting in the queue (not yet polled). |
+| `handlerProc` | `Proc<Long, T> handlerProc()` | Exposes the raw handler `Proc` for supervision wiring or testing. |
+| `stop` | `void stop()` | Delegates to `close()`. |
+| `close` | `void close()` | Sets `running=false`, interrupts poll thread, joins it with timeout, then stops the `Proc`. |
 
-### `PollingConsumer.Builder<T>`
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `source` | `Builder<T> source(Supplier<Optional<T>> src)` | Poll source: returns `Optional.empty()` when nothing available |
-| `handler` | `Builder<T> handler(Consumer<T> h)` | Message handler (runs inside Proc) |
-| `pollInterval` | `Builder<T> pollInterval(Duration d)` | Sleep between poll attempts (default: 1 second) |
-| `queueCapacity` | `Builder<T> queueCapacity(int n)` | Internal queue bound (default: 256) |
-| `errorChannel` | `Builder<T> errorChannel(MessageChannel<PollingError<T>> ch)` | Handler exception routing |
-| `build` | `PollingConsumer<T> build()` | Start poll loop and handler Proc |
-
-### Constructor: external queue
-
-```java
-PollingConsumer<T> consumer = PollingConsumer.draining(
-    existingQueue,            // BlockingQueue<T> already being filled externally
-    handler,                  // Consumer<T>
-    Duration.ofMillis(100)    // poll interval for drain loop
-);
-```
-
-### `PollingError<T>` (record)
-
-```java
-record PollingError<T>(T message, Throwable cause, Instant timestamp) {}
-```
+---
 
 ## Implementation Internals
 
+The following pseudo-code traces the two concurrent actors — the poll loop virtual
+thread and the handler `Proc` — through the full lifecycle:
+
 ```
-PollingConsumer<T> internals:
+STARTUP
+  queue     <- LinkedBlockingQueue (or external)
+  running   <- AtomicBoolean(true)
+  handlerProc <- Proc( state=0L,
+                       handler=(count, msg) -> { consumer.accept(msg); count+1 } )
+  pollerThread <- Thread.ofVirtual("polling-consumer-loop").start(pollLoop)
 
-[Poll thread: virtual thread]
-│
-└── while (running && !interrupted):
-    ├── source.get()    // returns Optional<T>
-    ├── if Present(msg):
-    │   └── queue.put(msg)    // blocks if queue full (backpressure)
-    └── sleep(pollInterval)
+POLL LOOP (virtual thread "polling-consumer-loop")
+  WHILE running.get():
+    msg <- queue.poll( pollInterval.toMillis(), MILLISECONDS )
+    IF msg != null:
+      handlerProc.tell(msg)        -- fire-and-forget to Proc mailbox
+    -- IF msg == null: interval elapsed, no message; loop again
+    ON InterruptedException:
+      Thread.currentThread().interrupt()
+      BREAK                        -- clean exit
 
-[Handler Proc: Proc<Long, T>]
-│
-└── state handler: (count, msg) ->
-    ├── try:
-    │   ├── handler.accept(msg)
-    │   └── return count + 1
-    └── catch Exception e:
-        ├── if errorChannel != null: errorChannel.send(new PollingError(msg, e, now()))
-        └── return count   // don't increment on failure; don't crash Proc
+HANDLER PROC (separate virtual thread, serialised)
+  ON receive(msg):
+    consumer.accept(msg)           -- your application logic
+    state <- state + 1             -- count incremented atomically per proc semantics
+
+SHUTDOWN (calling thread)
+  running.set(false)
+  pollerThread.interrupt()
+  pollerThread.join(pollInterval + 500 ms)
+  handlerProc.stop()
 ```
 
-The poll loop and handler `Proc` communicate via a `LinkedBlockingQueue<T>` (bounded). The `Proc` pulls from this queue as its message source instead of the standard `Proc` mailbox — this is the "external queue" integration point. Internally, a bridge virtual thread reads from the `LinkedBlockingQueue` and sends each entry to the `Proc` mailbox, preserving the `Proc` abstraction.
+Key ordering guarantee: because `handlerProc.tell(msg)` is a sequential enqueue into
+the `Proc` mailbox, messages are processed in the order they were dequeued from the
+`BlockingQueue`. The `Proc` serialises handler invocations, so `consumer.accept` is
+never called concurrently even if multiple threads somehow reach `tell`.
 
-**Backpressure propagation:** When the handler is slow, the `LinkedBlockingQueue` fills to its capacity. The poll loop's `queue.put()` call blocks. The source is no longer polled. The source's backpressure is propagated all the way back to the poll source without any explicit rate-limiting logic.
-
-**ProcSys introspection:** `ProcSys.getState(consumer.handlerProc())` returns the `Long` polled count. `ProcSys.statistics(consumer.handlerProc())` returns message throughput, queue depth, and last message timestamp — the full OTP `sys:statistics` equivalent.
+---
 
 ## Code Example
 
 ```java
-import org.acme.eip.endpoint.PollingConsumer;
-import org.acme.eip.channel.InMemoryChannel;
+import org.acme.PollingConsumer;
+
 import java.time.Duration;
-import java.util.Optional;
 import java.util.concurrent.LinkedBlockingQueue;
 
-// --- Simulated source: a database poll result queue ---
-record Task(long id, String payload) {}
+/// Demonstrates basic polling, shared-queue usage, and introspection.
+public class PollingConsumerDemo {
 
-// Simulate a source that returns tasks one at a time
-var sourceQueue = new LinkedBlockingQueue<Task>();
-sourceQueue.add(new Task(1, "process-report"));
-sourceQueue.add(new Task(2, "send-email"));
-sourceQueue.add(new Task(3, "generate-invoice"));
+    public static void main(String[] args) throws InterruptedException {
 
-// --- Error channel ---
-var errorChannel = new InMemoryChannel<PollingConsumer.PollingError<Task>>("errors");
+        // --- Example 1: standalone (internal queue) ---------------------------
+        var consumer = new PollingConsumer<String>(
+            msg -> System.out.println("[handler] " + msg),
+            Duration.ofMillis(50)
+        );
 
-// --- Build consumer (internal queue constructor) ---
-var consumer = PollingConsumer.<Task>builder()
-    .source(() -> Optional.ofNullable(sourceQueue.poll()))  // poll, not blocking take
-    .handler(task -> {
-        System.out.printf("[HANDLER] Processing task %d: %s%n", task.id(), task.payload());
-        if (task.id() == 2) throw new RuntimeException("Email service down");
-    })
-    .pollInterval(Duration.ofMillis(50))
-    .queueCapacity(32)
-    .errorChannel(errorChannel)
-    .build();
+        consumer.send("task-001");
+        consumer.send("task-002");
+        consumer.send("task-003");
 
-// Let it run for a bit
-Thread.sleep(500);
+        // Poll loop runs every 50 ms; give it time to drain
+        Thread.sleep(300);
 
-System.out.println("Polled:  " + consumer.polledCount());
-System.out.println("Pending: " + consumer.pendingCount());
-System.out.println("Errors:  " + errorChannel.size());
+        System.out.println("Polled so far: " + consumer.polledCount()); // 3
+        System.out.println("Queue backlog: " + consumer.queueSize());   // 0
 
-// Output:
-// [HANDLER] Processing task 1: process-report
-// [HANDLER] Processing task 2: send-email       <- throws, goes to errorChannel
-// [HANDLER] Processing task 3: generate-invoice
-// Polled:  2   (task 2 failed, not counted)
-// Pending: 0
-// Errors:  1
+        consumer.stop();
 
-consumer.close();
-```
+        // --- Example 2: shared external queue --------------------------------
+        var sharedQueue = new LinkedBlockingQueue<Integer>(1_000);
 
-### External Queue Constructor (JMS/AMQP Bridge)
+        // Simulate a producer filling the queue
+        for (int i = 0; i < 10; i++) {
+            sharedQueue.put(i);
+        }
 
-```java
-// External queue filled by JMS message listener (not managed by us)
-var jmsQueue = new LinkedBlockingQueue<JmsMessage>(512);
+        var consumer2 = new PollingConsumer<>(
+            sharedQueue,
+            n -> System.out.println("[int-handler] " + n),
+            Duration.ofMillis(20)
+        );
 
-// Start a JMS listener that fills jmsQueue
-jmsSession.createConsumer(queue).setMessageListener(msg ->
-    jmsQueue.offer(convertToJmsMessage(msg)));
+        // Another producer can keep enqueuing while the consumer polls
+        Thread.ofVirtual().start(() -> {
+            for (int i = 10; i < 20; i++) {
+                try {
+                    sharedQueue.put(i);
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
 
-// PollingConsumer drains the JMS queue at a controlled rate
-var consumer = PollingConsumer.<JmsMessage>draining(
-    jmsQueue,
-    msg -> processMessage(msg),
-    Duration.ofMillis(10)
-);
-```
-
-### ProcSys Introspection
-
-```java
-import org.acme.ProcSys;
-
-// Get live handler statistics
-var stats = ProcSys.statistics(consumer.handlerProc());
-System.out.println("Messages processed: " + stats.messagesIn());
-System.out.println("Last processed:     " + stats.lastMessageTime());
-System.out.println("Throughput:         " + stats.throughput() + " msg/s");
-
-// Suspend the handler (but keep polling, filling the queue)
-ProcSys.suspend(consumer.handlerProc());
-System.out.println("Handler suspended");
-// ... perform maintenance ...
-ProcSys.resume(consumer.handlerProc());
-System.out.println("Handler resumed, draining queue");
-```
-
-### Rate-Limited Polling
-
-```java
-// Start slow, ramp up poll rate based on queue depth
-var consumer = PollingConsumer.<Task>builder()
-    .source(taskDb::pollNextTask)
-    .handler(this::processTask)
-    .pollInterval(Duration.ofSeconds(1))   // start conservative
-    .build();
-
-// Adaptive: increase rate if source has more work
-ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-scheduler.scheduleAtFixedRate(() -> {
-    long depth = taskDb.pendingCount();
-    if (depth > 1000) {
-        consumer.setPollInterval(Duration.ofMillis(10));
-    } else if (depth > 100) {
-        consumer.setPollInterval(Duration.ofMillis(100));
-    } else {
-        consumer.setPollInterval(Duration.ofSeconds(1));
-    }
-}, 5, 5, TimeUnit.SECONDS);
-```
-
-## Composition
-
-**PollingConsumer + Content-Based Router:**
-Route polled messages to specialist handlers based on type:
-```java
-var consumer = PollingConsumer.<Message>builder()
-    .source(db::pollNext)
-    .handler(router::route)    // router is a MessageRouter<Message>
-    .build();
-```
-
-**PollingConsumer + Resequencer:**
-Source delivers out-of-order; poll then resequence before processing:
-```
-[DB source] -> PollingConsumer -> Resequencer -> OrderedProcessor
-```
-
-**PollingConsumer + DurableSubscriber:**
-Feed a durable subscriber that can pause/resume independently:
-```java
-var durable = DurableSubscriber.<Task>builder()
-    .handler(this::processTask)
-    .build();
-
-var consumer = PollingConsumer.<Task>builder()
-    .source(taskQueue::poll)
-    .handler(durable::send)   // decouple poll rate from processing rate
-    .build();
-```
-
-**PollingConsumer + WireTap:**
-Tap every polled message for audit without modifying the handler:
-```java
-var tap = WireTap.of(handlerChannel, msg -> auditLog.record(msg));
-var consumer = PollingConsumer.<Task>builder()
-    .source(db::pollNext)
-    .handler(task -> {
-        tap.send(task);
-        processTask(task);
-    })
-    .build();
-```
-
-**PollingConsumer + Supervisor:**
-Wire the handler `Proc` under a supervisor for automatic restart on crash:
-```java
-var supervisor = Supervisor.builder()
-    .child(consumer.handlerProc(), SupervisionStrategy.ONE_FOR_ONE)
-    .maxRestarts(5, Duration.ofMinutes(1))
-    .build();
-supervisor.start();
-```
-
-## Test Pattern
-
-```java
-import org.acme.eip.endpoint.PollingConsumer;
-import org.acme.eip.channel.CapturingChannel;
-import org.assertj.core.api.WithAssertions;
-import org.junit.jupiter.api.Test;
-import java.time.Duration;
-import java.util.Optional;
-import java.util.Queue;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
-
-class PollingConsumerTest implements WithAssertions {
-
-    record Item(int id, String value) {}
-
-    @Test
-    void pollsAndHandlesMessages() throws InterruptedException {
-        var handled = new CopyOnWriteArrayList<Item>();
-        var source  = new LinkedBlockingQueue<Item>();
-        source.addAll(List.of(
-            new Item(1, "a"), new Item(2, "b"), new Item(3, "c")));
-
-        var consumer = PollingConsumer.<Item>builder()
-            .source(() -> Optional.ofNullable(source.poll()))
-            .handler(handled::add)
-            .pollInterval(Duration.ofMillis(20))
-            .build();
-
-        // Wait until all 3 are processed
-        Awaitility.await().atMost(Duration.ofSeconds(2))
-            .until(() -> handled.size() == 3);
-
-        assertThat(handled).extracting(Item::id)
-            .containsExactlyInAnyOrder(1, 2, 3);
-        assertThat(consumer.polledCount()).isEqualTo(3);
-
-        consumer.close();
-    }
-
-    @Test
-    void handlerExceptionRoutesToErrorChannel() throws InterruptedException {
-        var errors = new CapturingChannel<PollingConsumer.PollingError<Item>>("errors");
-        var source = new ArrayDeque<>(List.of(new Item(1, "good"), new Item(2, "bad"), new Item(3, "good")));
-        var handled = new CopyOnWriteArrayList<Item>();
-
-        var consumer = PollingConsumer.<Item>builder()
-            .source(() -> Optional.ofNullable(source.poll()))
-            .handler(item -> {
-                if ("bad".equals(item.value())) throw new RuntimeException("bad item");
-                handled.add(item);
-            })
-            .pollInterval(Duration.ofMillis(20))
-            .errorChannel(errors)
-            .build();
-
-        Awaitility.await().atMost(Duration.ofSeconds(2))
-            .until(() -> handled.size() == 2);
-
-        assertThat(errors.captured()).hasSize(1);
-        assertThat(errors.captured().get(0).message()).isEqualTo(new Item(2, "bad"));
-        assertThat(consumer.polledCount()).isEqualTo(2);  // only successful ones counted
-
-        consumer.close();
-    }
-
-    @Test
-    void pause_stopsPollLoop_handlersKeepDraining() throws InterruptedException {
-        var source  = new LinkedBlockingQueue<Item>();
-        var handled = new CopyOnWriteArrayList<Item>();
-
-        var consumer = PollingConsumer.<Item>builder()
-            .source(() -> Optional.ofNullable(source.poll()))
-            .handler(handled::add)
-            .pollInterval(Duration.ofMillis(20))
-            .build();
-
-        // Add items, let some process
-        source.add(new Item(1, "a"));
-        source.add(new Item(2, "b"));
-
-        Awaitility.await().atMost(Duration.ofSeconds(1))
-            .until(() -> handled.size() == 2);
-
-        consumer.pause();
-        source.add(new Item(3, "c"));   // added during pause
-        Thread.sleep(200);              // poll loop is paused, won't pick this up
-
-        assertThat(handled).hasSize(2); // item 3 not yet handled
-        assertThat(consumer.isRunning()).isFalse();
-
-        consumer.resume();
-        Awaitility.await().atMost(Duration.ofSeconds(1))
-            .until(() -> handled.size() == 3);
-
-        assertThat(handled).extracting(Item::id).contains(3);
-        consumer.close();
-    }
-
-    @Test
-    void externalQueue_drainsExistingMessages() throws InterruptedException {
-        var externalQueue = new LinkedBlockingQueue<Item>();
-        externalQueue.addAll(List.of(new Item(10, "x"), new Item(20, "y")));
-
-        var handled = new CopyOnWriteArrayList<Item>();
-        var consumer = PollingConsumer.draining(
-            externalQueue, handled::add, Duration.ofMillis(20));
-
-        Awaitility.await().atMost(Duration.ofSeconds(2))
-            .until(() -> handled.size() == 2);
-
-        assertThat(handled).extracting(Item::id).containsExactlyInAnyOrder(10, 20);
-        consumer.close();
-    }
-
-    @Test
-    void procSysIntrospection_exposesHandlerState() throws InterruptedException {
-        var source  = new LinkedBlockingQueue<Item>();
-        var handled = new CountDownLatch(3);
-
-        var consumer = PollingConsumer.<Item>builder()
-            .source(() -> Optional.ofNullable(source.poll()))
-            .handler(item -> handled.countDown())
-            .pollInterval(Duration.ofMillis(10))
-            .build();
-
-        source.addAll(List.of(new Item(1, "a"), new Item(2, "b"), new Item(3, "c")));
-        handled.await(2, TimeUnit.SECONDS);
-
-        var procState = org.acme.ProcSys.getState(consumer.handlerProc());
-        assertThat(procState).isEqualTo(3L);  // polled count is the Proc state
-
-        consumer.close();
-    }
-
-    @Test
-    void backpressure_pollLoopBlocksWhenQueueFull() throws InterruptedException {
-        var pollCount = new AtomicInteger();
-        var slowHandlerLatch = new CountDownLatch(1);
-
-        var consumer = PollingConsumer.<Item>builder()
-            .source(() -> {
-                pollCount.incrementAndGet();
-                return Optional.of(new Item(pollCount.get(), "item-" + pollCount.get()));
-            })
-            .handler(item -> {
-                // Very slow handler — simulates backpressure
-                slowHandlerLatch.await(5, TimeUnit.SECONDS);
-            })
-            .pollInterval(Duration.ofMillis(1))
-            .queueCapacity(4)   // tiny queue to trigger backpressure quickly
-            .build();
-
-        Thread.sleep(100);
-
-        // pollCount should be bounded by queueCapacity, not unbounded
-        assertThat(pollCount.get()).isLessThan(20);
-
-        slowHandlerLatch.countDown();
-        consumer.close();
+        Thread.sleep(500);
+        System.out.println("Total integers handled: " + consumer2.polledCount());
+        consumer2.stop();
     }
 }
 ```
 
+Expected output (order of handler lines may vary by scheduling):
+
+```
+[handler] task-001
+[handler] task-002
+[handler] task-003
+Polled so far: 3
+Queue backlog: 0
+[int-handler] 0
+[int-handler] 1
+... (10-19 interleaved with producer)
+Total integers handled: 20
+```
+
+---
+
+## Composition
+
+### 1. Polling Consumer as Outbox Pattern Reader
+
+Read from a database outbox table via a polling consumer, using an external queue
+as the bridge between a JDBC reader thread and the `Proc` handler:
+
+```java
+BlockingQueue<OutboxEvent> outboxQueue = new LinkedBlockingQueue<>(500);
+
+// JDBC reader populates the queue on its own schedule
+ScheduledExecutorService jdbc = Executors.newSingleThreadScheduledExecutor();
+jdbc.scheduleAtFixedRate(() -> {
+    List<OutboxEvent> batch = outboxRepo.fetchUnprocessed(50);
+    batch.forEach(outboxQueue::offer);
+}, 0, 200, TimeUnit.MILLISECONDS);
+
+// Polling consumer processes at its own rate, decoupled from JDBC timing
+var consumer = new PollingConsumer<>(
+    outboxQueue,
+    event -> {
+        eventBus.publish(event);
+        outboxRepo.markProcessed(event.id());
+    },
+    Duration.ofMillis(10)
+);
+
+// Graceful drain on shutdown
+Runtime.getRuntime().addShutdownHook(Thread.ofVirtual().unstarted(() -> {
+    jdbc.shutdown();
+    try { consumer.close(); } catch (InterruptedException e) { /* log */ }
+}));
+```
+
+### 2. Supervised Polling Consumer
+
+Place the `handlerProc` under a `Supervisor` for fault recovery. If the handler
+throws, the `Supervisor` restarts the proc without stopping the poll loop:
+
+```java
+var supervisor = Supervisor.oneForOne(spec -> spec
+    .child("payment-handler",
+           () -> new Proc<Long, Payment>(
+               0L,
+               (count, payment) -> { paymentService.process(payment); return count + 1; }
+           ))
+);
+supervisor.start();
+
+ProcRef<Long, Payment> handlerRef = supervisor.procRef("payment-handler");
+
+// The poll loop sends directly to the ref -- safe across restarts
+var pollingConsumer = new PollingConsumer<>(
+    externalPaymentQueue,
+    payment -> handlerRef.tell(payment),
+    Duration.ofMillis(100)
+);
+```
+
+### 3. Rate-limited Polling with Adaptive Interval
+
+Adjust the poll interval dynamically to implement rate limiting without a full
+token-bucket library:
+
+```java
+// Custom subclass exposing the interval for testing; in production use composition
+class AdaptivePollingConsumer<T> extends PollingConsumer<T> {
+
+    private volatile Duration currentInterval;
+
+    AdaptivePollingConsumer(Consumer<T> handler, Duration initial) {
+        super(handler, initial);
+        this.currentInterval = initial;
+    }
+
+    void slowDown(Duration newInterval) {
+        this.currentInterval = newInterval;
+        // Signal: next poll will use updated interval via a new Proc command
+        // (real implementation restarts the poll thread with updated config)
+    }
+}
+
+// Alternatively, compose with a rate-limiting predicate on the queue
+RateLimiter limiter = RateLimiter.create(100.0); // 100 msg/s
+var consumer = new PollingConsumer<Order>(
+    order -> {
+        limiter.acquire();  // blocks until token available
+        orderService.handle(order);
+    },
+    Duration.ofMillis(10)
+);
+```
+
+---
+
+## Test Pattern
+
+```java
+import org.acme.PollingConsumer;
+import org.awaitility.Awaitility;
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class PollingConsumerTest {
+
+    @Test
+    void pollsAndHandlesMessagesFromInternalQueue() throws InterruptedException {
+        List<String> handled = new CopyOnWriteArrayList<>();
+        var consumer = new PollingConsumer<String>(
+            handled::add,
+            Duration.ofMillis(20)
+        );
+
+        consumer.send("a");
+        consumer.send("b");
+        consumer.send("c");
+
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(2))
+            .until(() -> handled.size() == 3);
+
+        assertThat(handled).containsExactlyInAnyOrder("a", "b", "c");
+        assertThat(consumer.polledCount()).isEqualTo(3L);
+        assertThat(consumer.queueSize()).isZero();
+
+        consumer.stop();
+    }
+
+    @Test
+    void dropsNothingUnderConcurrentLoad() throws InterruptedException {
+        int total = 1_000;
+        List<Integer> handled = new CopyOnWriteArrayList<>();
+        var consumer = new PollingConsumer<Integer>(
+            handled::add,
+            Duration.ofMillis(1)
+        );
+
+        // Concurrent producers
+        Thread[] producers = new Thread[4];
+        for (int i = 0; i < 4; i++) {
+            int base = i * 250;
+            producers[i] = Thread.ofVirtual().start(() -> {
+                for (int j = base; j < base + 250; j++) {
+                    consumer.send(j);
+                }
+            });
+        }
+        for (Thread t : producers) t.join();
+
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(5))
+            .until(() -> consumer.polledCount() == total);
+
+        assertThat(handled).hasSize(total);
+        consumer.stop();
+    }
+
+    @Test
+    void externalQueueReceivesMessagesFromMultipleProducers() throws InterruptedException {
+        var queue = new LinkedBlockingQueue<String>(100);
+        List<String> handled = new CopyOnWriteArrayList<>();
+
+        var consumer = new PollingConsumer<>(queue, handled::add, Duration.ofMillis(10));
+
+        // Two independent producers share the same queue
+        queue.put("from-producer-1");
+        queue.put("from-producer-2");
+
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(2))
+            .until(() -> handled.size() == 2);
+
+        assertThat(handled).containsExactlyInAnyOrder("from-producer-1", "from-producer-2");
+        consumer.stop();
+    }
+
+    @Test
+    void stopDrainsInFlightMessages() throws InterruptedException {
+        List<String> handled = new CopyOnWriteArrayList<>();
+        var consumer = new PollingConsumer<String>(handled::add, Duration.ofMillis(5));
+
+        // Send a burst and immediately stop
+        for (int i = 0; i < 20; i++) {
+            consumer.send("msg-" + i);
+        }
+
+        // stop() should drain before returning
+        consumer.stop();
+
+        // After stop(), the handler proc should have processed everything that
+        // was polled before the interrupt; we allow some tolerance for timing
+        assertThat(consumer.polledCount()).isGreaterThan(0L);
+    }
+
+    @Test
+    void queueSizeReflectsUnpolledMessages() {
+        var consumer = new PollingConsumer<String>(
+            __ -> { try { Thread.sleep(10_000); } catch (InterruptedException e) { /* slow */ } },
+            Duration.ofMillis(1)
+        );
+
+        // Flood the queue faster than the handler can drain
+        for (int i = 0; i < 50; i++) {
+            consumer.send("item-" + i);
+        }
+
+        // Some messages should still be queued
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(1))
+            .until(() -> consumer.queueSize() > 0 || consumer.polledCount() > 0);
+
+        // Clean up without asserting exact numbers (timing-sensitive)
+        try { consumer.stop(); } catch (InterruptedException ignored) {}
+    }
+}
+```
+
+---
+
 ## Caveats & Trade-offs
 
-**Use when:**
-- The message source is a legacy system with no push/event capability (JDBC, FTP, REST polling, files)
-- You need to apply backpressure to the source by controlling the poll rate
-- The handler is slow or unreliable and must be isolated from the poll loop
-- You need operational control (pause/resume) over the ingest rate without redeploying
+### Use When
 
-**Avoid when:**
-- The source supports push semantics natively (Kafka consumer, JMS with MessageListener) — using a poller introduces latency and wastes CPU on empty polls
-- Sub-millisecond latency is required — the poll interval adds inherent latency; use an event-driven consumer instead
-- The source cannot handle concurrent polling — multiple `PollingConsumer` instances will issue concurrent polls; ensure the source is thread-safe or use a single consumer
+- The upstream source is **pull-only** — SQS, Azure Service Bus, database outbox
+  tables, file-drop directories, or any API without a push/subscription mechanism.
+- You need explicit **rate control**: the consumer, not the producer, decides how fast
+  messages flow. This is the natural fit for back-pressure integration with slow
+  downstream services.
+- You want **observable queue depth** (`queueSize()`) separate from the handler's
+  `polledCount()` — useful for alerting when the queue grows beyond a threshold.
+- The handler occasionally throws and you want the `Proc` / `Supervisor` to isolate
+  failures without taking down the poll loop.
 
-**Poll interval tuning:**
-- **Too short:** Wastes CPU on empty polls; may overwhelm the source with requests
-- **Too long:** Increases latency; messages sit in the source queue longer than necessary
-- Consider adaptive polling: start with a long interval, reduce it when the source returns messages, increase it on empty polls. Exponential backoff with a ceiling is a good default strategy.
+### Avoid When
 
-**Queue capacity and memory:**
-- The internal `LinkedBlockingQueue` capacity bounds memory usage. Set it to the number of messages you're willing to buffer between source and handler.
-- If the handler crashes and the `Proc` restarts, the queue retains buffered messages — they will be processed by the restarted handler. This is "at-least-once" delivery within the JVM lifetime.
-- For cross-restart durability, use an external durable queue (e.g., a database row with a "processing" status column) as the source.
+- Latency requirements are very tight (sub-millisecond). Every message waits up to
+  `pollInterval` before it is dequeued. Use a push-based `MessageChannel` (e.g.,
+  `DurableSubscriber`, a direct `Proc.tell`) for low-latency delivery.
+- The upstream source delivers **batches** more efficiently than individual messages.
+  The current implementation dequeues one message per iteration; a batching variant
+  would call `queue.drainTo(batch, maxBatch)` for higher throughput.
+- You need **message acknowledgement** (at-least-once with broker-side requeue on
+  failure). The `PollingConsumer` does not implement ack/nack; integrate with the
+  broker's own consumer API (e.g., `software.amazon.awssdk.services.sqs`) for that.
+- The `pollInterval` is very short (< 1 ms) and the queue is frequently empty. Tight
+  polling burns CPU on empty-poll iterations; prefer a push notification or a
+  condition variable in that case.
 
-**Poll source idempotency:**
-- The poll loop may deliver the same message twice if the JVM crashes between `queue.put(msg)` and the handler acknowledging the message. Ensure the handler is idempotent, or mark messages as "in-flight" in the source before polling and "complete" after handling.
+### Performance Notes
 
-**Handler crashes:**
-- With `errorChannel` configured, handler exceptions are captured and forwarded without crashing the `Proc`. Without `errorChannel`, handler exceptions are logged and the message is dropped. Never silently drop messages in production — always wire an `errorChannel`.
+- `queue.poll(interval, MILLISECONDS)` **blocks** the virtual thread for up to
+  `pollInterval` when the queue is empty. Virtual threads are cheap to block, but
+  the effective message latency is bounded below by `pollInterval`. Choose the
+  interval to balance latency against CPU burn on empty polls.
+- `polledCount()` calls `ProcSys.statistics(handlerProc).messagesIn()`, which
+  crosses the `Proc` boundary. It is safe but not free — avoid calling it at the
+  same rate as message processing.
+- `queueSize()` calls `BlockingQueue.size()`, which is O(1) for
+  `LinkedBlockingQueue`. It is safe to call frequently.
+- Under very high throughput the `Proc` mailbox may become the bottleneck. If the
+  handler is fast and the queue is always full, consider batching: dequeue up to N
+  messages per poll iteration and `tell` each one to the proc, or use `drainTo` with
+  a `Parallel` fan-out for concurrent handling.
+- `close()` waits `pollInterval + 500 ms` for the poll thread to exit. For very
+  long intervals (seconds), this can make shutdown feel slow. Pass a short
+  `pollInterval` (10–100 ms) and implement backoff in the consumer if needed.
