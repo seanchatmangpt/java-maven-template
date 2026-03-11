@@ -1,0 +1,85 @@
+@startuml c4-jotp-04-process-lifecycle
+title JOTP - Process Lifecycle Sequence Diagram
+
+participant Developer
+participant "ProcLib\n(startup)" as ProcLib
+participant "Proc<S,M>\n(handler)" as Proc
+participant "Supervisor" as Supervisor
+participant "CrashRecovery" as Recovery
+participant "ProcessRegistry" as Registry
+participant "EventManager" as EventMgr
+
+Developer ->> ProcLib: start_link(stateHandler)
+activate ProcLib
+ProcLib ->> Proc: new virtual thread\n+ mailbox
+activate Proc
+Proc ->> Proc: call stateHandler\ninitialize()
+Proc ->> ProcLib: initAck(state)
+deactivate Proc
+ProcLib ->> Developer: return ProcRef
+deactivate ProcLib
+
+Developer ->> Registry: register("myproc", procRef)
+activate Registry
+Registry ->> Proc: tag process
+deactivate Registry
+
+Developer ->> Proc: send(message)
+activate Proc
+Proc ->> Proc: dequeue from mailbox\ncall stateHandler(state, msg)
+Proc ->> Proc: nextState = handler result\nupdate state
+deactivate Proc
+
+note over Proc
+  Process running normally
+  Handling messages
+  Transitioning state
+end note
+
+Developer ->> EventMgr: dispatch(event)
+activate EventMgr
+EventMgr ->> Proc: route event
+activate Proc
+Proc ->> Proc: StateMachine handles event\nstate/event/data dispatch
+deactivate Proc
+EventMgr ->> Developer: handler reply
+deactivate EventMgr
+
+Developer ->> Proc: crash or explicit stop
+activate Proc
+Proc ->> Proc: unhandled exception\nor exit signal
+note over Proc
+  Process crashes
+end note
+Proc ->> Supervisor: send ExitSignal
+deactivate Proc
+activate Supervisor
+
+Supervisor ->> Supervisor: evaluate restart\nstrategy
+Supervisor ->> Recovery: execute recovery\nwithin restart window
+
+activate Recovery
+Recovery ->> ProcLib: start_link()\n(restart)
+activate ProcLib
+ProcLib ->> Proc: spawn new process
+activate Proc
+Proc ->> Proc: reinitialize state
+Proc ->> ProcLib: initAck(state)
+deactivate Proc
+ProcLib ->> Recovery: return new ProcRef
+deactivate ProcLib
+deactivate Recovery
+
+Supervisor ->> Registry: update process reference
+activate Registry
+Registry ->> Registry: deregister old\nregister new
+deactivate Registry
+
+deactivate Supervisor
+
+note over Proc
+  Process restarted
+  Same name, fresh state
+end note
+
+@enduml
