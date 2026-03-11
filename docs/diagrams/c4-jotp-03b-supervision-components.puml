@@ -1,0 +1,48 @@
+@startuml c4-jotp-03b-supervision-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Supervision Container Components (Detailed)
+
+Container_Boundary(supvContainer, "Supervision Container") {
+
+    Component(supervisor, "Supervisor", "Tree Manager", "Process tree management\nRestart strategy enforcement\nChild lifecycle management\nChild monitoring")
+
+    Component(crashrecovery, "CrashRecovery", "Recovery Logic", "Isolated recovery execution\nRestart window management\nExponential backoff\nRecovery state tracking")
+
+    Component(exitsignal, "ExitSignal", "Exit Signal", "Signal record/tuple\nExit reason\nSender process reference\nTermination information")
+
+    Component(restartwin, "RestartWindow", "Restart Limiter", "Sliding window of restarts\nMax restarts in time period\nWindow expiration logic")
+
+    Component(strategy, "RestartStrategy", "Strategy Enum", "ONE_FOR_ONE\nONE_FOR_ALL\nREST_FOR_ONE\nDecision logic")
+
+}
+
+Rel(supervisor, strategy, "applies")
+Rel(supervisor, crashrecovery, "delegates to")
+Rel(supervisor, exitsignal, "receives")
+
+Rel(crashrecovery, restartwin, "tracks")
+Rel(crashrecovery, strategy, "respects")
+
+Rel(strategy, crashrecovery, "determines recovery scope")
+Rel(restartwin, supervisor, "enforces limits on")
+
+note on link supervisor
+  Owns supervision tree
+  Spawns & monitors children
+  Detects crashes via ExitSignal
+end note
+
+note on link crashrecovery
+  Executes recovery
+  within window limits
+end note
+
+note on link restartwin
+  Prevents thundering herd
+  configurable window
+end note
+
+SHOW_LEGEND()
+
+@enduml

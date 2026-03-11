@@ -1,0 +1,72 @@
+@startuml c4-jotp-09b-graceful-shutdown
+title JOTP - Graceful Shutdown Sequence
+
+participant "Application\nMain" as Main
+participant "RootSupervisor" as Root
+participant "ChildSup1" as ChildSup1
+participant "ChildSup2" as ChildSup2
+participant "Workers" as Workers
+participant "ProcessRegistry" as Registry
+participant "VirtualThreads" as VT
+
+Main ->> Root: shutdown()
+note over Main
+  Initiate graceful shutdown
+end note
+activate Root
+
+Root ->> ChildSup1: stop()
+activate ChildSup1
+Root ->> ChildSup2: stop()
+activate ChildSup2
+
+par Child Shutdown
+  ChildSup1 ->> Workers: stop all workers
+  activate Workers
+  note over Workers
+    Send stop messages
+    Wait for ack
+  end note
+  Workers ->> Workers: cleanup resources
+  Workers -->> ChildSup1: all stopped
+  deactivate Workers
+
+and
+  ChildSup2 ->> Workers: stop all workers
+  Workers ->> Workers: cleanup
+  Workers -->> ChildSup2: done
+end
+
+ChildSup1 -->> Root: stopped
+deactivate ChildSup1
+
+ChildSup2 -->> Root: stopped
+deactivate ChildSup2
+
+Root ->> Registry: unregister all
+note over Registry
+  Remove all process references
+  Auto-deregister children
+end note
+
+Root ->> VT: shutdown thread pool
+activate VT
+note over VT
+  Stop accepting new tasks
+  Wait for running tasks
+  Graceful termination
+end note
+VT -->> Root: done
+deactivate VT
+
+Root -->> Main: shutdown complete
+deactivate Root
+
+Main -->> Main: JVM can exit
+note over Main
+  All resources freed
+  All threads stopped
+  Clean shutdown
+end note
+
+@enduml

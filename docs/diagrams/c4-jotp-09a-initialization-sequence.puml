@@ -1,0 +1,70 @@
+@startuml c4-jotp-09a-initialization-sequence
+title JOTP - System Initialization Sequence
+
+participant "Application\nMain" as Main
+participant "RootSupervisor" as Root
+participant "ProcLib" as ProcLib
+participant "ProcessRegistry" as Registry
+participant "Child 1\nSupervisor" as ChildSup1
+participant "Child 2\nSupervisor" as ChildSup2
+participant "Worker\nProcesses" as Workers
+
+Main ->> Root: new Supervisor(...)
+activate Root
+note over Root
+  Create root supervisor
+  Configure restart strategy
+end note
+
+Main ->> Root: spawn all children
+activate Root
+
+Root ->> ChildSup1: ProcLib.start_link()
+activate ProcLib
+activate ChildSup1
+
+ProcLib ->> ChildSup1: initialize()
+activate ChildSup1
+ChildSup1 ->> ChildSup1: setup handlers\nfor child supervision
+deactivate ChildSup1
+
+ChildSup1 ->> ProcLib: initAck(state)
+ProcLib -->> Root: ProcRef<ChildSup1>
+deactivate ProcLib
+deactivate ChildSup1
+
+par Parallel Child Startup
+  Root ->> ChildSup2: ProcLib.start_link()
+  activate ProcLib
+  activate ChildSup2
+
+  ProcLib ->> ChildSup2: initialize()
+  ChildSup2 ->> ChildSup2: setup handlers
+  ChildSup2 ->> ProcLib: initAck(state)
+  ProcLib -->> Root: ProcRef<ChildSup2>
+  deactivate ProcLib
+  deactivate ChildSup2
+and
+  ChildSup1 ->> Workers: spawn workers
+  activate Workers
+  Workers -->> ChildSup1: ProcRef list
+  deactivate Workers
+end
+
+Root ->> Registry: register("root", rootRef)
+Root ->> Registry: register("child1", sup1Ref)
+Root ->> Registry: register("child2", sup2Ref)
+note over Registry
+  All processes registered
+  Discoverable by name
+end note
+
+Main -->> Main: system ready
+note over Main
+  All supervision trees
+  initialized
+  Workers ready
+  Registry populated
+end note
+
+@enduml

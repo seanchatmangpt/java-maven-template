@@ -1,0 +1,62 @@
+@startuml c4-jotp-04d-result-class-details
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Result<S,F> Sealed Hierarchy
+
+sealed interface "Result<S,F>" as Res <<interface>> {
+  + map(f): Result
+  + flatMap(f): Result
+  + fold(onSuccess, onFailure): T
+  + recover(f): Result
+  + peek(f): Result
+  + getOrElse(default): S
+  + orElseThrow(): S
+}
+
+record "Success<S>" as Suc extends Res <<record>> {
+  value: S
+}
+
+record "Failure<F>" as Fail extends Res <<record>> {
+  error: F
+}
+
+class "Result" as ResultObj <<utility>> {
+  {static} success(S): Result<S,F>
+  {static} failure(F): Result<S,F>
+  {static} of(Supplier<S>): Result<S,Exception>
+  {static} sequence(List<Result>): Result
+}
+
+Res <|-- Suc
+Res <|-- Fail
+
+ResultObj ..> Res: creates
+
+note on link Res
+  Sealed interface
+  Type-safe error handling
+  Monadic operations
+end note
+
+note on link Suc
+  Represents success
+  Carries value of type S
+  Immutable record
+end note
+
+note on link Fail
+  Represents failure
+  Carries error of type F
+  Immutable record
+end note
+
+note on link ResultObj
+  Factory methods
+  Wraps throwing operations
+  Composable chains
+end note
+
+SHOW_LEGEND()
+
+@enduml

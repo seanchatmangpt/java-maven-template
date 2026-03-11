@@ -1,0 +1,57 @@
+@startuml c4-jotp-07a-error-recovery-flow
+title JOTP - Error Recovery Sequence Diagram
+
+participant "Process\nHandler" as Handler
+participant "Mailbox" as Mailbox
+participant "Result\nWrapper" as Result
+participant "Exception\nCatcher" as Catcher
+participant "CrashRecovery" as Recovery
+participant "Supervisor" as Supervisor
+
+Handler ->> Mailbox: dequeue(message)
+activate Mailbox
+Handler ->> Handler: handle(state, msg)
+note over Handler
+  Pure function call
+  may throw Exception
+end note
+
+alt Success
+  Handler -->> Mailbox: return newState
+else Exception Thrown
+  Handler --x Handler: throw!
+  deactivate Mailbox
+
+  Handler ->> Catcher: catch(exception)
+  activate Catcher
+
+  Catcher ->> Result: Failure(exception)
+  activate Result
+  Catcher ->> Supervisor: reportCrash(reason)
+  deactivate Catcher
+
+  Supervisor ->> Recovery: evaluate(strategy)
+  activate Recovery
+
+  Recovery ->> Recovery: within restart window?
+
+  alt Window OK
+    Recovery ->> Recovery: spawn new process\nwith same handler
+    note over Recovery
+      Fresh state
+      Restart handshake via ProcLib
+    end note
+  else Window Exceeded
+    Recovery ->> Supervisor: maxRestarts exceeded
+    Supervisor -->> Supervisor: terminate subtree
+    note over Supervisor
+      Propagate crash up
+      or stop tree
+    end note
+  end
+
+  deactivate Recovery
+  deactivate Result
+end
+
+@enduml

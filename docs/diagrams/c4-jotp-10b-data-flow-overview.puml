@@ -1,0 +1,79 @@
+@startuml c4-jotp-10b-data-flow-overview
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Data Flow Overview
+
+Boundary(users, "External Systems") {
+  Person(user, "User/Client")
+}
+
+Boundary(entry, "Entry Points") {
+  Component(http, "HTTP API", "REST Endpoints", "Receives requests")
+  Component(cli, "CLI", "Command Interface", "User commands")
+}
+
+Boundary(dispatch, "Message Dispatch") {
+  Component(router, "Router", "Message Routing", "Routes to destination process")
+  Component(serializer, "Serializer", "Message Format", "JSON/Avro encoding")
+}
+
+Boundary(core, "JOTP Core") {
+  Component(registry, "ProcessRegistry", "Lookup", "whereis by name")
+  Component(mailbox, "Mailbox", "Queuing", "LinkedTransferQueue")
+  Component(handler, "Handler", "Processing", "state -> new state")
+}
+
+Boundary(state, "State Management") {
+  Component(sm, "StateMachine", "State Transitions", "Guard conditions")
+  Component(data, "Data Store", "Persistence", "Event sourcing log")
+}
+
+Boundary(output, "Output") {
+  Component(reply, "Reply Builder", "Response Format", "Result -> JSON")
+  Component(observe, "Observability", "Monitoring", "Metrics/Logs")
+}
+
+user --> http: HTTP request
+user --> cli: command
+
+http --> serializer: parse request
+cli --> serializer: parse command
+
+serializer --> router: message object
+
+router --> registry: lookup destination
+registry --> mailbox: enqueue message
+
+mailbox --> handler: dequeue
+handler --> sm: state transition
+sm --> data: persist event
+data --> handler: ack
+
+handler --> reply: build response
+reply --> http: send response
+reply --> observe: log event
+
+http --> user: HTTP response
+observe --> user: optional async event
+
+note on link mailbox
+  Async queuing
+  Non-blocking send
+  FIFO ordering
+end note
+
+note on link handler
+  Pure function
+  (state, message) -> state
+  All side effects wrapped
+end note
+
+note on link sm
+  Deterministic transitions
+  Pattern matching
+  Guard predicates
+end note
+
+SHOW_LEGEND()
+
+@enduml

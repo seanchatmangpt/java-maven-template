@@ -1,0 +1,81 @@
+@startuml c4-jotp-08a-virtual-thread-allocation
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Virtual Thread Allocation & Lifecycle
+
+object "JVM Heap" as Heap {
+}
+
+object "Virtual Thread\nPool (Unlimited)" as Pool {
+  note
+    Each process gets
+    its own virtual thread
+    100k+ feasible per JVM
+  end note
+}
+
+object "Carrier\nThread Pool" as Carriers {
+  note
+    OS threads mount
+    virtual threads
+    ~1 per CPU core
+  end note
+}
+
+object "Platform\nThread" as PT {
+  note
+    Traditional OS thread
+    for blocking I/O
+  end note
+}
+
+object "Virtual\nThread 1" as VT1 {
+  note
+    Proc<S,M> instance
+    State + Handler
+    Mailbox queue
+  end note
+}
+
+object "Virtual\nThread 2" as VT2 {
+  note
+    Another process
+    Lightweight
+    ~1KB per thread
+  end note
+}
+
+object "Virtual\nThread N" as VTN {
+  note
+    Nth process
+    Runs on same carrier
+    Context switches cheap
+  end note
+}
+
+Heap *-- Pool: contains
+Heap *-- Carriers: manages
+
+Pool *-- VT1
+Pool *-- VT2
+Pool *-- VTN
+
+Carriers -- VT1: mounts (time slice 1)
+Carriers -- VT2: mounts (time slice 2)
+Carriers -- VTN: mounts (time slice n)
+
+note on link VT1
+  Lightweight: 1-5KB
+  Cheap context switch
+  No OS scheduler
+end note
+
+note bottom of Carriers
+  Virtual threads don't block carrier threads
+  If blocking: carrier unmounts, handles another VT
+  Blocking I/O returns carrier to pool
+end note
+
+SHOW_LEGEND()
+
+@enduml

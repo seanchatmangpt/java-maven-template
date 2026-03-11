@@ -1,0 +1,58 @@
+@startuml c4-jotp-04e-processregistry-class-details
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - ProcessRegistry Class Structure
+
+class "ProcessRegistry" as Registry <<class>> {
+  - {static} registry: ConcurrentHashMap<String, ProcRef>
+  - {static} monitor: ProcessMonitor
+  ---
+  + {static} register(name: String, ref: ProcRef): void
+  + {static} unregister(name: String): void
+  + {static} whereis(name: String): Optional<ProcRef>
+  + {static} registered(): Set<String>
+  + {static} deregisterOnExit(name: String, ref: ProcRef): void
+}
+
+class "ConcurrentHashMap<K,V>" as CHM <<utility>> {
+  + put(k: K, v: V): V
+  + get(k: K): V
+  + remove(k: K): V
+  + putIfAbsent(k: K, v: V): V
+  + forEach(consumer): void
+}
+
+interface "RegistryListener" as Listener <<interface>> {
+  {abstract} onRegister(name: String, ref: ProcRef): void
+  {abstract} onUnregister(name: String): void
+}
+
+class "AutoDeregister" as AutoDereg <<utility>> {
+  + {static} setup(ref: ProcRef, name: String): void
+}
+
+Registry *-- CHM: uses
+Registry --> Listener: notifies
+Registry -- AutoDereg: uses
+
+note on link CHM
+  Thread-safe
+  Lock-free reads
+  Atomic updates
+end note
+
+note on link Listener
+  Optional observers
+  Notification on changes
+  Plugin architecture
+end note
+
+note on link AutoDereg
+  ProcessMonitor integration
+  Auto-cleanup on crash
+  Deregisters when proc dies
+end note
+
+SHOW_LEGEND()
+
+@enduml

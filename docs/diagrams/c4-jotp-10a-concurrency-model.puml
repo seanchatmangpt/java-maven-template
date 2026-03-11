@@ -1,0 +1,105 @@
+@startuml c4-jotp-10a-concurrency-model
+title JOTP - Concurrency Model: Virtual Threads vs Traditional
+
+rectangle "Traditional Thread Pool Model" as Traditional {
+    rectangle "OS Threads\n(Platform Threads)" as OSThreads {
+        object "T1 (Block I/O)" as T1 {
+          note
+            Blocked waiting
+            Wastes resources
+            ~1MB per thread
+          end note
+        }
+        object "T2 (Compute)" as T2 {
+          note
+            Running task
+            CPU active
+          end note
+        }
+        object "T3 (Idle)" as T3 {
+          note
+            Waiting for work
+            Consumes memory
+          end note
+        }
+    }
+}
+
+rectangle "JOTP Virtual Thread Model (Java 21+)" as Virtual {
+    rectangle "Virtual Threads\n(Millions possible)" as VThreads {
+        object "V1 (Block I/O)" as V1 {
+          note
+            Blocked - unmounts carrier
+            Carrier serves V2
+            ~1-5KB per thread
+          end note
+        }
+        object "V2 (Compute)" as V2 {
+          note
+            Running on carrier
+            Interleaved execution
+          end note
+        }
+        object "V3 (Idle)" as V3 {
+          note
+            Parked - minimal memory
+            Wakes on unpark()
+          end note
+        }
+        object "V4 (Message Wait)" as V4 {
+          note
+            Blocked on mailbox.take()
+            Unmounts carrier
+          end note
+        }
+        object "V5 (Timer)" as V5 {
+          note
+            Scheduled delivery
+            Lightweight delay
+          end note
+        }
+    }
+
+    rectangle "Carrier Threads\n(~1 per CPU core)" as Carriers {
+        object "Carrier 1" as C1 {
+          note
+            Mounts V2 (compute)
+            Unmounts V1 (blocked)
+          end note
+        }
+        object "Carrier 2" as C2 {
+          note
+            Mounts V3 (woken)
+            Unmounts V4 (blocked)
+          end note
+        }
+    }
+}
+
+Traditional -[hidden]-> Virtual
+
+C1 -down-> V2: mount V2 (context switch cheap)
+V1 .down.> Carriers: unmounts when blocked
+
+C2 -down-> V3: mount V3 (was parked)
+V4 .down.> Carriers: unmounts when blocked
+
+note bottom of Virtual
+  Benefits:
+  - 100k+ processes feasible (vs 10k with platform threads)
+  - Cheap context switches (no syscall cost)
+  - Blocking I/O doesn't block carrier threads
+  - Better CPU utilization
+  - Simpler concurrency code
+end note
+
+note bottom of Traditional
+  Limitations:
+  - Each thread ~1MB memory
+  - Context switches expensive (kernel mode switch)
+  - Blocking I/O blocks entire thread
+  - ~10k limit before thread-per-request fails
+  - More complex pooling code
+end note
+
+@enduml

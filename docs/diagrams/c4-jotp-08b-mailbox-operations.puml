@@ -1,0 +1,79 @@
+@startuml c4-jotp-08b-mailbox-operations
+title JOTP - Mailbox Operations (LinkedTransferQueue)
+
+object "Mailbox\n(LinkedTransferQueue<M>)" as Mailbox {
+  note
+    Lock-free MPMC queue
+    Wait-free enqueue
+    Fair dequeue ordering
+  end note
+}
+
+object "Message Queue\n(Linked Nodes)" as Queue {
+  object "Node: Msg1" as N1
+  object "Node: Msg2" as N2
+  object "Node: Msg3" as N3
+  object "Node: Msg4" as N4
+}
+
+object "Enqueue\nOperations" as Enqueue {
+  note
+    put(msg) - non-blocking
+    Never waits
+    Atomic CAS loop
+  end note
+}
+
+object "Dequeue\nOperations" as Dequeue {
+  note
+    take() - blocking
+    Waits if empty
+    Fair FIFO order
+
+    poll(timeout) - timed
+    Returns after timeout
+  end note
+}
+
+object "Multiple\nSenders" as Senders {
+  note
+    Process A.send()
+    Process B.send()
+    Timer delivery
+    All concurrent
+  end note
+}
+
+object "Single\nReceiver" as Receiver {
+  note
+    Process P.handler
+    Dequeues messages
+    Processes FIFO
+    Updates state
+  end note
+}
+
+Mailbox *-- Queue: stores
+
+Queue: Head -> N1
+Queue: N1 -> N2
+Queue: N2 -> N3
+Queue: N3 -> N4
+Queue: N4 -> Tail
+
+Enqueue --> Mailbox: append nodes
+Dequeue --> Mailbox: remove from head
+
+Senders --> Enqueue: concurrent\nadd to queue
+Receiver --> Dequeue: exclusive\nremove from queue
+
+note bottom of Mailbox
+  put() is wait-free - always completes in bounded time
+  take() is blocking - waits on internal condition variable
+  No explicit locking - atomic operations only
+  Scales well - MPMC without contention
+end note
+
+SHOW_LEGEND()
+
+@enduml

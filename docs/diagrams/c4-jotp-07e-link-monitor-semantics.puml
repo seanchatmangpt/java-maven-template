@@ -1,0 +1,87 @@
+@startuml c4-jotp-07e-link-monitor-semantics
+title JOTP - Link vs Monitor Semantics
+
+participant "Process A" as ProcA
+participant "ProcessLink" as Link
+participant "Process B" as ProcB
+participant "ProcessMonitor" as Monitor
+participant "Exit Handler" as Handler
+
+== Bilateral Link Scenario ==
+
+ProcA ->> Link: link(procB)
+activate Link
+ProcB ->> Link: link(procA)
+note over Link
+  Both processes linked
+  Bilateral relationship
+end note
+deactivate Link
+
+ProcB --x ProcB: crash!
+activate ProcB
+
+ProcB ->> Link: send EXIT to procA
+note over Link
+  Bilateral: both get signal
+end note
+
+ProcA ->> ProcA: receive EXIT signal\n(if trapExits=true)
+note over ProcA
+  Must handle or die
+  Link kills linked process
+end note
+
+deactivate ProcB
+
+alt ProcA Handles
+  ProcA ->> Handler: handle(ExitSignal)
+  Handler -->> ProcA: continue running
+else ProcA Ignores
+  ProcA --x ProcA: crash! (propagates)
+  note over ProcA
+    Unhandled EXIT
+    Crashes linked process too
+  end note
+end
+
+== Unilateral Monitor Scenario ==
+
+ProcA ->> Monitor: monitor(procB)
+activate Monitor
+note over Monitor
+  Unilateral: only A watches B
+  B doesn't know about monitor
+end note
+
+ProcB --x ProcB: crash!
+activate ProcB
+
+ProcB ->> Monitor: send DOWN to procA
+note over Monitor
+  Unilateral: only A receives signal
+  B is already gone
+end note
+
+ProcA ->> ProcA: receive DOWN signal\n(optional handling)
+note over ProcA
+  Information signal
+  Does NOT kill procA
+  procA decides what to do
+end note
+
+deactivate Monitor
+deactivate ProcB
+
+alt ProcA Reacts
+  ProcA ->> Handler: handle(DownSignal)
+  Handler -->> ProcA: restart service
+else ProcA Ignores
+  ProcA -->> ProcA: continue normally
+  note over ProcA
+    Unilateral: no effect
+    A continues fine
+  end note
+end
+
+@enduml

@@ -1,0 +1,156 @@
+@startuml c4-jotp-10c-dependency-graph
+title JOTP - Dependency Graph (Which Primitives Depend on Others)
+
+skinparam backgroundColor transparent
+skinparam linetype ortho
+
+component Proc {
+  note right
+    Foundation
+    All others depend
+  end note
+}
+
+component ProcRef {
+  note right
+    Proc identity
+  end note
+}
+
+component ProcLib {
+  note right
+    Startup protocol
+    Initializes Proc
+  end note
+}
+
+component Supervisor {
+  note right
+    Manages Proc instances
+    Depends: Proc, ProcRef, ProcLib
+  end note
+}
+
+component CrashRecovery {
+  note right
+    Recovery logic
+    Depends: ProcLib, Supervisor
+  end note
+}
+
+component ExitSignal {
+  note right
+    Signals from crashes
+    Flows to Supervisor
+  end note
+}
+
+component ProcessLink {
+  note right
+    Links Proc instances
+    Bilateral dependencies
+  end note
+}
+
+component ProcessMonitor {
+  note right
+    Monitors Proc
+    Sends DOWN signals
+  end note
+}
+
+component ProcessRegistry {
+  note right
+    Name registry
+    Stores ProcRef instances
+  end note
+}
+
+component StateMachine {
+  note right
+    State transitions
+    Used by Proc handlers
+  end note
+}
+
+component EventManager {
+  note right
+    Event dispatch
+    Works with StateMachine
+  end note
+}
+
+component ProcTimer {
+  note right
+    Timed messages
+    Targets Proc mailboxes
+  end note
+}
+
+component ProcSys {
+  note right
+    Introspection
+    Queries Proc state
+  end note
+}
+
+component Parallel {
+  note right
+    Fan-out execution
+    Spawns multiple Proc
+  end note
+}
+
+component Result {
+  note right
+    Error handling
+    Used everywhere
+  end note
+}
+
+ProcLib --> Proc: initializes
+Supervisor --> ProcLib: uses
+Supervisor --> Proc: manages
+Supervisor --> CrashRecovery: uses
+
+CrashRecovery --> ProcLib: restarts via
+CrashRecovery --> ExitSignal: reads
+
+ProcessLink -.-> Proc: links to/from
+ProcessLink -.-> Proc: bilateral
+ProcessMonitor --> Proc: monitors
+ProcessMonitor --> ProcessRegistry: can integrate
+
+ProcessRegistry --> ProcRef: stores
+StateMachine --> StateMachine: pattern matches
+
+EventManager --> StateMachine: routes to
+EventManager --> Result: wraps in
+
+ProcTimer --> Proc: sends_after to
+ProcSys --> Proc: introspects
+
+Parallel --> Proc: spawns multiple
+
+Result -.-> Supervisor: wraps recovery
+Result -.-> ProcLib: wraps startup
+Result -.-> Proc: wraps operations
+Result -.-> CrashRecovery: wraps restart
+
+note bottom
+  Core Dependencies:
+  - Proc is the foundation
+  - ProcRef identifies Proc
+  - ProcLib initializes Proc
+  - Supervisor manages groups of Proc
+  - CrashRecovery restarts via ProcLib
+  - ProcessRegistry stores ProcRef
+  - StateMachine patterns in handlers
+  - Result wraps all error-prone operations
+
+  The 15 primitives form a coherent system
+  where most operations ultimately work with
+  Proc instances and their references
+end note
+
+@enduml

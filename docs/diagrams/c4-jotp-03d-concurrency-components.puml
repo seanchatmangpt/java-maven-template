@@ -1,0 +1,43 @@
+@startuml c4-jotp-03d-concurrency-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Concurrency Container Components (Detailed)
+
+Container_Boundary(concContainer, "Concurrency Container") {
+
+    Component(parallel, "Parallel", "Parallel Executor", "pmap implementation\nStructured concurrency\nFan-out execution\nFail-fast semantics")
+
+    Component(sts, "StructuredTaskScope", "Task Scope", "Java 21+ feature\nShutdownOnSuccess\nShutdownOnFailure\nResource management")
+
+    Component(result, "Result<T>", "Result Type", "Success<T> | Failure<E>\nComposable operations\nError propagation")
+
+    Component(scope, "TaskScope", "Task Container", "Spawned tasks\nWait for completion\nException collection")
+
+    Component(shutdown, "ShutdownStrategy", "Shutdown Policy", "OnSuccess variant\nOnFailure variant\nException handling")
+
+}
+
+Rel(parallel, sts, "wraps")
+Rel(parallel, result, "returns")
+Rel(sts, scope, "manages")
+Rel(sts, shutdown, "applies")
+Rel(scope, result, "aggregates results into")
+
+note on link parallel
+  Functional API over StructuredTaskScope
+  Type-safe result aggregation
+end note
+
+note on link sts
+  Virtual threads lightweight
+  Structured cleanup guaranteed
+end note
+
+note on link scope
+  Tracks all spawned tasks
+  Waits for all or fail-fast
+end note
+
+SHOW_LEGEND()
+
+@enduml

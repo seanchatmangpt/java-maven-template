@@ -1,0 +1,49 @@
+@startuml c4-jotp-03f-errors-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Error Handling Container Components (Detailed)
+
+Container_Boundary(errorsContainer, "Error Handling Container") {
+
+    Component(result, "Result<S,F>", "Sealed Result", "Success<S> | Failure<F>\nComposable algebra\nRailway-oriented")
+
+    Component(success, "Success<S>", "Success Variant", "Holds success value S\nimmutable record\ntype-safe")
+
+    Component(failure, "Failure<F>", "Failure Variant", "Holds failure value F\nimmutable record\ntype-safe")
+
+    Component(resultops, "Result Operations", "Result Methods", "map(f), flatMap(f)\nfold(onSuccess, onFailure)\nrecover(f), peek(f)\ngetOrElse(default)")
+
+    Component(try, "Result.of()", "Try Wrapper", "Wraps throwing supplier\nConverts Exception to Result\nNo checked exceptions")
+
+}
+
+Rel(result, success, "can be")
+Rel(result, failure, "can be")
+Rel(result, resultops, "provides")
+Rel(try, result, "returns")
+
+note on link result
+  Sealed interface
+  Type-safe error handling
+  No null values
+end note
+
+note on link success
+  Represents successful computation
+  Carries value of type S
+end note
+
+note on link failure
+  Represents failed computation
+  Carries value of type F
+end note
+
+note on link resultops
+  Composable chain operations
+  Lazy evaluation
+  Monadic algebra
+end note
+
+SHOW_LEGEND()
+
+@enduml
