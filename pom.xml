@@ -9,6 +9,32 @@
     <artifactId>jotp</artifactId>
     <version>1.0-SNAPSHOT</version>
 
+    <name>JOTP - Java OTP Framework</name>
+    <description>Production-ready Java 26 framework implementing all 15 OTP (Erlang/OTP) primitives for building fault-tolerant, distributed systems with supervisor trees, lightweight processes, state machines, and crash recovery.</description>
+    <url>https://github.com/seanchatmangpt/jotp</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/seanchatmangpt/jotp</url>
+        <connection>scm:git:git://github.com/seanchatmangpt/jotp.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/seanchatmangpt/jotp.git</developerConnection>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>seanchatmangpt</id>
+            <name>Sean Chatman</name>
+            <url>https://github.com/seanchatmangpt</url>
+        </developer>
+    </developers>
+
     <properties>
         <maven.compiler.release>26</maven.compiler.release>
         <junit.version>6.0.0</junit.version>
@@ -25,13 +51,6 @@
     </properties>
 
     <dependencies>
-        <!-- JOTP - Java OTP Framework (external library) -->
-        <dependency>
-            <groupId>io.github.seanchatmangpt</groupId>
-            <artifactId>jotp</artifactId>
-            <version>1.0.0</version>
-        </dependency>
-
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
