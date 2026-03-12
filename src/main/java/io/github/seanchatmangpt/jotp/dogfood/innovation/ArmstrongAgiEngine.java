@@ -650,6 +650,6 @@ public final class ArmstrongAgiEngine {
 
     private static String extractPackage(String hint) {
         var m = PACKAGE_DECL.matcher(hint);
-        return m.find() ? m.group(1) : "org.acme";
+        return m.find() ? m.group(1) : "io.github.seanchatmangpt.jotp";
     }
 }

@@ -58,3 +58,19 @@ if [ ! -L /usr/local/bin/mvnd ] || [ "$(readlink /usr/local/bin/mvnd)" != "${MVN
   ln -sf "${MVND_BIN}" /usr/local/bin/mvnd
   echo "✓  /usr/local/bin/mvnd → ${MVND_BIN}"
 fi
+
+# ── Maven Proxy (conditional) ──────────────────────────────────────────────────
+# Start local auth proxy if https_proxy/http_proxy is set (required for authenticated repos)
+if [ -n "${https_proxy:-}${HTTPS_PROXY:-}${http_proxy:-}${HTTP_PROXY:-}" ]; then
+  PROXY_SCRIPT="${BASH_SOURCE%/*}/../maven-proxy-v2.py"
+  if [ -f "${PROXY_SCRIPT}" ] && ! pgrep -f "python3.*maven-proxy" >/dev/null 2>&1; then
+    echo "⬆  Starting Maven proxy (127.0.0.1:3128)..."
+    nohup python3 "${PROXY_SCRIPT}" >/dev/null 2>&1 &
+    sleep 1
+    if pgrep -f "python3.*maven-proxy" >/dev/null 2>&1; then
+      echo "✓  Maven proxy started"
+    else
+      echo "⚠  Maven proxy failed to start (continuing anyway)"
+    fi
+  fi
+fi

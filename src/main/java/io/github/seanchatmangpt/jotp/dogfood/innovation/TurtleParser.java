@@ -404,7 +404,7 @@ public final class TurtleParser {
 
         return new ProjectSpec(
                 projectName != null ? projectName : "generated-project",
-                groupId != null ? groupId : "org.acme",
+                groupId != null ? groupId : "io.github.seanchatmangpt",
                 artifactId != null ? artifactId : projectName,
                 version,
                 javaVersion,
