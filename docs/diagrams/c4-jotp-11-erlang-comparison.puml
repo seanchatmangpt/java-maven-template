@@ -1,0 +1,83 @@
+@startuml c4-jotp-11-erlang-comparison
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Erlang/OTP Primitives Mapped to Java 26
+
+Boundary(erlang, "Erlang/OTP") {
+    Component(erl_spawn, "spawn/3", "Process Creation", "Start new lightweight process")
+    Component(erl_pid, "Pid", "Process Identity", "Unique process identifier")
+    Component(erl_link, "link/1", "Bilateral Link", "Link two processes")
+    Component(erl_monitor, "monitor/2", "Monitoring", "Monitor process")
+    Component(erl_send, "send/2", "Message Send", "Async message passing")
+    Component(erl_call, "call/3", "Request-Reply", "Sync RPC with timeout")
+    Component(erl_sup, "supervisor", "Supervision", "Process tree management")
+    Component(erl_gen_server, "gen_server", "Generic Server", "Server behavior")
+    Component(erl_gen_statem, "gen_statem", "State Machine", "State/event/data machine")
+    Component(erl_gen_event, "gen_event", "Event Manager", "Decoupled event routing")
+    Component(erl_timer, "timer:send_after", "Timers", "Delayed messages")
+    Component(erl_registry, "global/pg", "Name Registry", "Process naming")
+    Component(erl_sys, "sys:*", "Introspection", "Process inspection")
+    Component(erl_exit, "exit signal", "Exit Signals", "Process termination")
+    Component(erl_result, "ok|{error,_}", "Results", "Success/failure tuples")
+}
+
+Boundary(jotp, "JOTP (Java 26)") {
+    Component(j_spawn, "ProcLib.start_link()", "Process Creation", "Start virtual thread process")
+    Component(j_pid, "ProcRef<S,M>", "Process Identity", "Opaque reference handle")
+    Component(j_link, "ProcessLink.link()", "Bilateral Link", "Link two processes")
+    Component(j_monitor, "ProcessMonitor.monitor()", "Monitoring", "Monitor without linking")
+    Component(j_send, "procRef.send()", "Message Send", "Non-blocking enqueue")
+    Component(j_call, "procRef.ask()", "Request-Reply", "Blocking with timeout")
+    Component(j_sup, "Supervisor", "Supervision", "Tree with restart strategies")
+    Component(j_gen_server, "Proc<S,M>", "Generic Server", "Pure state handler")
+    Component(j_gen_statem, "StateMachine<S,E,D>", "State Machine", "State/event/data pattern")
+    Component(j_gen_event, "EventManager<E>", "Event Manager", "Typed event routing")
+    Component(j_timer, "ProcTimer.send_after()", "Timers", "Scheduled message delivery")
+    Component(j_registry, "ProcessRegistry", "Name Registry", "Global name mapping")
+    Component(j_sys, "ProcSys", "Introspection", "State query without stopping")
+    Component(j_exit, "ExitSignal", "Exit Signals", "Crash propagation record")
+    Component(j_result, "Result<S,F>", "Results", "Sealed success/failure")
+}
+
+Rel(erl_spawn, j_spawn, "maps to")
+Rel(erl_pid, j_pid, "maps to")
+Rel(erl_link, j_link, "maps to")
+Rel(erl_monitor, j_monitor, "maps to")
+Rel(erl_send, j_send, "maps to")
+Rel(erl_call, j_call, "maps to")
+Rel(erl_sup, j_sup, "maps to")
+Rel(erl_gen_server, j_gen_server, "maps to")
+Rel(erl_gen_statem, j_gen_statem, "maps to")
+Rel(erl_gen_event, j_gen_event, "maps to")
+Rel(erl_timer, j_timer, "maps to")
+Rel(erl_registry, j_registry, "maps to")
+Rel(erl_sys, j_sys, "maps to")
+Rel(erl_exit, j_exit, "maps to")
+Rel(erl_result, j_result, "maps to")
+
+note on link j_spawn
+  Virtual threads instead
+  of BEAM lightweight processes
+  Functionally equivalent
+end note
+
+note on link j_call
+  Uses Result<Reply, Timeout>
+  instead of {ok, Reply} | {error, timeout}
+end note
+
+note on link j_gen_server
+  Pure functional handler:
+  (state, message) -> state
+  No callback module
+end note
+
+note on link j_result
+  Sealed types instead of
+  tuple-based error tuples
+  Type-safe pattern matching
+end note
+
+SHOW_LEGEND()
+
+@enduml

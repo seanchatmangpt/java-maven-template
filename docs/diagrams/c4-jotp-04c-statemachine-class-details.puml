@@ -1,0 +1,68 @@
+@startuml c4-jotp-04c-statemachine-class-details
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - StateMachine<S,E,D> Class Structure
+
+class "StateMachine<S,E,D>" as SM <<class>> {
+  - state: S
+  - handler: TriFunction<S, E, D, Transition>
+  - data: D
+  ---
+  + handle(event: E): Transition<S,D>
+  + getState(): S
+  + getData(): D
+  + transition(newState: S, newData: D): void
+}
+
+sealed class "Transition<S,D>" as Trans <<sealed>> {
+}
+
+class "Keep<S,D>" as Keep extends Trans <<record>> {
+  state: S
+  data: D
+}
+
+class "NextState<S,D>" as NextS extends Trans <<record>> {
+  state: S
+  data: D
+  reply: Object
+}
+
+class "Stop<D>" as Stop extends Trans <<record>> {
+  reason: String
+  data: D
+}
+
+interface "EventHandler<E>" as EH <<interface>> {
+  {abstract} handle(event: E): void
+}
+
+SM *-- Trans: returns
+SM *-- EH: can route to
+
+note on link Trans
+  Sealed hierarchy
+  Pattern match for safety
+  Immutable transitions
+end note
+
+note on link Keep
+  State unchanged
+  Data unchanged
+  No reply
+end note
+
+note on link NextS
+  New state
+  New data
+  Optional reply
+end note
+
+note on link Stop
+  Terminate state machine
+  Clean shutdown
+end note
+
+SHOW_LEGEND()
+
+@enduml

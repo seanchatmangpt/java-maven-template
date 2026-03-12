@@ -1,0 +1,75 @@
+@startuml c4-jotp-07d-event-dispatch
+title JOTP - Event Dispatch Sequence (EventManager → StateMachine)
+
+participant "Sender\nProcess" as Sender
+participant "EventManager\n<E>" as EventMgr
+participant "Handler 1" as Handler1
+participant "Handler 2" as Handler2
+participant "StateMachine\n<S,E,D>" as SM
+participant "Receiver\nProcess" as Receiver
+
+Sender ->> EventMgr: addHandler(Handler1)
+activate EventMgr
+note over EventMgr
+  Register custom handler
+  for this event type
+end note
+deactivate EventMgr
+
+Sender ->> EventMgr: addHandler(StateMachine)
+activate EventMgr
+note over EventMgr
+  Register StateMachine
+  as event handler
+end note
+deactivate EventMgr
+
+Sender ->> EventMgr: notify(event)
+activate EventMgr
+
+par Event Dispatch
+  EventMgr ->> Handler1: handle(event)
+  activate Handler1
+  note over Handler1
+    Custom logic
+    Independent execution
+  end note
+  Handler1 -->> EventMgr: result
+  deactivate Handler1
+and
+  EventMgr ->> SM: handle(event)
+  activate SM
+
+  SM ->> SM: match state\npattern match on event\ncompute transition
+
+  SM -->> SM: Transition<S,D>
+
+  alt Keep
+    note over SM
+      State unchanged
+    end note
+  else NextState
+    note over SM
+      State changed
+      New data
+      Optional reply
+    end note
+  else Stop
+    note over SM
+      Terminate
+    end note
+  end
+
+  deactivate SM
+end
+
+note over EventMgr
+  Handler crashes isolated
+  Does not kill EventManager
+  Does not kill other handlers
+end note
+
+EventMgr -->> Sender: void
+deactivate EventMgr
+
+@enduml

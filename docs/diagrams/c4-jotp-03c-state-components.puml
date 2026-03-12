@@ -1,0 +1,46 @@
+@startuml c4-jotp-03c-state-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - State Management Container Components (Detailed)
+
+Container_Boundary(stateContainer, "State Management Container") {
+
+    Component(statemachine, "StateMachine<S,E,D>", "State Machine", "State/event/data separation\nTransition function\nPattern matching on states\nGuard predicates")
+
+    Component(eventmanager, "EventManager<E>", "Event Manager", "Typed event dispatch\nHandler registration\nFault isolation\nEvent routing")
+
+    Component(transition, "Transition<S,D>", "Transition Record", "new state\nreply data\nimmutable record")
+
+    Component(handler, "EventHandler<E>", "Handler Interface", "handle(event) -> result\nCustom implementations\nSerialization support")
+
+    Component(registry, "ProcessRegistry", "Name Registry", "Global process names\nPID mapping\nDynamic lookup\nauto-deregister")
+
+    Component(nameref, "NameRef<M>", "Named Reference", "String name + process ref\nfallback lookup\ncast to ProcRef")
+
+}
+
+Rel(statemachine, transition, "returns")
+Rel(eventmanager, handler, "manages")
+Rel(eventmanager, statemachine, "can route events to")
+
+Rel(registry, nameref, "stores")
+Rel(nameref, statemachine, "can reference via")
+
+note on link statemachine
+  Pure function approach
+  Sealed Transition hierarchy
+end note
+
+note on link eventmanager
+  Handlers isolated per type
+  Crashes don't kill manager
+end note
+
+note on link registry
+  Thread-safe ConcurrentHashMap
+  Auto-cleanup on exit
+end note
+
+SHOW_LEGEND()
+
+@enduml

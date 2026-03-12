@@ -1,0 +1,83 @@
+@startuml c4-jotp-07c-registry-operations
+title JOTP - ProcessRegistry Operations Sequence
+
+participant "Process A\n(Registrar)" as ProcA
+participant "ProcessRegistry" as Registry
+participant "Process B\n(Lookup)" as ProcB
+participant "ConcurrentHashMap" as CHM
+participant "Monitor" as Monitor
+participant "Process C\n(Target)" as ProcC
+
+ProcA ->> Registry: register("myservice", procCRef)
+activate Registry
+
+Registry ->> CHM: putIfAbsent("myservice", ref)
+activate CHM
+CHM -->> Registry: success
+deactivate CHM
+
+Registry ->> Monitor: monitor(procCRef)
+activate Monitor
+note over Monitor
+  Setup auto-deregister
+  on process crash
+end note
+
+Registry -->> ProcA: void
+deactivate Registry
+
+note over Registry
+  "myservice" -> procCRef
+  mapping stored globally
+end note
+
+ProcB ->> Registry: whereis("myservice")
+activate Registry
+
+Registry ->> CHM: get("myservice")
+activate CHM
+CHM -->> Registry: Optional<ProcRef>
+deactivate CHM
+
+Registry -->> ProcB: Optional<procCRef>
+deactivate Registry
+
+alt Found
+  ProcB ->> ProcC: send(message)
+  note over ProcB
+    Use reference to
+    communicate directly
+  end note
+else Not Found
+  ProcB -->> ProcB: handle missing service
+  note over ProcB
+    Service not registered
+    or crashed
+  end note
+end
+
+ProcA ->> Registry: unregister("myservice")
+activate Registry
+
+Registry ->> CHM: remove("myservice")
+activate CHM
+CHM -->> Registry: removed
+deactivate CHM
+
+Registry ->> Monitor: demonitor()
+deactivate Monitor
+
+Registry -->> ProcA: void
+deactivate Registry
+
+alt Auto-Deregister (On Crash)
+  ProcC --x ProcC: crash!
+  Monitor ->> Registry: process DOWN\nsignal
+  Registry ->> CHM: remove("myservice")
+  note over Registry
+    Automatic cleanup
+    on process termination
+  end note
+end
+
+@enduml

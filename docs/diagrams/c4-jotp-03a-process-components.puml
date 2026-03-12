@@ -1,0 +1,50 @@
+@startuml c4-jotp-03a-process-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Process Container Components (Detailed)
+
+Container_Boundary(procContainer, "Process Container") {
+
+    Component(proclib, "ProcLib", "Startup Protocol", "start_link() handshake\nInitialization acknowledgement\nblocking until init complete")
+
+    Component(proc, "Proc<S,M>", "Process Handler", "Virtual thread executor\nMailbox (LinkedTransferQueue)\nState management\nMessage handling loop")
+
+    Component(procref, "ProcRef<S,M>", "Process Reference", "Opaque stable handle\nProcess identity\nSerialization support\nEquals/hashCode")
+
+    Component(processlink, "ProcessLink", "Bilateral Link", "Link two processes\nBilateral crash propagation\nLink chain management\nUnlink on exit")
+
+    Component(processmonitor, "ProcessMonitor", "Unilateral Monitor", "Monitor process without linking\nReceive DOWN signals\nNo killing on crash\nDemonitor support")
+
+    Component(mailbox, "Mailbox", "Message Queue", "LinkedTransferQueue<Message>\nLock-free MPMC\nBlocking dequeue\nNon-blocking enqueue")
+
+}
+
+Rel(proclib, proc, "starts")
+Rel(proclib, procref, "creates reference to")
+
+Rel(proc, mailbox, "owns")
+Rel(proc, procref, "identifies with")
+Rel(proc, processlink, "establishes")
+Rel(proc, processmonitor, "can be monitored by")
+
+Rel(processlink, proc, "links to")
+Rel(processmonitor, proc, "monitors")
+
+note on link proclib
+  Blocks until Proc calls
+  initAck(state)
+end note
+
+note on link proc
+  Pure state handler:
+  (state, message) -> state
+end note
+
+note on link mailbox
+  Batches messages safely
+  Processes dequeue in order
+end note
+
+SHOW_LEGEND()
+
+@enduml

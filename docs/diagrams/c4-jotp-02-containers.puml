@@ -1,0 +1,42 @@
+@startuml c4-jotp-02-containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title JOTP - Container Diagram (15 Core OTP Primitives)
+
+Person(javadev, "Java Developer")
+
+Container_Boundary(jotp, "io.github.seanchatmangpt.jotp") {
+    Container(proc, "Process Container", "Proc<S,M>, ProcRef<S,M>", "Core process abstractions with\nstate handler & stable references\n\nIncludes:\n• Proc<S,M> - state machine handler\n• ProcRef<S,M> - opaque process ID\n• ProcessLink - bilateral linking\n• ProcessMonitor - unilateral monitoring\n• ProcLib - startup handshake")
+
+    Container(supervision, "Supervision Container", "Supervisor, CrashRecovery", "Fault tolerance & recovery\n\nIncludes:\n• Supervisor - tree with restart strategies\n• CrashRecovery - let it crash\n• ExitSignal - exit signal handling")
+
+    Container(concurrency, "Concurrency Container", "Parallel, StructuredTaskScope", "Structured parallel execution\n\nIncludes:\n• Parallel - fan-out with fail-fast\n• StructuredTaskScope integration")
+
+    Container(state, "State Management Container", "StateMachine, EventManager, ProcessRegistry", "State & event handling\n\nIncludes:\n• StateMachine<S,E,D> - state machine\n• EventManager<E> - event dispatch\n• ProcessRegistry - name registry")
+
+    Container(timing, "Timing Container", "ProcTimer, ProcSys", "Time & introspection\n\nIncludes:\n• ProcTimer - send_after/send_interval\n• ProcSys - process introspection")
+
+    Container(errors, "Error Handling Container", "Result<S,F>", "Railway-oriented programming\n\nIncludes:\n• Result<S,F> - sealed success/failure")
+}
+
+Container_Ext(jvm, "Java 26 Runtime", "Virtual Threads\nStructuredTaskScope\nPreview Features")
+
+Rel(javadev, proc, "Spawns processes")
+Rel(javadev, supervision, "Manages supervision trees")
+Rel(javadev, state, "Creates state machines & events")
+
+Rel(proc, supervision, "Reports crashes to")
+Rel(proc, timing, "Schedules timers via")
+Rel(proc, state, "Uses for state transitions")
+Rel(proc, errors, "Wraps operations in")
+
+Rel(supervision, proc, "Manages & restarts")
+Rel(state, proc, "Dispatches messages to")
+Rel(timing, proc, "Delivers timed messages to")
+
+Rel(proc, jvm, "Runs on (virtual threads)")
+Rel(concurrency, jvm, "Uses StructuredTaskScope from")
+
+SHOW_LEGEND()
+
+@enduml

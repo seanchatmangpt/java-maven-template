@@ -1,0 +1,77 @@
+@startuml c4-jotp-09d-error-propagation
+title JOTP - Error Propagation Through Supervision Tree
+
+start
+
+:Leaf worker process
+crashes with exception;
+
+:Send EXIT signal
+to parent supervisor;
+
+:Parent evaluates
+restart strategy;
+
+if (Can restart?) then (YES)
+  :Check restart window;
+
+  if (Within limit?) then (YES)
+    :Restart failed child;
+    :Recovery complete;
+    stop
+  else (NO - exceeded)
+  endif
+else (NO - escalate)
+endif
+
+:Propagate error
+to parent supervisor;
+
+:Grandparent evaluates
+restart strategy
+for parent;
+
+if (Parent failed fatally?) then (YES)
+  if (ONE_FOR_ONE?) then
+    :Restart only parent;
+    note right
+      Children also restart
+      via parent's recovery
+    end note
+  else if (ONE_FOR_ALL?) then
+    :Restart parent
+    AND all siblings;
+  else if (REST_FOR_ONE?) then
+    :Restart parent
+    AND descendants;
+  endif
+else (Handle locally)
+  stop
+endif
+
+:Propagate error
+further up tree;
+
+:Check if root supervisor
+can handle;
+
+if (Root restart window OK?) then (YES)
+  :Restart root;
+  note right
+    Full system recovery
+    May lose state
+  end note
+else (NO - give up)
+  :Log fatal error;
+  :Optional: trigger
+   external escalation;
+  note right
+    Alert ops
+    Fallback service
+    Circuit breaker
+  end note
+endif
+
+stop
+
+@enduml

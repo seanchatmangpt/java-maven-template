@@ -1,0 +1,89 @@
+@startuml c4-jotp-05-supervision-tree
+title JOTP - Supervision Tree Diagram
+
+package "Supervision Strategies" {
+    note right
+      ONE_FOR_ONE: Restart only failed child
+      ONE_FOR_ALL: Restart all children if one fails
+      REST_FOR_ONE: Restart failed + descendants
+    end note
+}
+
+object RootSupervisor as "RootSupervisor" {
+    strategy = ONE_FOR_ALL
+    restartWindow = [5 restarts in 60s]
+}
+
+object LoggerSup as "LoggerSupervisor" {
+    strategy = ONE_FOR_ONE
+    maxRestart = 5
+}
+
+object DatabaseSup as "DatabaseSupervisor" {
+    strategy = ONE_FOR_ONE
+    maxRestart = 3
+}
+
+object AppWorkerPool as "WorkerSupervisor" {
+    strategy = REST_FOR_ONE
+    maxRestart = 10
+}
+
+object LoggerProc as "LoggerProc" {
+    type = "Worker"
+    state = "logging"
+}
+
+object DBConnProc as "DBConnProc" {
+    type = "Worker"
+    state = "connected"
+}
+
+object DBPoolProc as "DBPoolProc" {
+    type = "Worker"
+    state = "managing"
+}
+
+object Worker1 as "Worker1" {
+    type = "Worker"
+    state = "idle"
+}
+
+object Worker2 as "Worker2" {
+    type = "Worker"
+    state = "processing"
+}
+
+object Worker3 as "Worker3" {
+    type = "Worker"
+    state = "idle"
+}
+
+RootSupervisor *-- LoggerSup: supervises
+RootSupervisor *-- DatabaseSup: supervises
+RootSupervisor *-- AppWorkerPool: supervises
+
+LoggerSup *-- LoggerProc: supervises
+
+DatabaseSup *-- DBConnProc: supervises
+DatabaseSup *-- DBPoolProc: supervises
+
+AppWorkerPool *-- Worker1: supervises
+AppWorkerPool *-- Worker2: supervises
+AppWorkerPool *-- Worker3: supervises
+
+note on link RootSupervisor : ONE_FOR_ALL\nIf any child fails,\nrestart all
+
+note on link LoggerSup : ONE_FOR_ONE\nIf LoggerProc fails,\nonly restart Logger
+
+note on link DatabaseSup : ONE_FOR_ONE\nIndependent failures
+
+note on link AppWorkerPool : REST_FOR_ONE\nIf Worker1 fails,\nrestart Worker1, Worker2, Worker3
+
+legend
+  |<#FFE6E6> Process Terminated |
+  |<#E6F3FF> Process Running |
+  |<#FFFFCC> Process Restarting |
+end legend
+
+@enduml

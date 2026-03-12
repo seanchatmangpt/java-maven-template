@@ -1,0 +1,66 @@
+@startuml c4-jotp-03-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Component Diagram (Detailed Interactions)
+
+Container_Boundary(jotp, "io.github.seanchatmangpt.jotp") {
+
+    Component(proc, "Proc<S,M>", "Process Handler", "Virtual thread + mailbox\nstate handler function")
+    Component(procref, "ProcRef<S,M>", "Process Reference", "Stable opaque handle\n(Erlang Pid equivalent)")
+    Component(proclib, "ProcLib", "Startup Protocol", "start_link() handshake\nInitialization ack")
+
+    Component(supervisor, "Supervisor", "Tree Manager", "ONE_FOR_ONE | ONE_FOR_ALL\nREST_FOR_ONE strategies")
+    Component(crash, "CrashRecovery", "Recovery Logic", "Isolated retry\nLet it crash")
+    Component(exit, "ExitSignal", "Exit Signals", "Signal record\nfor trapped exits")
+    Component(link, "ProcessLink", "Bilateral Links", "Bilateral crash\npropagation")
+    Component(monitor, "ProcessMonitor", "Monitoring", "Unilateral DOWN\nnotifications")
+
+    Component(registry, "ProcessRegistry", "Global Names", "register/whereis\nauto-deregister on exit")
+
+    Component(statemachine, "StateMachine<S,E,D>", "State Machine", "state/event/data\nseparation (gen_statem)")
+    Component(eventmanager, "EventManager<E>", "Event Manager", "Typed event dispatch\nfault-isolated handlers")
+
+    Component(timer, "ProcTimer", "Timers", "send_after/send_interval\nsend to mailbox")
+    Component(sys, "ProcSys", "Introspection", "get_state/suspend\nresume/statistics")
+
+    Component(parallel, "Parallel", "Structured Concurrency", "fan-out with fail-fast\nStructuredTaskScope wrapper")
+
+    Component(result, "Result<S,F>", "Error Handling", "Sealed Success/Failure\nRailway-oriented")
+
+}
+
+Rel(proc, procref, "identifies with")
+Rel(proc, proclib, "initializes via")
+Rel(proclib, proc, "starts")
+
+Rel(supervisor, proc, "manages & restarts")
+Rel(supervisor, crash, "delegates recovery to")
+Rel(supervisor, exit, "receives exit signals")
+Rel(crash, proc, "spawns recovery process")
+
+Rel(proc, link, "establishes with")
+Rel(link, exit, "sends to both sides on crash")
+Rel(proc, monitor, "monitored by")
+Rel(monitor, proc, "sends DOWN to")
+
+Rel(proc, registry, "registers name in")
+Rel(registry, procref, "looks up via")
+
+Rel(proc, statemachine, "runs")
+Rel(statemachine, eventmanager, "dispatches events to")
+Rel(eventmanager, proc, "sends reply via")
+
+Rel(proc, timer, "schedules via")
+Rel(timer, proc, "delivers timed message to")
+
+Rel(proc, sys, "introspected by")
+Rel(sys, proc, "queries state of")
+
+Rel(proc, parallel, "spawned within")
+
+Rel(proc, result, "wraps operations in")
+Rel(result, proc, "provides error handling")
+
+SHOW_LEGEND()
+
+@enduml

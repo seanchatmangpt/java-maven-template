@@ -1,0 +1,65 @@
+@startuml c4-jotp-04b-supervisor-class-details
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Supervisor Class Structure
+
+class "Supervisor" as Sup <<class>> {
+  - rootProc: ProcRef
+  - children: Map<String, ProcRef>
+  - strategy: RestartStrategy
+  - window: RestartWindow
+  - monitor: ProcessMonitor
+  ---
+  + spawn(name, state, handler): ProcRef
+  + restart(childRef, reason): void
+  + evaluate(strategy, failed): List<ProcRef>
+  + stop(): void
+  + which_children(): List<ChildSpec>
+}
+
+enum "RestartStrategy" as Strat <<enumeration>> {
+  ONE_FOR_ONE
+  ONE_FOR_ALL
+  REST_FOR_ONE
+}
+
+class "RestartWindow" as RW <<class>> {
+  - maxRestarts: int
+  - windowSeconds: int
+  - restarts: Queue<Long>
+  ---
+  + isExceeded(): boolean
+  + record(): void
+  + tryRestart(): boolean
+}
+
+class "ChildSpec" as CS <<record>> {
+  id: String
+  ref: ProcRef
+  state: Object
+  handler: Function
+}
+
+Sup *-- Strat: applies
+Sup *-- RW: uses
+Sup *-- CS: tracks
+
+note on link Strat
+  ONE_FOR_ONE: only restart failed
+  ONE_FOR_ALL: restart all
+  REST_FOR_ONE: restart failed+
+end note
+
+note on link RW
+  Sliding window algorithm
+  Prevents restart thrashing
+end note
+
+note on link CS
+  Immutable child specification
+  metadata + reference
+end note
+
+SHOW_LEGEND()
+
+@enduml

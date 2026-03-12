@@ -1,0 +1,54 @@
+@startuml c4-jotp-09c-monitoring-observability
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Monitoring & Observability Integration
+
+Container_Boundary(jotp, "JOTP System") {
+    Component(procsys, "ProcSys", "Introspection", "get_state(ref)\nsuspend(ref)\nresume(ref)\nstatistics(ref)")
+
+    Component(stats, "ProcStats", "Statistics", "Message queue depth\nMemory usage\nExecution time\nState snapshot")
+
+    Component(metrics, "Metrics Collector", "Metrics", "CPU time\nThread count\nGC statistics\nQueue depths")
+}
+
+Container_Ext(prometheus, "Prometheus", "Metrics\nScraping &\nStorage")
+
+Container_Ext(jaeger, "Jaeger", "Distributed\nTracing")
+
+Container_Ext(elk, "ELK Stack", "Logging\n(Elasticsearch)")
+
+Container_Ext(dashboard, "Grafana", "Visualization\n& Alerting")
+
+Rel(procsys, stats, "queries via")
+Rel(stats, metrics, "aggregates into")
+
+Rel(metrics, prometheus, "scrape endpoint /metrics")
+Rel(procsys, jaeger, "optional span export")
+Rel(metrics, elk, "log events to")
+
+Rel(prometheus, dashboard, "reads time-series")
+Rel(jaeger, dashboard, "reads traces")
+Rel(elk, dashboard, "reads logs")
+
+note on link procsys
+  Non-blocking queries
+  No process suspension needed
+  Thread-safe reads
+end note
+
+note on link stats
+  Snapshot at query time
+  Immutable record
+  Zero-copy access
+end note
+
+note bottom of jotp
+  JOTP exposes standard metrics via JMX/Micrometer
+  Tracing via OpenTelemetry SDKs
+  Logging via SLF4J compatible
+  All external integrations optional
+end note
+
+SHOW_LEGEND()
+
+@enduml

@@ -1,0 +1,56 @@
+@startuml c4-jotp-04a-proc-class-details
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Proc<S,M> Class Structure
+
+class "Proc<S,M>" as Proc <<record>> {
+  - state: S
+  - handler: BiFunction<S, M, S>
+  - mailbox: LinkedTransferQueue<M>
+  - virtualThread: VirtualThread
+  ---
+  + spawn(state, handler): ProcRef<S,M>
+  + send(message): void
+  + ask(message, timeout): Result<Reply>
+  + stop(): void
+  + getState(): S
+  + trapExits(boolean): void
+}
+
+class "MessageHandler<S,M>" as Handler <<interface>> {
+  {abstract} handle(state: S, message: M): S
+}
+
+class "LinkedTransferQueue<M>" as Mailbox <<utility>> {
+  + put(m: M): void
+  + take(): M
+  + poll(timeout): M
+  + peek(): M
+  + isEmpty(): boolean
+}
+
+class "VirtualThread" as VT <<utility>> {
+  + isVirtual(): boolean
+  + getName(): String
+  + run(): void
+}
+
+Proc *-- Handler: uses
+Proc *-- Mailbox: owns
+Proc *-- VT: runs on
+
+note on link Mailbox
+  Lock-free MPMC queue
+  Blocks on take() if empty
+  Non-blocking put()
+end note
+
+note on link Handler
+  Pure function: (S, M) -> S
+  No side effects preferred
+  Sealed message hierarchy
+end note
+
+SHOW_LEGEND()
+
+@enduml

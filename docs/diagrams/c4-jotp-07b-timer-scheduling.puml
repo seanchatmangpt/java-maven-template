@@ -1,0 +1,67 @@
+@startuml c4-jotp-07b-timer-scheduling
+title JOTP - Timer Scheduling & Delivery Sequence
+
+participant "Caller\nProcess" as Caller
+participant "ProcTimer" as Timer
+participant "ScheduledExecutor\nService" as Scheduler
+participant "Target\nMailbox" as Mailbox
+participant "Target\nProcess" as Target
+
+Caller ->> Timer: send_after(delay, target, msg)
+activate Timer
+
+Timer ->> Timer: create TimerTask\nwith message copy
+
+Timer ->> Scheduler: schedule(task, delay, unit)
+activate Scheduler
+note over Scheduler
+  Schedules on background
+  executor thread pool
+end note
+
+Timer -->> Caller: TimerRef(id)
+deactivate Timer
+
+note over Scheduler
+  Waiting...
+  delay expires
+end note
+
+Scheduler ->> Mailbox: enqueue(message)
+activate Mailbox
+
+Mailbox ->> Target: message available
+activate Target
+
+Target ->> Target: dequeue from mailbox
+note over Target
+  Process continues
+  handling messages
+  in FIFO order
+end note
+
+Target ->> Target: handle(state, timedMessage)
+
+Target -->> Target: newState
+deactivate Target
+deactivate Mailbox
+deactivate Scheduler
+
+note over Target
+  Timed message processed
+  like any other message
+end note
+
+alt Cancel Before Delivery
+  Caller ->> Timer: cancel(timerRef)
+  activate Timer
+  Timer ->> Scheduler: cancel(future)
+  Scheduler -->> Timer: cancelled
+  deactivate Timer
+  note over Scheduler
+    Task never executes
+    Message never sent
+  end note
+end
+
+@enduml

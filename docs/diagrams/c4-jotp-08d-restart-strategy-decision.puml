@@ -1,0 +1,82 @@
+@startuml c4-jotp-08d-restart-strategy-decision
+title JOTP - Restart Strategy Decision Tree
+
+start
+
+:Child process crashes
+or exits abnormally;
+
+:Supervisor detects exit
+signal from child;
+
+:Which restart strategy
+is configured?;
+
+if (ONE_FOR_ONE?) then (YES)
+  :Restart ONLY
+   the failed child;
+  :Other children
+   unaffected;
+  note right
+    Isolated failures
+    Independent recovery
+    Most common strategy
+  end note
+else (NO)
+endif
+
+if (ONE_FOR_ALL?) then (YES)
+  :Terminate ALL children;
+  :Restart ALL children
+   in spawn order;
+  note right
+    All children depend
+    on each other
+    Coordinated reset
+  end note
+else (NO)
+endif
+
+if (REST_FOR_ONE?) then (YES)
+  :Terminate failed child
+   and all children
+   started AFTER it;
+  :Restart from failed child
+   in spawn order;
+  note right
+    Ordered dependency
+    Restart from failure point
+    Restore sequence
+  end note
+else (NO)
+endif
+
+:Within restart window?;
+
+if (Yes) then
+  :Increment restart counter;
+  :Spawn new process;
+  note right
+    Fresh state
+    Same handler
+    New ProcRef
+  end note
+else (No)
+  :Max restarts EXCEEDED;
+  :Apply escalation policy:
+   - Log error
+   - Stop subtree
+   - Propagate to parent;
+  note right
+    Prevent restart loop
+    Avoid resource exhaustion
+    Let parent decide
+  end note
+endif
+
+:New process running;
+:Original children recovered;
+
+stop
+
+@enduml

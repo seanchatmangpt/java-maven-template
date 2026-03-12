@@ -1,0 +1,115 @@
+@startuml c4-jotp-06-message-flow
+title JOTP - Message Flow Sequence Diagram
+
+participant "Sender\nProcess" as Sender
+participant "Sender\nMailbox" as SenderMB
+participant "Receiver\nMailbox" as ReceiverMB
+participant "Receiver\nProcess Handler" as Receiver
+participant "EventManager\n(optional)" as EventMgr
+participant "Timer\n(optional)" as Timer
+
+== Asynchronous Message Send ==
+
+Sender ->> ReceiverMB: send(message)\n[non-blocking]
+note over ReceiverMB
+  Message queued to
+  receiver's LinkedTransferQueue
+  (lock-free MPMC)
+end note
+ReceiverMB -->> Sender: return void
+
+note over Sender
+  Sender continues immediately
+  Does not wait for processing
+end note
+
+== Message Delivery & Processing ==
+
+ReceiverMB ->> Receiver: dequeue message\nfrom mailbox
+activate Receiver
+Receiver ->> Receiver: match on message\ntype & pattern
+
+alt StateMachine event
+  Receiver ->> EventMgr: dispatch(event)\nto StateMachine
+  activate EventMgr
+  EventMgr ->> Receiver: handler(state, event, data)
+  Receiver -->> EventMgr: new state
+  deactivate EventMgr
+else Regular message
+  Receiver ->> Receiver: call handler\n(state, message)
+end
+
+Receiver -->> Receiver: nextState
+note over Receiver
+  Handler returns nextState
+  State updated atomically
+end note
+deactivate Receiver
+
+== Synchronous Request-Reply (ask with timeout) ==
+
+note over Sender
+  Sender wants reply
+  Uses ask(message, timeout)
+end note
+
+Sender ->> SenderMB: create reply slot\n+ timeout
+activate SenderMB
+Sender ->> ReceiverMB: send(message)\nwith replyTo = sender's slot
+activate ReceiverMB
+
+ReceiverMB ->> Receiver: deliver message\nincluding replyTo
+activate Receiver
+
+Receiver ->> Receiver: process message\ncompute reply
+Receiver ->> SenderMB: send reply\nto sender's slot
+note over SenderMB
+  Reply queued in sender's mailbox
+end note
+deactivate Receiver
+
+SenderMB ->> Sender: dequeue reply\n(or timeout)
+note over Sender
+  Sender blocks on reply dequeue
+  With timeout
+  Returns Result<Reply, Timeout>
+end note
+deactivate SenderMB
+deactivate ReceiverMB
+
+== Timed Message Delivery ==
+
+Sender ->> Timer: ProcTimer.send_after\n(delay, receiver, message)
+activate Timer
+Timer ->> Timer: schedule delivery\nvia ScheduledExecutor
+deactivate Timer
+
+note over Timer
+  After delay expires
+  Message automatically sent
+  to receiver's mailbox
+end note
+
+Timer ->> ReceiverMB: send(message)\n[automatic]
+activate ReceiverMB
+note over ReceiverMB
+  Timed message queued
+  Same as regular send
+end note
+deactivate ReceiverMB
+
+== Error Handling with Result ==
+
+note over Sender
+  Wrap message send in Result
+  for error handling
+end note
+
+Sender ->> Sender: var result =\nResult.of(() -> send(...))
+alt Success
+  Sender -->> Sender: Success(unit)
+else Failure
+  Sender -->> Sender: Failure(exception)
+end
+
+@enduml

@@ -1,0 +1,80 @@
+@startuml c4-jotp-08c-state-transition-diagram
+title JOTP - State Machine Transition Diagram
+
+state "Idle" as Idle {
+  note
+    No active operation
+    Waiting for request
+  end note
+}
+
+state "Processing" as Processing {
+  note
+    Handling client request
+    Executing business logic
+  end note
+}
+
+state "Paused" as Paused {
+  note
+    Suspended by admin
+    Can resume later
+  end note
+}
+
+state "Error" as Error {
+  note
+    Failed operation
+    Recovery in progress
+  end note
+}
+
+state "Shutting Down" as Shutdown {
+  note
+    Graceful termination
+    Cleanup resources
+  end note
+}
+
+state "Terminated" as Term {
+  note
+    Process stopped
+    Memory freed
+  end note
+}
+
+[*] --> Idle: spawn(handler)
+
+Idle --> Processing: request event
+Processing --> Idle: reply sent
+Processing --> Error: exception thrown
+
+Idle --> Paused: pause event
+Paused --> Idle: resume event
+
+Idle --> Shutdown: shutdown event
+Processing --> Shutdown: shutdown during op
+
+Error --> Idle: recovery success
+Error --> Shutdown: recovery failed
+
+Shutdown --> Term: cleanup complete
+Term --> [*]
+
+note on link Idle
+  Handlers dispatch on\nmessage/event type
+end note
+
+note on link Processing
+  StateMachine<S,E,D>\nhandles state/event/data
+end note
+
+note on link Error
+  Exception caught\nRecovery logic runs
+end note
+
+note on link Shutdown
+  Supervisor initiates\nor self-shutdown
+end note
+
+@enduml

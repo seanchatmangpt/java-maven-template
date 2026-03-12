@@ -1,0 +1,43 @@
+@startuml c4-jotp-03e-timing-components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title JOTP - Timing Container Components (Detailed)
+
+Container_Boundary(timingContainer, "Timing Container") {
+
+    Component(timer, "ProcTimer", "Timer Scheduler", "send_after(delay, pid, msg)\nsend_interval(period, pid, msg)\ncancel(timerRef)\nScheduledExecutor backend")
+
+    Component(timerref, "TimerRef", "Timer Reference", "Timer identity\ncancel support\nimmutable handle")
+
+    Component(scheduler, "ScheduledExecutor", "Task Scheduler", "Background thread pool\nDelay scheduling\nPeriodic execution\nCleanup")
+
+    Component(procsys, "ProcSys", "Introspection", "get_state(procRef)\nsuspend(procRef)\nresume(procRef)\nstatistics(procRef)")
+
+    Component(procstats, "ProcStats", "Statistics Record", "Message queue depth\nCPU time\nMemory usage\nState snapshot")
+
+}
+
+Rel(timer, timerref, "returns")
+Rel(timer, scheduler, "delegates to")
+Rel(scheduler, timer, "schedules via")
+
+Rel(procsys, procstats, "returns")
+
+note on link timer
+  Non-blocking scheduling
+  Fire-and-forget semantics
+end note
+
+note on link scheduler
+  ScheduledExecutorService
+  Automatic cleanup on app exit
+end note
+
+note on link procsys
+  Query without killing process
+  Snapshot-based statistics
+end note
+
+SHOW_LEGEND()
+
+@enduml

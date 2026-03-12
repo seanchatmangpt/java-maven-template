@@ -1,0 +1,20 @@
+@startuml c4-jotp-01-system-context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title JOTP - System Context Diagram
+
+Person(javadev, "Java Developer", "Develops fault-tolerant\ndistributed systems")
+
+System(jotp, "io.github.seanchatmangpt.jotp", "Erlang/OTP implementation\nfor Java 26\n\n15 core OTP primitives")
+
+System_Ext(jvm, "Java 26 Runtime", "Virtual Threads\nStructured Concurrency\nPreview Features")
+
+System_Ext(monitoring, "Observability System", "Metrics\nLogging\nTracing")
+
+Rel(javadev, jotp, "Uses JOTP to build\nfault-tolerant systems")
+Rel(jotp, jvm, "Runs on")
+Rel(jotp, monitoring, "Exposes metrics via\nProcSys introspection")
+
+SHOW_LEGEND()
+
+@enduml
