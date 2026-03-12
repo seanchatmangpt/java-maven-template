@@ -1,3 +1,6 @@
 [submodule "yawl"]
 	path = yawl
 	url = https://github.com/seanchatmangpt/yawl
+[submodule "ReactiveMessagingPatterns"]
+	path = docs/reactive-messaging-patterns
+	url = https://github.com/VaughnVernon/ReactiveMessagingPatterns_ActorModel.git

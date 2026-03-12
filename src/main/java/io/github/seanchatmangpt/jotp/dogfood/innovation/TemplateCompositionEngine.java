@@ -181,7 +181,7 @@ public final class TemplateCompositionEngine {
      */
     public static FeatureRecipe crudFeature(String entityName) {
         Objects.requireNonNull(entityName, "entityName must not be null");
-        var pkg = "org.acme.domain";
+        var pkg = "io.github.seanchatmangpt.jotp.domain";
         var vars = Map.of("entity_name", entityName, "package", pkg);
 
         return new FeatureRecipe(
@@ -205,7 +205,7 @@ public final class TemplateCompositionEngine {
      */
     public static FeatureRecipe valueObjectFeature(String name) {
         Objects.requireNonNull(name, "name must not be null");
-        var pkg = "org.acme.domain.vo";
+        var pkg = "io.github.seanchatmangpt.jotp.domain.vo";
         var vars = Map.of("name", name, "package", pkg);
 
         return new FeatureRecipe(
@@ -226,7 +226,7 @@ public final class TemplateCompositionEngine {
      */
     public static FeatureRecipe serviceLayerFeature(String name) {
         Objects.requireNonNull(name, "name must not be null");
-        var pkg = "org.acme.service";
+        var pkg = "io.github.seanchatmangpt.jotp.service";
         var vars = Map.of("service_name", name, "package", pkg);
 
         return new FeatureRecipe(
@@ -264,7 +264,7 @@ public final class TemplateCompositionEngine {
     public static FeatureRecipe reliableMessagingPipeline(String domain, List<String> messageTypes) {
         Objects.requireNonNull(domain, "domain must not be null");
         Objects.requireNonNull(messageTypes, "messageTypes must not be null");
-        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var pkg = "io.github.seanchatmangpt.jotp." + domain.toLowerCase() + ".messaging";
         var vars = Map.of(
                 "name", domain,
                 "package", pkg,
@@ -291,7 +291,7 @@ public final class TemplateCompositionEngine {
      */
     public static FeatureRecipe eventDrivenMessaging(String domain) {
         Objects.requireNonNull(domain, "domain must not be null");
-        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var pkg = "io.github.seanchatmangpt.jotp." + domain.toLowerCase() + ".messaging";
         var vars = Map.of(
                 "name", domain,
                 "package", pkg,
@@ -317,7 +317,7 @@ public final class TemplateCompositionEngine {
      */
     public static FeatureRecipe supervisedMessaging(String domain) {
         Objects.requireNonNull(domain, "domain must not be null");
-        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var pkg = "io.github.seanchatmangpt.jotp." + domain.toLowerCase() + ".messaging";
         var vars = Map.of(
                 "name", domain,
                 "package", pkg,
@@ -343,7 +343,7 @@ public final class TemplateCompositionEngine {
      */
     public static FeatureRecipe orchestrationMessaging(String domain) {
         Objects.requireNonNull(domain, "domain must not be null");
-        var pkg = "org.acme." + domain.toLowerCase() + ".messaging";
+        var pkg = "io.github.seanchatmangpt.jotp." + domain.toLowerCase() + ".messaging";
         var vars = Map.of(
                 "name", domain,
                 "package", pkg,
@@ -384,7 +384,7 @@ public final class TemplateCompositionEngine {
             var templateName = extractTemplateName(pattern.template());
             var vars = Map.of(
                     "name", pattern.name().replaceAll("\\s+", ""),
-                    "package", "org.acme.messaging",
+                    "package", "io.github.seanchatmangpt.jotp.messaging",
                     "message_type", "Object");
 
             templates.add(new TemplateRef(category, templateName, vars));
@@ -399,7 +399,7 @@ public final class TemplateCompositionEngine {
         // Add test template
         templates.add(new TemplateRef("testing", "messaging-test", Map.of(
                 "name", "Generated",
-                "package", "org.acme.messaging.test")));
+                "package", "io.github.seanchatmangpt.jotp.messaging.test")));
 
         return new FeatureRecipe(
                 "TurtleMessaging",

@@ -59,12 +59,12 @@ class ReactiveMessagingBreakingPointTest implements WithAssertions {
 
     @BeforeEach
     void setUp() {
-        org.acme.ProcessRegistry.reset();
+        io.github.seanchatmangpt.jotp.ProcessRegistry.reset();
     }
 
     @AfterEach
     void tearDown() {
-        org.acme.ProcessRegistry.reset();
+        io.github.seanchatmangpt.jotp.ProcessRegistry.reset();
     }
 
     // ── Utility Methods ───────────────────────────────────────────────────────────

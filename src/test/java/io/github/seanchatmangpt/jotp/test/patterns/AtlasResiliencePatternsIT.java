@@ -77,12 +77,12 @@ class AtlasResiliencePatternsIT implements WithAssertions {
 
     @BeforeEach
     void setUp() {
-        org.acme.ProcessRegistry.reset();
+        io.github.seanchatmangpt.jotp.ProcessRegistry.reset();
     }
 
     @AfterEach
     void tearDown() {
-        org.acme.ProcessRegistry.reset();
+        io.github.seanchatmangpt.jotp.ProcessRegistry.reset();
     }
 
     // Domain types imported from AtlasDomain - see AtlasDomain class for definitions
