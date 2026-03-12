@@ -27,7 +27,7 @@ provider "aws" {
   # Optional: Default tags
   default_tags {
     tags = {
-      Project     = "java-maven-template"
+      Project     = "jotp"
       Environment = "production"
       ManagedBy   = "terraform"
     }
@@ -89,7 +89,7 @@ resource "aws_instance" "app" {
   key_name               = var.key_name
 
   tags = {
-    Name = "java-maven-template"
+    Name = "jotp"
   }
 }
 ```
@@ -244,7 +244,7 @@ resource "google_compute_firewall" "ssh" {
 
 # Compute Instance
 resource "google_compute_instance" "app" {
-  name         = "java-maven-template"
+  name         = "jotp"
   machine_type = var.machine_type
   zone         = var.zone
 
@@ -310,7 +310,7 @@ resource "oci_core_subnet" "public" {
 resource "oci_core_instance" "app" {
   compartment_id      = var.compartment_ocid
   availability_domain = data.oci_identity_availability_domain.ad.name
-  display_name        = "java-maven-template"
+  display_name        = "jotp"
   shape               = var.shape
 
   shape_config {
@@ -372,7 +372,7 @@ resource "ibm_is_subnet" "main" {
 
 # Instance
 resource "ibm_is_instance" "app" {
-  name    = "java-maven-template"
+  name    = "jotp"
   image   = var.image_id
   profile = var.profile
   vpc     = ibm_is_vpc.main.id

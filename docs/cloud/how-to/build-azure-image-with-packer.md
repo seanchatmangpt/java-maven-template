@@ -56,7 +56,7 @@ subscription_id = "<subscription-id>"
 tenant_id       = "<tenant>"
 resource_group  = "packer-images"
 location        = "eastus"
-image_name      = "java-maven-template"
+image_name      = "jotp"
 ```
 
 ### 7. Validate Configuration
@@ -75,7 +75,7 @@ packer build -var-file=variables.pkrvars.hcl java-maven-image.pkr.hcl
 
 Output will include:
 ```
-==> azure-arm: Image ID: /subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/java-maven-template-xxxxx
+==> azure-arm: Image ID: /subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/jotp-xxxxx
 ```
 
 ## Customization
@@ -96,7 +96,7 @@ build {
   }
 
   provisioner "file" {
-    source      = "../../../target/java-maven-template-1.0.0-SNAPSHOT.jar"
+    source      = "../../../target/jotp-1.0.0-SNAPSHOT.jar"
     destination = "/tmp/app.jar"
   }
 
@@ -136,7 +136,7 @@ source "azure-arm" "java-maven" {
   shared_image_gallery_destination {
     resource_group       = "packer-images"
     gallery_name         = "java_maven_gallery"
-    image_name           = "java-maven-template"
+    image_name           = "jotp"
     image_version        = "1.0.0"
     replication_regions  = ["eastus", "westus2"]
   }

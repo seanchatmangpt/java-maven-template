@@ -33,7 +33,7 @@ ami_id        = "ami-xxxxxxxxxxxxxxxxx"  # Your Packer-built AMI
 instance_type = "t3.medium"
 key_name      = "your-ssh-key-pair"
 environment   = "production"
-app_name      = "java-maven-template"
+app_name      = "jotp"
 }
 ```
 

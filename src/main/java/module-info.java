@@ -1,14 +1,18 @@
-module org.acme {
-    exports org.acme;
-    exports org.acme.reactive;
-    exports org.acme.dogfood.core;
-    exports org.acme.dogfood.concurrency;
-    exports org.acme.dogfood.patterns;
-    exports org.acme.dogfood.api;
-    exports org.acme.dogfood.errorhandling;
-    exports org.acme.dogfood.security;
-    exports org.acme.dogfood.innovation;
-    exports org.acme.dogfood.mclaren;
-    exports org.acme.dogfood.messaging;
-    exports org.acme.dogfood.reactive;
+module io.github.seanchatmangpt.jotp {
+    // External JOTP library (Java OTP Framework)
+    requires io.github.seanchatmangpt.jotp;
+
+    // Local exports
+    exports io.github.seanchatmangpt.jotp;
+    exports io.github.seanchatmangpt.jotp.reactive;
+    exports io.github.seanchatmangpt.jotp.dogfood.core;
+    exports io.github.seanchatmangpt.jotp.dogfood.concurrency;
+    exports io.github.seanchatmangpt.jotp.dogfood.patterns;
+    exports io.github.seanchatmangpt.jotp.dogfood.api;
+    exports io.github.seanchatmangpt.jotp.dogfood.errorhandling;
+    exports io.github.seanchatmangpt.jotp.dogfood.security;
+    exports io.github.seanchatmangpt.jotp.dogfood.innovation;
+    exports io.github.seanchatmangpt.jotp.dogfood.mclaren;
+    exports io.github.seanchatmangpt.jotp.dogfood.messaging;
+    exports io.github.seanchatmangpt.jotp.dogfood.reactive;
 }

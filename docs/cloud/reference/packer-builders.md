@@ -11,7 +11,7 @@ Builds AMI images for AWS using EBS-backed volumes.
 ```hcl
 source "amazon-ebs" "java-maven" {
   // Required
-  ami_name      = "java-maven-template-{{timestamp}}"
+  ami_name      = "jotp-{{timestamp}}"
   instance_type = "t3.medium"
   region        = "us-east-1"
   source_ami    = "ami-0c7217cdde317cfec"
@@ -23,8 +23,8 @@ source "amazon-ebs" "java-maven" {
 
   // Tags
   tags = {
-    Name    = "java-maven-template"
-    Project = "java-maven-template"
+    Name    = "jotp"
+    Project = "jotp"
     Version = "1.0.0"
   }
 }
@@ -73,7 +73,7 @@ source "azure-arm" "java-maven" {
   tenant_id       = var.tenant_id
 
   // Image settings
-  managed_image_name                = "java-maven-template"
+  managed_image_name                = "jotp"
   managed_image_resource_group_name = "packer-images"
 
   // Build VM settings
@@ -126,7 +126,7 @@ source "googlecompute" "java-maven" {
   project_id = var.project_id
 
   // Image settings
-  image_name        = "java-maven-template-{{timestamp}}"
+  image_name        = "jotp-{{timestamp}}"
   image_family      = "java-maven"
   image_description = "Java Maven Template Image"
 
@@ -183,7 +183,7 @@ source "oracle-oci" "java-maven" {
   // Image settings
   base_image_ocid = var.base_image_ocid
   compartment_ocid = var.compartment_ocid
-  image_name      = "java-maven-template-{{timestamp}}"
+  image_name      = "jotp-{{timestamp}}"
 
   // Build instance settings
   shape          = "VM.Standard.E4.Flex"

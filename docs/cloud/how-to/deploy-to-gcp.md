@@ -37,10 +37,10 @@ Create `terraform.tfvars`:
 project_id   = "your-project-id"
 region       = "us-central1"
 zone         = "us-central1-a"
-image_name   = "java-maven-template-xxxxx"
+image_name   = "jotp-xxxxx"
 machine_type = "e2-medium"
 environment  = "production"
-app_name     = "java-maven-template"
+app_name     = "jotp"
 }
 ```
 
@@ -72,7 +72,7 @@ Type `yes` to confirm.
 terraform output instance_ip
 
 # SSH into instance
-gcloud compute ssh java-maven-template --zone=us-central1-a
+gcloud compute ssh jotp --zone=us-central1-a
 
 # Check application
 curl http://localhost:8080/health

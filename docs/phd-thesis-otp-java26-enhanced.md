@@ -6,7 +6,7 @@
 ---
 
 **Author:** Independent Research Contribution
-**Repository:** [seanchatmangpt/java-maven-template](https://github.com/seanchatmangpt/java-maven-template)
+**Repository:** [seanchatmangpt/jotp](https://github.com/seanchatmangpt/jotp)
 **Date:** March 2026
 **Keywords:** Erlang/OTP, Java 26, Virtual Threads, Supervision Trees, Process-based Concurrency, `gen_server`, Fault Tolerance, Reactive Messaging Patterns, Stress Testing, Blue Ocean Strategy
 

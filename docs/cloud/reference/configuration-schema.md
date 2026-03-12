@@ -211,7 +211,7 @@ availability_zones = ["us-east-1a", "us-east-1b"]
 # Map values
 tags = {
   Environment = "production"
-  Project     = "java-maven-template"
+  Project     = "jotp"
 }
 
 # Object values

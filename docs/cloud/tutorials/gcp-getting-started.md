@@ -55,10 +55,10 @@ gcloud auth application-default login
 
 ```bash
 # Create new project
-gcloud projects create java-maven-template --name="Java Maven Template"
+gcloud projects create jotp --name="Java Maven Template"
 
 # Set project as default
-gcloud config set project java-maven-template
+gcloud config set project jotp
 
 # Enable Compute Engine API
 gcloud services enable compute.googleapis.com
@@ -76,7 +76,7 @@ gcloud services enable iam.googleapis.com
 
 ```bash
 # Navigate to project root
-cd /path/to/java-maven-template
+cd /path/to/jotp
 
 # Build the fat JAR
 ./mvnw package -Dshade
@@ -99,7 +99,7 @@ packer init .
 Create `variables.pkrvars.hcl`:
 
 ```hcl
-project_id   = "java-maven-template"
+project_id   = "jotp"
 region       = "us-central1"
 zone         = "us-central1-a"
 source_image = "ubuntu-2204-jammy-v20240101"
@@ -127,7 +127,7 @@ googlecompute: output will be in this color.
 ==> googlecompute: Provisioning with shell script...
 ==> googlecompute: Stopping instance...
 ==> googlecompute: Creating image...
-==> googlecompute: Image: java-maven-template-xxxxx
+==> googlecompute: Image: jotp-xxxxx
 Build 'googlecompute' finished.
 ```
 
@@ -145,10 +145,10 @@ terraform init
 ### Create terraform.tfvars
 
 ```hcl
-project_id   = "java-maven-template"
+project_id   = "jotp"
 region       = "us-central1"
 zone         = "us-central1-a"
-image_name   = "java-maven-template-xxxxx"
+image_name   = "jotp-xxxxx"
 machine_type = "e2-medium"
 ```
 
@@ -185,7 +185,7 @@ terraform output instance_ip
 
 ```bash
 # SSH into instance
-gcloud compute ssh java-maven-template --zone=us-central1-a
+gcloud compute ssh jotp --zone=us-central1-a
 
 # Or using IP
 ssh -i ~/.ssh/google_compute_engine user@$(terraform output -raw instance_ip)
@@ -198,7 +198,7 @@ curl http://localhost:8080/health
 
 1. Navigate to [Compute Engine](https://console.cloud.google.com/compute)
 2. Click "VM instances"
-3. Find your instance named "java-maven-template"
+3. Find your instance named "jotp"
 
 ## Step 6: Clean Up Resources
 
@@ -213,13 +213,13 @@ Type `yes` when prompted.
 ### Delete Custom Image
 
 ```bash
-gcloud compute images delete java-maven-template-xxxxx
+gcloud compute images delete jotp-xxxxx
 ```
 
 ### Delete Project (Optional)
 
 ```bash
-gcloud projects delete java-maven-template
+gcloud projects delete jotp
 ```
 
 ## Troubleshooting
@@ -246,7 +246,7 @@ gcloud compute instances list
 gcloud compute images list --filter="name:java-maven"
 
 # View instance logs
-gcloud compute instances get-serial-port-output java-maven-template --zone=us-central1-a
+gcloud compute instances get-serial-port-output jotp --zone=us-central1-a
 ```
 
 ## Next Steps

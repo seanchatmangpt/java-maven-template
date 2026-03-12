@@ -18,11 +18,11 @@ This guide shows you how to deploy your Java Maven Template application to Red H
 ./mvnw package -Dshade
 
 # Build container image
-docker build -t java-maven-template:latest .
+docker build -t jotp:latest .
 
 # Push to registry
-docker tag java-maven-template:latest <registry>/java-maven-template:latest
-docker push <registry>/java-maven-template:latest
+docker tag jotp:latest <registry>/jotp:latest
+docker push <registry>/jotp:latest
 ```
 
 ### 2. Login to OpenShift
@@ -55,8 +55,8 @@ Create `terraform.tfvars`:
 openshift_server_url = "https://api.<cluster>:6443"
 openshift_token      = "<your-oc-token>"
 namespace            = "java-maven-app"
-app_name             = "java-maven-template"
-image                = "<registry>/java-maven-template:latest"
+app_name             = "jotp"
+image                = "<registry>/jotp:latest"
 replicas             = 2
 }
 ```
@@ -79,10 +79,10 @@ Type `yes` to confirm.
 
 ```bash
 # Get route URL
-oc get route java-maven-template -n java-maven-app
+oc get route jotp -n java-maven-app
 
 # Test application
-curl http://java-maven-template-java-maven-app.<cluster>/health
+curl http://jotp-java-maven-app.<cluster>/health
 ```
 
 ## Alternative: Deploy with OpenShift CLI
@@ -96,10 +96,10 @@ oc new-project java-maven-app
 ### Deploy from Image
 
 ```bash
-oc new-app --name java-maven-template \
-  --docker-image=<registry>/java-maven-template:latest
+oc new-app --name jotp \
+  --docker-image=<registry>/jotp:latest
 
-oc expose svc/java-maven-template
+oc expose svc/jotp
 ```
 
 ### Deploy with YAML
@@ -110,22 +110,22 @@ Create `deployment.yaml`:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: java-maven-template
+  name: jotp
   labels:
-    app: java-maven-template
+    app: jotp
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: java-maven-template
+      app: jotp
   template:
     metadata:
       labels:
-        app: java-maven-template
+        app: jotp
     spec:
       containers:
       - name: app
-        image: <registry>/java-maven-template:latest
+        image: <registry>/jotp:latest
         ports:
         - containerPort: 8080
         livenessProbe:
@@ -142,10 +142,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: java-maven-template
+  name: jotp
 spec:
   selector:
-    app: java-maven-template
+    app: jotp
   ports:
   - port: 8080
     targetPort: 8080
@@ -153,11 +153,11 @@ spec:
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: java-maven-template
+  name: jotp
 spec:
   to:
     kind: Service
-    name: java-maven-template
+    name: jotp
   port:
     targetPort: 8080
 ```

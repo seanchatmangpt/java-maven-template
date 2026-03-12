@@ -143,7 +143,7 @@ az storage container create --name app-blobs
 az storage blob upload \
   --container-name app-blobs \
   --name application.jar \
-  --file target/java-maven-template-1.0.0-SNAPSHOT.jar
+  --file target/jotp-1.0.0-SNAPSHOT.jar
 
 # Download blob
 az storage blob download \
@@ -152,7 +152,7 @@ az storage blob download \
   --file /tmp/downloaded.jar
 
 # Verify
-diff target/java-maven-template-1.0.0-SNAPSHOT.jar /tmp/downloaded.jar
+diff target/jotp-1.0.0-SNAPSHOT.jar /tmp/downloaded.jar
 ```
 
 ### Test Queue Messages

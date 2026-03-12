@@ -43,7 +43,7 @@ profile        = "bx2-2x8"
 ssh_public_key = "ssh-rsa AAAA..."
 vpc_name       = "java-maven-vpc"
 subnet_name    = "java-maven-subnet"
-instance_name  = "java-maven-template"
+instance_name  = "jotp"
 }
 ```
 
@@ -77,11 +77,11 @@ Type `yes` to confirm.
 INSTANCE_IP=$(terraform output -raw floating_ip)
 
 # Copy JAR to instance
-scp -i ~/.ssh/id_rsa target/java-maven-template-*.jar root@$INSTANCE_IP:/opt/app/
+scp -i ~/.ssh/id_rsa target/jotp-*.jar root@$INSTANCE_IP:/opt/app/
 
 # SSH and start application
 ssh -i ~/.ssh/id_rsa root@$INSTANCE_IP
-java -jar /opt/app/java-maven-template-*.jar
+java -jar /opt/app/jotp-*.jar
 ```
 
 ### 8. Verify Deployment
@@ -154,7 +154,7 @@ IBM Cloud Schematics provides managed Terraform:
 
 ```bash
 # Create workspace
-ibmcloud schematics workspace create --name java-maven-template --region us-south
+ibmcloud schematics workspace create --name jotp --region us-south
 
 # Point to your Terraform code
 ibmcloud schematics template create --workspace-id <workspace-id> --template-url <git-repo-url>

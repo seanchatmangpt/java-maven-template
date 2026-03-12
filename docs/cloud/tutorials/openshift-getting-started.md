@@ -73,7 +73,7 @@ oc get projects
 
 ```bash
 # Navigate to project root
-cd /path/to/java-maven-template
+cd /path/to/jotp
 
 # Build the fat JAR
 ./mvnw package -Dshade
@@ -89,7 +89,7 @@ Create `Containerfile` in the project root:
 ```dockerfile
 FROM registry.access.redhat.com/ubi9/openjdk-21:latest
 
-COPY target/java-maven-template-*-SNAPSHOT.jar /deployments/app.jar
+COPY target/jotp-*-SNAPSHOT.jar /deployments/app.jar
 
 EXPOSE 8080
 
@@ -101,10 +101,10 @@ ENTRYPOINT ["java", "-jar", "/deployments/app.jar"]
 
 ```bash
 # Using Docker
-docker build -t java-maven-template:latest .
+docker build -t jotp:latest .
 
 # Using Podman
-podman build -t java-maven-template:latest .
+podman build -t jotp:latest .
 ```
 
 ### Push to Registry
@@ -116,15 +116,15 @@ For Developer Sandbox:
 oc registry login
 
 # Tag and push
-docker tag java-maven-template:latest image-registry.openshift-image-registry.svc:5000/$(oc project -q)/java-maven-template:latest
-docker push image-registry.openshift-image-registry.svc:5000/$(oc project -q)/java-maven-template:latest
+docker tag jotp:latest image-registry.openshift-image-registry.svc:5000/$(oc project -q)/jotp:latest
+docker push image-registry.openshift-image-registry.svc:5000/$(oc project -q)/jotp:latest
 ```
 
 For external registry (Quay.io, Docker Hub):
 
 ```bash
-docker tag java-maven-template:latest quay.io/<username>/java-maven-template:latest
-docker push quay.io/<username>/java-maven-template:latest
+docker tag jotp:latest quay.io/<username>/jotp:latest
+docker push quay.io/<username>/jotp:latest
 ```
 
 ## Step 3: Deploy with Terraform
@@ -141,8 +141,8 @@ Create `terraform.tfvars`:
 openshift_server_url = "https://api.<cluster-domain>:6443"
 openshift_token      = "<your-oc-token>"
 namespace            = "java-maven-app"
-app_name             = "java-maven-template"
-image                = "image-registry.openshift-image-registry.svc:5000/java-maven-app/java-maven-template:latest"
+app_name             = "jotp"
+image                = "image-registry.openshift-image-registry.svc:5000/java-maven-app/jotp:latest"
 replicas             = 1
 ```
 
@@ -183,14 +183,14 @@ If not using Terraform:
 oc new-project java-maven-app
 
 # Deploy application
-oc new-app --name java-maven-template \
-  --docker-image=image-registry.openshift-image-registry.svc:5000/java-maven-app/java-maven-template:latest
+oc new-app --name jotp \
+  --docker-image=image-registry.openshift-image-registry.svc:5000/java-maven-app/jotp:latest
 
 # Create route (external access)
-oc expose svc/java-maven-template
+oc expose svc/jotp
 
 # Get route URL
-oc get route java-maven-template
+oc get route jotp
 ```
 
 ## Step 5: Verify Deployment
@@ -202,20 +202,20 @@ oc get route java-maven-template
 oc get pods -n java-maven-app
 
 # Check deployment
-oc rollout status deployment/java-maven-template
+oc rollout status deployment/jotp
 
 # View logs
-oc logs -f deployment/java-maven-template
+oc logs -f deployment/jotp
 ```
 
 ### Get Application Route
 
 ```bash
 # Get route URL
-oc get route java-maven-template -o jsonpath='{.spec.host}'
+oc get route jotp -o jsonpath='{.spec.host}'
 
 # Test application
-curl http://java-maven-template-java-maven-app.<cluster-domain>/health
+curl http://jotp-java-maven-app.<cluster-domain>/health
 ```
 
 ### View in OpenShift Console
@@ -237,7 +237,7 @@ terraform destroy
 
 ```bash
 # Delete all resources in project
-oc delete all -l app=java-maven-template -n java-maven-app
+oc delete all -l app=jotp -n java-maven-app
 
 # Delete project
 oc delete project java-maven-app
@@ -280,13 +280,13 @@ oc login -u developer -p developer https://api.crc.testing:6443
 oc cluster-info
 
 # Describe resource
-oc describe deployment java-maven-template
+oc describe deployment jotp
 
 # View events
 oc get events --sort-by='.lastTimestamp'
 
 # Port forward for local testing
-oc port-forward svc/java-maven-template 8080:8080
+oc port-forward svc/jotp 8080:8080
 
 # Execute command in pod
 oc exec -it <pod-name> -- /bin/bash

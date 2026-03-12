@@ -37,7 +37,7 @@ compartment_ocid = "ocid1.compartment.oc1..xxxxx"
 image_ocid       = "ocid1.image.oc1.phx.xxxxx"
 shape            = "VM.Standard.E4.Flex"
 ssh_public_key   = "~/.ssh/id_rsa.pub"
-app_name         = "java-maven-template"
+app_name         = "jotp"
 }
 ```
 
