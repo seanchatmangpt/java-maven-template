@@ -39,11 +39,11 @@ Create `terraform.tfvars`:
 ```hcl
 location            = "eastus"
 resource_group_name = "java-maven-rg"
-image_id            = "/subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/java-maven-template-xxxxx"
+image_id            = "/subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/jotp-xxxxx"
 vm_size             = "Standard_B2s"
 admin_username      = "azureuser"
 environment         = "production"
-app_name            = "java-maven-template"
+app_name            = "jotp"
 }
 ```
 

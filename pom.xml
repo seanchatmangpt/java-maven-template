@@ -5,8 +5,8 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.acme</groupId>
-    <artifactId>lib</artifactId>
+    <groupId>io.github.seanchatmangpt</groupId>
+    <artifactId>jotp</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <properties>
@@ -25,6 +25,13 @@
     </properties>
 
     <dependencies>
+        <!-- JOTP - Java OTP Framework (external library) -->
+        <dependency>
+            <groupId>io.github.seanchatmangpt</groupId>
+            <artifactId>jotp</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -104,7 +111,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.4</version>
                 <configuration>
-                    <argLine>--enable-preview --add-reads org.acme=ALL-UNNAMED</argLine>
+                    <argLine>--enable-preview --add-reads io.github.seanchatmangpt.jotp=ALL-UNNAMED</argLine>
                 </configuration>
             </plugin>
             <plugin>
@@ -127,7 +134,7 @@
                     </execution>
                 </executions>
                 <configuration>
-                    <argLine>--enable-preview --add-reads org.acme=ALL-UNNAMED</argLine>
+                    <argLine>--enable-preview --add-reads io.github.seanchatmangpt.jotp=ALL-UNNAMED</argLine>
                 </configuration>
             </plugin>
             <plugin>
@@ -283,7 +290,7 @@
                                     <goal>java</goal>
                                 </goals>
                                 <configuration>
-                                    <mainClass>org.acme.benchmark.PatternBenchmarkSuite</mainClass>
+                                    <mainClass>io.github.seanchatmangpt.jotp.benchmark.PatternBenchmarkSuite</mainClass>
                                     <classpathScope>test</classpathScope>
                                     <arguments>
                                         <argument>-f</argument>

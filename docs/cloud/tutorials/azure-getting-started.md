@@ -81,7 +81,7 @@ export ARM_TENANT_ID="<tenant>"
 
 ```bash
 # Navigate to project root
-cd /path/to/java-maven-template
+cd /path/to/jotp
 
 # Build the fat JAR
 ./mvnw package -Dshade
@@ -142,7 +142,7 @@ azure-arm: output will be in this color.
 ==> azure-arm: Creating deployment...
 ==> azure-arm: Running custom script...
 ==> azure-arm: Capturing image...
-==> azure-arm: Image ID: /subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/java-maven-template-xxxxx
+==> azure-arm: Image ID: /subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/jotp-xxxxx
 Build 'azure-arm' finished.
 ```
 
@@ -162,7 +162,7 @@ terraform init
 ```hcl
 location            = "eastus"
 resource_group_name = "java-maven-rg"
-image_id            = "/subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/java-maven-template-xxxxx"
+image_id            = "/subscriptions/xxx/resourceGroups/packer-images/providers/Microsoft.Compute/images/jotp-xxxxx"
 vm_size             = "Standard_B2s"
 admin_username      = "azureuser"
 ```
@@ -212,7 +212,7 @@ curl http://localhost:8080/health
 
 1. Navigate to [Azure Portal](https://portal.azure.com/)
 2. Search for "Virtual machines"
-3. Find your VM named "java-maven-template"
+3. Find your VM named "jotp"
 
 ## Step 6: Clean Up Resources
 

@@ -6,7 +6,7 @@
 ---
 
 **Author:** Independent Research Contribution
-**Repository:** [seanchatmangpt/java-maven-template](https://github.com/seanchatmangpt/java-maven-template)
+**Repository:** [seanchatmangpt/jotp](https://github.com/seanchatmangpt/jotp)
 **Date:** March 2026
 **Keywords:** Reactive Messaging, Enterprise Integration Patterns, Java 26, Virtual Threads, OTP, Erlang, EIP, Pipes and Filters, Content-Based Router, Message Aggregator, Scatter-Gather, Publish-Subscribe
 
@@ -795,7 +795,7 @@ Joe Armstrong's insight, stated in 1986 and validated in production for 40 years
 
 14. **Gamma, E., Helm, R., Johnson, R., & Vlissides, J.** (1994). *Design Patterns: Elements of Reusable Object-Oriented Software.* Addison-Wesley.
 
-15. **seanchatmangpt/java-maven-template** (2026). Reference implementation of OTP primitives and reactive messaging patterns in Java 26. https://github.com/seanchatmangpt/java-maven-template
+15. **seanchatmangpt/jotp** (2026). Reference implementation of OTP primitives and reactive messaging patterns in Java 26. https://github.com/seanchatmangpt/jotp
 
 ---
 

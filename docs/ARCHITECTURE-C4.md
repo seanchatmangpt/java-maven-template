@@ -16,10 +16,15 @@ This document provides a comprehensive visual architecture of **JOTP** (`io.gith
 1. [C4 Level 1: System Context](#c4-level-1-system-context)
 2. [C4 Level 2: Containers](#c4-level-2-containers)
 3. [C4 Level 3: Components](#c4-level-3-components)
-4. [Sequence Diagrams](#sequence-diagrams)
-5. [The 15 OTP Primitives](#the-15-otp-primitives)
-6. [Common Patterns & Use Cases](#common-patterns--use-cases)
-7. [Integration & References](#integration--references)
+4. [C4 Level 4: Class Details](#c4-level-4-class-details)
+5. [Sequence & Flow Diagrams](#sequence--flow-diagrams)
+6. [Process Behavior Diagrams](#process-behavior-diagrams)
+7. [System Integration Diagrams](#system-integration-diagrams)
+8. [Architecture Overview Diagrams](#architecture-overview-diagrams)
+9. [Erlang/OTP Comparison](#erlang-otp-comparison)
+10. [The 15 OTP Primitives Reference](#the-15-otp-primitives)
+11. [Common Patterns & Use Cases](#common-patterns--use-cases)
+12. [Integration & References](#integration--references)
 
 ---
 

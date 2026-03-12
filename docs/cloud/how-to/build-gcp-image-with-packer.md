@@ -45,7 +45,7 @@ zone         = "us-central1-a"
 # Ubuntu 22.04 LTS
 source_image_project = "ubuntu-os-cloud"
 source_image_family  = "ubuntu-2204-lts"
-image_name   = "java-maven-template"
+image_name   = "jotp"
 machine_type = "e2-medium"
 }
 ```
@@ -66,7 +66,7 @@ packer build -var-file=variables.pkrvars.hcl java-maven-image.pkr.hcl
 
 Output will include:
 ```
-==> googlecompute: Image: java-maven-template-xxxxx
+==> googlecompute: Image: jotp-xxxxx
 ```
 
 ## Customization
@@ -87,7 +87,7 @@ build {
   }
 
   provisioner "file" {
-    source      = "../../../target/java-maven-template-1.0.0-SNAPSHOT.jar"
+    source      = "../../../target/jotp-1.0.0-SNAPSHOT.jar"
     destination = "/tmp/app.jar"
   }
 
@@ -124,7 +124,7 @@ source "googlecompute" "java-maven" {
 ```hcl
 source "googlecompute" "java-maven" {
   image_family        = "java-maven"
-  image_name          = "java-maven-template-${formatdate("YYYYMMDD", timestamp())}"
+  image_name          = "jotp-${formatdate("YYYYMMDD", timestamp())}"
 }
 ```
 

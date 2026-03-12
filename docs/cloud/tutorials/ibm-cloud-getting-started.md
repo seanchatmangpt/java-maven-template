@@ -73,7 +73,7 @@ Alternatively, create via [IBM Cloud Console](https://cloud.ibm.com/iam/apikeys)
 
 ```bash
 # Navigate to project root
-cd /path/to/java-maven-template
+cd /path/to/jotp
 
 # Build the fat JAR
 ./mvnw package -Dshade
@@ -109,7 +109,7 @@ profile          = "bx2-2x8"
 ssh_public_key   = "<your-ssh-public-key>"
 vpc_name         = "java-maven-vpc"
 subnet_name      = "java-maven-subnet"
-instance_name    = "java-maven-template"
+instance_name    = "jotp"
 ```
 
 ### Review Deployment Plan
@@ -144,7 +144,7 @@ Type `yes` when prompted.
 INSTANCE_IP=$(terraform output -raw floating_ip)
 
 # Copy JAR to instance
-scp -i ~/.ssh/id_rsa target/java-maven-template-*.jar root@$INSTANCE_IP:/opt/app/
+scp -i ~/.ssh/id_rsa target/jotp-*.jar root@$INSTANCE_IP:/opt/app/
 
 # SSH into instance
 ssh -i ~/.ssh/id_rsa root@$INSTANCE_IP
@@ -167,7 +167,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/app
-ExecStart=/usr/bin/java -jar /opt/app/java-maven-template-*.jar
+ExecStart=/usr/bin/java -jar /opt/app/jotp-*.jar
 Restart=on-failure
 RestartSec=10
 
@@ -199,7 +199,7 @@ curl http://$(terraform output -raw floating_ip):8080/health
 
 1. Navigate to [VPC Infrastructure](https://cloud.ibm.com/vpc-ext/overview)
 2. Click "Virtual server instances"
-3. Find your instance named "java-maven-template"
+3. Find your instance named "jotp"
 
 ## Step 6: Clean Up Resources
 

@@ -2,7 +2,7 @@
 
 **Author:** Claude Code Research Division, Anthropic
 **Date:** 2026-03-09
-**Repository:** java-maven-template (`org.acme` module, Java 26 JPMS)
+**Repository:** jotp (`org.acme` module, Java 26 JPMS)
 **Branch:** `claude/refactor-mclaren-atlas-ZLSvA`
 **Keywords:** Virtual Threads, Erlang/OTP, Fault Tolerance, McLaren Atlas, SQL Race, Java 26, Structured Concurrency, Supervisor Trees, GenServer, GenEvent, GenStatem, Property-Based Testing, Stress Testing, Ring Buffers, Telemetry Acquisition
 

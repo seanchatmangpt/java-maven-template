@@ -62,7 +62,7 @@ To obtain credentials:
 
 ```bash
 # Navigate to project root
-cd /path/to/java-maven-template
+cd /path/to/jotp
 
 # Build the fat JAR
 ./mvnw package -Dshade
@@ -170,7 +170,7 @@ curl http://$(terraform output -raw public_ip):8080/health
 
 1. Navigate to [EC2 Console](https://console.aws.amazon.com/ec2/)
 2. Click "Instances" in the sidebar
-3. Find your instance named "java-maven-template"
+3. Find your instance named "jotp"
 
 ## Step 6: Clean Up Resources
 

@@ -83,7 +83,7 @@ cd guard-system && cargo build --release
 
 ## Architecture
 
-**Java 26 JPMS library** (`org.acme` module) targeting Java 26 with preview features enabled (`--enable-preview`). JDK: GraalVM Community CE 25.0.2 (Java 26 EA builds required for Java 26 target).
+**Java 26 JPMS library** (`io.github.seanchatmangpt.jotp` module) targeting Java 26 with preview features enabled (`--enable-preview`). JDK: GraalVM Community CE 25.0.2 (Java 26 EA builds required for Java 26 target).
 
 **Test separation:**
 - Unit tests: `*Test.java` — run by maven-surefire-plugin via `./mvnw test`
@@ -97,7 +97,7 @@ cd guard-system && cargo build --release
 
 **Formatting:** Spotless with Google Java Format (AOSP style) runs automatically at compile phase. The PostToolUse hook (see below) auto-runs `spotless:apply` after every Java file edit — do not run it manually.
 
-**Joe Armstrong / Erlang/OTP patterns** — fifteen primitives in `org.acme`:
+**Joe Armstrong / Erlang/OTP patterns** — fifteen primitives in `io.github.seanchatmangpt.jotp`:
 - `Proc<S,M>` — lightweight process: virtual-thread mailbox + pure state handler (OTP: `spawn/3`)
 - `ProcRef<S,M>` — stable Pid: opaque handle that survives supervisor restarts
 - `Supervisor` — supervision tree: ONE_FOR_ONE / ONE_FOR_ALL / REST_FOR_ONE with sliding restart window
@@ -181,7 +181,7 @@ bin/jgen verify                        # Compile + format + test check
 - `bin/dogfood` — validates templates produce compilable, testable Java code
 - `bin/mvndw` — Maven Daemon wrapper (faster builds with persistent JVM)
 
-## Innovation Engine (`org.acme.dogfood.innovation`)
+## Innovation Engine (`io.github.seanchatmangpt.jotp.dogfood.innovation`)
 
 Five coordinated analysis engines power the automated refactor pipeline:
 
@@ -215,7 +215,7 @@ Establishes formal equivalence between the 7 OTP primitives and Java 26, benchma
 
 ## Dogfood (Eating Our Own Dog Food)
 
-The `org.acme.dogfood` package contains real Java code rendered from templates, proving they compile and pass tests.
+The `io.github.seanchatmangpt.jotp.dogfood` package contains real Java code rendered from templates, proving they compile and pass tests.
 
 **Dogfood commands:**
 ```bash

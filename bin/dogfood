@@ -9,8 +9,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATES_DIR="$PROJECT_ROOT/templates/java"
-DOGFOOD_MAIN="$PROJECT_ROOT/src/main/java/org/acme/dogfood"
-DOGFOOD_TEST="$PROJECT_ROOT/src/test/java/org/acme/dogfood"
+DOGFOOD_MAIN="$PROJECT_ROOT/src/main/java/io/github/seanchatmangpt/jotp/dogfood"
+DOGFOOD_TEST="$PROJECT_ROOT/src/test/java/io/github/seanchatmangpt/jotp/dogfood"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

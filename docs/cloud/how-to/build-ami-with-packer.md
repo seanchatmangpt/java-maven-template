@@ -73,7 +73,7 @@ build {
   }
 
   provisioner "file" {
-    source      = "../../../target/java-maven-template-1.0.0-SNAPSHOT.jar"
+    source      = "../../../target/jotp-1.0.0-SNAPSHOT.jar"
     destination = "/tmp/app.jar"
   }
 
