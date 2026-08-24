@@ -1,7 +1,4 @@
 module io.github.seanchatmangpt.jotp {
-    // External JOTP library (Java OTP Framework)
-    requires io.github.seanchatmangpt.jotp;
-
     // Local exports
     exports io.github.seanchatmangpt.jotp;
     exports io.github.seanchatmangpt.jotp.reactive;
